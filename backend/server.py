@@ -842,11 +842,16 @@ async def enrich_lead(lead: dict) -> LeadResponse:
     created_by_user = await db.users.find_one({"id": lead['created_by']}, {"_id": 0})
     
     # Calculate commission
-    vyapaar_percentage = lead.get('commission_override', 15.0)
-    if selling_partner and selling_partner.get('company_id'):
-        company = await db.companies.find_one({"id": selling_partner['company_id']}, {"_id": 0})
-        if company and not lead.get('commission_override'):
-            vyapaar_percentage = company.get('vyapaar_commission_percentage', 15.0)
+    vyapaar_percentage = lead.get('commission_override')
+    if not vyapaar_percentage:
+        if selling_partner and selling_partner.get('company_id'):
+            company = await db.companies.find_one({"id": selling_partner['company_id']}, {"_id": 0})
+            if company:
+                vyapaar_percentage = company.get('vyapaar_commission_percentage', 15.0)
+            else:
+                vyapaar_percentage = 15.0
+        else:
+            vyapaar_percentage = 15.0
     
     commission_breakdown = None
     if lead.get('deal_value', 0) > 0:
