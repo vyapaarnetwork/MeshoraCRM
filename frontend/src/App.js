@@ -1,53 +1,159 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { Toaster } from './components/ui/sonner';
+import Layout from './components/Layout';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Dashboard from './pages/Dashboard';
+import Leads from './pages/Leads';
+import LeadDetail from './pages/LeadDetail';
+import LeadForm from './pages/LeadForm';
+import Categories from './pages/Categories';
+import Commission from './pages/Commission';
+import Reports from './pages/Reports';
+import Users from './pages/Users';
+import Companies from './pages/Companies';
+import './App.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+// Protected Route Component
+const ProtectedRoute = ({ children, allowedRoles = [] }) => {
+  const { isAuthenticated, loading, user } = useAuth();
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
 
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
+  if (allowedRoles.length > 0 && !allowedRoles.includes(user?.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <Layout>{children}</Layout>;
 };
+
+// Public Route Component (redirects to dashboard if authenticated)
+const PublicRoute = ({ children }) => {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
+};
+
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Public Routes */}
+      <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+      <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+
+      {/* Protected Routes - All Roles */}
+      <Route path="/dashboard" element={
+        <ProtectedRoute>
+          <Dashboard />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/leads" element={
+        <ProtectedRoute>
+          <Leads />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/leads/new" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'customer']}>
+          <LeadForm />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/leads/:id" element={
+        <ProtectedRoute>
+          <LeadDetail />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/leads/:id/edit" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'customer']}>
+          <LeadForm />
+        </ProtectedRoute>
+      } />
+
+      {/* Admin Only Routes */}
+      <Route path="/users" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <Users />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/companies" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <Companies />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/categories" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <Categories />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/commission" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <Commission />
+        </ProtectedRoute>
+      } />
+
+      {/* Reports - Admin, Selling Partner, Sales Associate */}
+      <Route path="/reports" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
+          <Reports />
+        </ProtectedRoute>
+      } />
+
+      {/* Settings placeholder */}
+      <Route path="/settings" element={
+        <ProtectedRoute>
+          <div className="p-6">
+            <h1 className="text-2xl font-bold">Settings</h1>
+            <p className="text-muted-foreground mt-2">Settings page coming soon...</p>
+          </div>
+        </ProtectedRoute>
+      } />
+
+      {/* Redirect root to dashboard or login */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      
+      {/* 404 - Redirect to dashboard */}
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+}
 
 function App() {
   return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+        <Toaster position="top-right" richColors />
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 
