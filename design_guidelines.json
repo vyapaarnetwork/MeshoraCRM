@@ -1,0 +1,136 @@
+{
+  "identity": {
+    "name": "Vyapaar Network CRM",
+    "tone": "Professional, Efficient, Trustworthy, Dynamic",
+    "audience": "B2B Partners, Sales Associates, Customers, Admins"
+  },
+  "theme_strategy": {
+    "default_mode": "light",
+    "modes": ["light", "dark"],
+    "recommendation": "Use Light Mode as the default for data-heavy CRM tasks to ensure maximum legibility. Dark Mode should be available as a toggle for power users."
+  },
+  "typography": {
+    "headings": {
+      "font_family": "Manrope, sans-serif",
+      "weights": ["600", "700", "800"],
+      "usage": "Use for all page titles, card headers, and modal titles. Letter spacing should be tight (-0.02em)."
+    },
+    "body": {
+      "font_family": "Inter, sans-serif",
+      "weights": ["400", "500"],
+      "usage": "Use for all standard text, table data, and form inputs. Excellent legibility at small sizes."
+    },
+    "mono": {
+      "font_family": "JetBrains Mono, monospace",
+      "usage": "Use for API keys, IDs, and code snippets."
+    }
+  },
+  "colors": {
+    "primary": {
+      "hex": "#4169E1",
+      "name": "Royal Blue",
+      "usage": "Primary buttons, active states, links, brand highlights."
+    },
+    "secondary": {
+      "hex": "#DC143C",
+      "name": "Crimson",
+      "usage": "Urgent actions, alerts, negative trends, 'Delete' actions."
+    },
+    "neutrals": {
+      "background": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "border": "#E2E8F0",
+      "text_primary": "#0F172A",
+      "text_secondary": "#64748B"
+    },
+    "charts": {
+      "palette": ["#4169E1", "#DC143C", "#10B981", "#F59E0B", "#8B5CF6"]
+    }
+  },
+  "layout": {
+    "structure": "Sidebar Navigation + Top Header + Main Content Area",
+    "sidebar": {
+      "width": "w-64",
+      "style": "Fixed left. In Light Mode: Dark Slate (#0F172A) background for high contrast. In Dark Mode: Darker Gray (#020617).",
+      "collapsed_width": "w-16"
+    },
+    "header": {
+      "height": "h-16",
+      "style": "Sticky top. Glassmorphism (bg-white/80 backdrop-blur-md). Border bottom."
+    },
+    "grid_system": "Bento Grid (Mode B)",
+    "container": "Fluid with max-width constraints (max-w-7xl) for large screens."
+  },
+  "components": {
+    "buttons": {
+      "radius": "rounded-md",
+      "styles": {
+        "primary": "bg-primary text-white hover:bg-primary/90 shadow-sm",
+        "secondary": "bg-secondary text-white hover:bg-secondary/90 shadow-sm",
+        "outline": "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+        "ghost": "hover:bg-accent hover:text-accent-foreground"
+      }
+    },
+    "cards": {
+      "radius": "rounded-xl",
+      "style": "bg-card text-card-foreground shadow-sm border border-border",
+      "padding": "p-6"
+    },
+    "inputs": {
+      "radius": "rounded-md",
+      "style": "bg-background border-input focus:ring-2 focus:ring-primary/20"
+    },
+    "tables": {
+      "style": "Clean, spacious rows. Header: bg-muted/50 text-muted-foreground. Row hover: bg-muted/50.",
+      "density": "Comfortable (p-4)"
+    }
+  },
+  "visual_enhancers": {
+    "shadows": "Subtle, layered shadows. shadow-sm for cards, shadow-md for dropdowns/modals.",
+    "gradients": "Avoid full-screen gradients. Use subtle mesh gradients in empty states or hero sections.",
+    "glassmorphism": "Use sparingly on sticky headers and modal overlays.",
+    "borders": "1px solid borders in Slate-200 (#E2E8F0) for definition."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "category": "auth_background",
+        "url": "https://images.unsplash.com/photo-1765954296215-6c3aadec42aa?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBvZmZpY2UlMjBhYnN0cmFjdCUyMGJ1c2luZXNzJTIwbmV0d29ya3xlbnwwfHx8fDE3NzA2NTkxMTZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Modern skybridge connecting glass buildings. Use for Login/Register page split-screen background."
+      },
+      {
+        "category": "team_welcome",
+        "url": "https://images.unsplash.com/photo-1758518731468-98e90ffd7430?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwxfHxkaXZlcnNlJTIwYnVzaW5lc3MlMjB0ZWFtJTIwcHJvZmVzc2lvbmFsJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzcwNjU5MTMwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Diverse business team portrait. Use for 'Welcome' widgets or 'About' sections."
+      },
+      {
+        "category": "logo",
+        "url": "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png",
+        "description": "Official Brand Logo."
+      }
+    ]
+  },
+  "accessibility": {
+    "contrast": "Ensure text meets WCAG AA standards. Use Slate-900 for main text on white.",
+    "focus_states": "Visible focus rings (ring-2 ring-primary/50) on all interactive elements.",
+    "testing": "All interactive elements MUST have data-testid attributes."
+  },
+  "instructions_to_main_agent": [
+    "Update tailwind.config.js to match the defined color palette (Primary: #4169E1, Secondary: #DC143C).",
+    "Implement the Sidebar Layout as the core shell for all Dashboard pages.",
+    "Use the 'Bento Grid' strategy for dashboard widgets.",
+    "Ensure all forms (Login, Lead Creation) use Shadcn Form components with Zod validation.",
+    "Use Recharts for all analytics (Revenue, Leads, Commissions).",
+    "Implement Role-Based Access Control (RBAC) in the frontend routing (e.g., ProtectedRoute component).",
+    "Use the provided image URLs for the Login page and Welcome widgets.",
+    "Do not use 'Inter' for Headings; import 'Manrope' from Google Fonts.",
+    "Add data-testid to all buttons, inputs, and links."
+  ],
+  "universal_guidelines": [
+    "Avoid generic centered layouts. Use asymmetry and grids.",
+    "Use 2-3x more spacing than typical (p-6, p-8).",
+    "Micro-animations on hover are mandatory.",
+    "No 'AI Slop' - keep it crisp, professional, and distinct.",
+    "Use 'sonner' for toast notifications."
+  ]
+}
