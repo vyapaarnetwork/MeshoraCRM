@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Avatar, AvatarFallback } from './ui/avatar';
+import { Badge } from './ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,9 +28,13 @@ import {
   Menu,
   X,
   Bell,
-  Send
+  Send,
+  Check,
+  Clock,
+  ExternalLink
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
+import api from '../utils/api';
 
 const LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
 
@@ -39,10 +44,89 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  // Notifications state
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+  // Fetch notifications
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const [notifRes, countRes] = await Promise.all([
+        api.get('/notifications?limit=10'),
+        api.get('/notifications/unread-count')
+      ]);
+      setNotifications(notifRes.data);
+      setUnreadCount(countRes.data.count);
+    } catch (error) {
+      console.error('Failed to fetch notifications:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNotifications();
+    // Poll for new notifications every 30 seconds
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const markAsRead = async (notificationId) => {
+    try {
+      await api.put(`/notifications/${notificationId}/read`);
+      fetchNotifications();
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      await api.put('/notifications/mark-all-read');
+      fetchNotifications();
+    } catch (error) {
+      console.error('Failed to mark all notifications as read:', error);
+    }
+  };
+
+  const handleNotificationClick = (notification) => {
+    markAsRead(notification.id);
+    if (notification.lead_id) {
+      navigate(`/leads/${notification.lead_id}`);
+      setNotificationsOpen(false);
+    }
+  };
+
+  const getNotificationIcon = (type) => {
+    switch (type) {
+      case 'new_lead':
+      case 'new_referral':
+        return <FileText className="w-4 h-4 text-blue-500" />;
+      case 'lead_assigned':
+        return <Users className="w-4 h-4 text-green-500" />;
+      case 'lead_status_change':
+        return <Tag className="w-4 h-4 text-purple-500" />;
+      case 'lead_updated':
+        return <Clock className="w-4 h-4 text-orange-500" />;
+      default:
+        return <Bell className="w-4 h-4 text-gray-500" />;
+    }
+  };
+
+  const formatTimeAgo = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = Math.floor((now - date) / 1000);
+    
+    if (diff < 60) return 'Just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
   };
 
   const getNavItems = () => {
@@ -61,13 +145,13 @@ const Layout = ({ children }) => {
       },
     ];
 
-    // Lead Referral menu for Selling Partners
-    if (isSellingPartner) {
+    // Lead Referral menu for Selling Partners AND Sales Associates
+    if (isSellingPartner || isSalesAssociate) {
       items.push({
         label: 'Lead Referral',
         icon: Send,
         path: '/lead-referral',
-        roles: ['selling_partner']
+        roles: ['selling_partner', 'sales_associate']
       });
     }
 
@@ -253,9 +337,69 @@ const Layout = ({ children }) => {
             </div>
 
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" className="text-slate-600">
-                <Bell className="w-5 h-5" />
-              </Button>
+              {/* Notifications Dropdown */}
+              <DropdownMenu open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="text-slate-600 relative" data-testid="notifications-btn">
+                    <Bell className="w-5 h-5" />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </span>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-80">
+                  <DropdownMenuLabel className="flex items-center justify-between">
+                    <span>Notifications</span>
+                    {unreadCount > 0 && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="text-xs h-auto py-1"
+                        onClick={markAllAsRead}
+                      >
+                        <Check className="w-3 h-3 mr-1" />
+                        Mark all read
+                      </Button>
+                    )}
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <ScrollArea className="h-[300px]">
+                    {notifications.length > 0 ? (
+                      notifications.map((notification) => (
+                        <DropdownMenuItem
+                          key={notification.id}
+                          className={`flex items-start gap-3 p-3 cursor-pointer ${!notification.is_read ? 'bg-blue-50' : ''}`}
+                          onClick={() => handleNotificationClick(notification)}
+                        >
+                          <div className="mt-0.5">
+                            {getNotificationIcon(notification.type)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm ${!notification.is_read ? 'font-semibold' : ''}`}>
+                              {notification.title}
+                            </p>
+                            <p className="text-xs text-muted-foreground line-clamp-2">
+                              {notification.message}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {formatTimeAgo(notification.created_at)}
+                            </p>
+                          </div>
+                          {notification.lead_id && (
+                            <ExternalLink className="w-3 h-3 text-muted-foreground" />
+                          )}
+                        </DropdownMenuItem>
+                      ))
+                    ) : (
+                      <div className="p-4 text-center text-muted-foreground text-sm">
+                        No notifications
+                      </div>
+                    )}
+                  </ScrollArea>
+                </DropdownMenuContent>
+              </DropdownMenu>
               
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
