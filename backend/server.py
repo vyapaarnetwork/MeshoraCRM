@@ -130,6 +130,7 @@ class CompanyCreate(BaseModel):
     address: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
+    subcategory_ids: Optional[List[str]] = None  # For selling partners
 
 class CompanyResponse(BaseModel):
     id: str
@@ -139,8 +140,20 @@ class CompanyResponse(BaseModel):
     address: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
+    subcategory_ids: Optional[List[str]] = None
+    subcategories: Optional[List[Dict[str, str]]] = None
     created_at: str
     is_active: bool
+
+# Admin User Creation Model
+class AdminUserCreate(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    role: UserRole
+    company_id: Optional[str] = None  # For existing company
+    company_name: Optional[str] = None  # For new company
+    phone: Optional[str] = None
 
 # Master Data Models
 class LeadStatusCreate(BaseModel):
