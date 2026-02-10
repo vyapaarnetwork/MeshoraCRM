@@ -155,6 +155,29 @@ class AdminUserCreate(BaseModel):
     company_name: Optional[str] = None  # For new company
     phone: Optional[str] = None
 
+# Admin User Update Model
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None  # Optional - only update if provided
+    role: Optional[UserRole] = None
+    company_id: Optional[str] = None
+    phone: Optional[str] = None
+    is_active: Optional[bool] = None
+
+# Lead Referral Model (for Selling Partners)
+class LeadReferralCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    customer_name: str
+    customer_email: EmailStr
+    customer_phone: Optional[str] = None
+    customer_company: Optional[str] = None
+    primary_category_id: str
+    secondary_category_id: Optional[str] = None
+    estimated_deal_value: Optional[float] = None
+    referral_notes: Optional[str] = None
+
 # Master Data Models
 class LeadStatusCreate(BaseModel):
     name: str
