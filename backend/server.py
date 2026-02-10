@@ -628,6 +628,76 @@ async def change_password(password_data: PasswordChange, current_user: dict = De
     
     return {"message": "Password changed successfully"}
 
+# ==================== NOTIFICATION HELPERS ====================
+
+async def create_notification(user_id: str, notification_type: str, title: str, message: str, lead_id: str = None, data: dict = None):
+    """Create a notification for a specific user"""
+    notification_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    
+    notification_doc = {
+        "id": notification_id,
+        "user_id": user_id,
+        "type": notification_type,
+        "title": title,
+        "message": message,
+        "lead_id": lead_id,
+        "data": data or {},
+        "is_read": False,
+        "created_at": now
+    }
+    
+    await db.notifications.insert_one(notification_doc)
+    return notification_doc
+
+async def create_notification_for_admins(notification_type: str, title: str, message: str, lead_id: str = None, data: dict = None):
+    """Create notifications for all super admins"""
+    admins = await db.users.find({"role": "super_admin", "is_active": True}, {"_id": 0}).to_list(100)
+    for admin in admins:
+        await create_notification(admin['id'], notification_type, title, message, lead_id, data)
+
+async def create_notification_for_user(user_id: str, notification_type: str, title: str, message: str, lead_id: str = None, data: dict = None):
+    """Create a notification for a specific user"""
+    await create_notification(user_id, notification_type, title, message, lead_id, data)
+
+# ==================== NOTIFICATION ROUTES ====================
+
+@api_router.get("/notifications", response_model=List[NotificationResponse])
+async def get_notifications(unread_only: bool = False, limit: int = 50, current_user: dict = Depends(get_current_user)):
+    """Get notifications for the current user"""
+    query = {"user_id": current_user['id']}
+    if unread_only:
+        query["is_read"] = False
+    
+    notifications = await db.notifications.find(query, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    return [NotificationResponse(**n) for n in notifications]
+
+@api_router.get("/notifications/unread-count")
+async def get_unread_count(current_user: dict = Depends(get_current_user)):
+    """Get count of unread notifications"""
+    count = await db.notifications.count_documents({"user_id": current_user['id'], "is_read": False})
+    return {"count": count}
+
+@api_router.put("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, current_user: dict = Depends(get_current_user)):
+    """Mark a notification as read"""
+    result = await db.notifications.update_one(
+        {"id": notification_id, "user_id": current_user['id']},
+        {"$set": {"is_read": True}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"message": "Notification marked as read"}
+
+@api_router.put("/notifications/mark-all-read")
+async def mark_all_notifications_read(current_user: dict = Depends(get_current_user)):
+    """Mark all notifications as read for current user"""
+    await db.notifications.update_many(
+        {"user_id": current_user['id'], "is_read": False},
+        {"$set": {"is_read": True}}
+    )
+    return {"message": "All notifications marked as read"}
+
 # ==================== USER ROUTES ====================
 
 @api_router.post("/users", response_model=UserResponse)
