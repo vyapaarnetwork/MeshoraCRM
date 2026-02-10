@@ -1154,6 +1154,7 @@ async def add_follow_up(lead_id: str, followup_data: FollowUpCreate, background_
         "id": str(uuid.uuid4()),
         "scheduled_date": followup_data.scheduled_date,
         "notes": followup_data.notes,
+        "pending_with": followup_data.pending_with,  # "selling_partner" or "customer"
         "is_completed": False,
         "completed_at": None,
         "completion_notes": None,
