@@ -4,107 +4,84 @@
 Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with 4 user roles (Selling Partner, Sales Associate, Customer, Super Admin), master data management, lead management with follow-ups and comments, transparent commission logic, role-specific dashboards, and comprehensive reports.
 
 ## User Personas
-1. **Super Admin (Vyapaar Network Team)**: Full system access, manages all masters, users, leads, commissions, and reports
-2. **Selling Partner**: Company that sells products/services, can have multiple users, views assigned leads and commission summary, can refer leads
-3. **Sales Associate**: Independent individual who brings leads, earns perpetual commission from Vyapaar's share
+1. **Super Admin (Vyapaar Network Team)**: Full system access, manages all masters, users, leads, commissions, reports, and grid analytics
+2. **Selling Partner**: Company that sells products/services, can refer leads, request internal services, views assigned leads and commission summary
+3. **Sales Associate**: Independent individual who brings leads, earns perpetual commission, can refer leads
 4. **Customer**: Company/individual looking for vendors, can submit and track lead requests
-
-## Core Requirements (Static)
-- Multi-tenant architecture with role-based access control (RBAC)
-- JWT-based authentication
-- Lead management with follow-ups and comments
-- Master data management (Categories, Lead Status, Commission Templates)
-- Transparent commission calculation and breakdown
-- Role-specific dashboards with analytics
-- Reports with filters and CSV export
-- SendGrid email integration for follow-up reminders (configured, requires API key)
-
-## Architecture
-- **Frontend**: React 19 with Shadcn/UI, TailwindCSS, Recharts
-- **Backend**: FastAPI with MongoDB (Motor async driver)
-- **Authentication**: JWT tokens
-- **Email**: SendGrid (configured, requires API key)
-- **Styling**: Manrope + Inter fonts, Blue (#4169E1) + Red (#DC143C) brand colors
 
 ## What's Been Implemented
 
-### Phase 1 - MVP Complete (Feb 9, 2025)
-- [x] User registration for all 4 roles with company creation
-- [x] JWT authentication with login/logout
-- [x] Role-based access control in frontend and backend
-- [x] Master Data Management:
-  - Primary Categories (HR, IT, Marketing, Finance, Compliance)
-  - Secondary Categories mapped to primary
-  - Lead Statuses (Draft, New, Qualified, Proposal, Negotiation, Won, Lost, On Hold)
-  - Commission Templates (Standard 15%, Premium Partner 12%, High Value 10%)
-- [x] Lead Management:
-  - Create, read, update, delete leads
-  - Category and status tracking
-  - Follow-up scheduling with completion tracking
-  - Time-stamped, role-tagged comments
-- [x] Commission Logic:
-  - Vyapaar commission from deal value
-  - Commission override at lead level
-  - Sales Associate gets % from Vyapaar's share
-  - Transparent breakdown display
+### Phase 1-3 - MVP + Enhancements (Feb 9-10, 2025)
+- [x] JWT authentication with 4 user roles
+- [x] Master Data Management (Categories, Lead Status, Commission Templates)
+- [x] Lead Management with follow-ups and comments
+- [x] Commission calculation with transparent breakdown
 - [x] Role-specific Dashboards
 - [x] Reports & Analytics with CSV export
-
-### Phase 2 - Enhanced Features (Feb 10, 2025)
 - [x] Profile Settings Page
 - [x] Lead Bulk Import with CSV template
-- [x] Enhanced Reporting & Commission Engine
-
-### Phase 3 - User Management & Lead State Improvements (Feb 10, 2025)
 - [x] Customer-Only Self Registration
-- [x] Admin User Creation (any role)
-- [x] Draft Lead Status
+- [x] Admin User Creation/Edit/Delete
+- [x] Draft Lead Status with auto-transition
 - [x] Partner Sub-categories
 - [x] Follow-up "Pending With" Assignment
 
-### Phase 4 - User Management & Lead Referral (Feb 10, 2025)
-- [x] **User Edit Functionality**:
-  - Super Admin can edit any user's details
-  - Update name, email, phone, role, company assignment
-  - Optional password change during edit
-- [x] **User Delete Functionality**:
-  - Super Admin can delete users (soft delete - sets is_active=False)
-  - Cannot delete own account (safety check)
-  - Delete confirmation dialog
-- [x] **Company Assignment for All Roles**:
-  - Selling Partners, Customers, and Sales Associates can be assigned to companies
-  - Dropdown shows all available companies during user create/edit
-- [x] **Lead Referral Page (Selling Partners)**:
-  - New "Lead Referral" menu item in sidebar for Selling Partners
-  - Stats dashboard: Total Referrals, Pending Review, Assigned, Won Deals
-  - Info card explaining the referral workflow
-  - "New Referral" dialog with:
-    - Lead title and description
-    - Customer details (name, email, phone, company)
-    - Category selection (primary and secondary)
-    - Estimated deal value
-    - Referral notes
-  - Referrals saved in Draft status
-  - Referrals track "referred_by_partner_id"
-  - "My Referrals" table showing status and assignment
-- [x] **Referral Status Transition**:
-  - Referrals start in Draft status (no partner assigned)
-  - When Super Admin assigns a selling partner, status changes to New
+### Phase 4 - Lead Referral, Notifications & Grid Report (Feb 10, 2025)
+- [x] **Lead Referral for Both Roles**:
+  - Selling Partners AND Sales Associates can now create lead referrals
+  - Referrals saved with referred_by_partner_id or referred_by_associate_id
+  - All referrals start in Draft status until admin assigns a partner
+  
+- [x] **Internal Request Feature (Selling Partners)**:
+  - Selling Partners can request services from other partners
+  - "Internal Request" button with is_internal_request flag
+  - Pre-fills partner's details as the customer
+  - Separate tab view for internal requests vs external referrals
+
+- [x] **Notifications System**:
+  - Bell icon in header with unread count badge
+  - Dropdown showing recent notifications
+  - Notification types: new_lead, lead_assigned, lead_status_change, new_referral
+  - Click notification to navigate to lead detail
+  - "Mark all as read" functionality
+  - Auto-created on lead creation, assignment, and referral submission
+
+- [x] **SMS Notifications (Twilio)**:
+  - Integration code ready for Twilio SMS
+  - Sends SMS when lead is assigned to partner
+  - Notifies both assigned partner and super admins
+  - Gracefully handles missing credentials (logs warning, doesn't fail)
+
+- [x] **Grid Report Page (Super Admin)**:
+  - Comprehensive performance dashboard
+  - Summary stats: Total Leads, Won/Lost Deals, Deal Value, Vyapaar Commission, Partner Revenue
+  - Partner Performance Summary table with conversion rates
+  - Detailed Lead Grid with all deal data
+  - Filters: Date range, Partner, Category, Status
+  - Export to CSV functionality
+
+- [x] **Sortable/Filterable Tables**:
+  - Reusable SortableTable component
+  - Click column header to sort (asc/desc)
+  - Sort indicator shows current direction
+  - Global search across all columns
+  - Pagination with page navigation
 
 ## Prioritized Backlog
 
-### P0 - Critical (Next Sprint)
-- [ ] SendGrid API key configuration for email reminders
+### P0 - Critical (Requires User Input)
+- [ ] **Twilio SMS Credentials**: Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER to backend/.env
+- [ ] **SendGrid API Key**: Configure for email reminders
 
 ### P1 - High Priority
 - [ ] Email templates for follow-up reminders
-- [ ] Lead assignment workflow with auto-routing based on partner sub-categories
+- [ ] Lead auto-routing based on partner sub-categories
 - [ ] Dashboard date range filters
 
 ### P2 - Medium Priority  
 - [ ] Dark mode toggle
 - [ ] Lead activity timeline
-- [ ] Notifications system
+- [ ] Real-time notifications (WebSocket)
 - [ ] Advanced search with multiple filters
 
 ### P3 - Nice to Have
@@ -117,88 +94,41 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - **Super Admin**: admin@vyapaarnetwork.com / admin123
 - **Selling Partner**: partner1@test.com / test123
 
-## API Endpoints Summary
+## Key API Endpoints
 
-### Authentication
-- `POST /api/auth/register` - Customer registration only
-- `POST /api/auth/login` - User authentication
+### Lead Referral
+- `POST /api/leads/referral` - Create referral (both partners and associates)
+- `GET /api/leads/my-referrals` - List user's referrals
 
-### User Management
-- `POST /api/users` - Admin creates user (any role)
-- `GET /api/users` - List all users (Admin)
-- `GET /api/users/{id}` - Get user details (Admin)
-- `PUT /api/users/{id}` - Update user (Admin)
-- `DELETE /api/users/{id}` - Soft delete user (Admin)
+### Notifications
+- `GET /api/notifications` - Get user's notifications
+- `GET /api/notifications/unread-count` - Get unread count
+- `PUT /api/notifications/{id}/read` - Mark as read
+- `PUT /api/notifications/mark-all-read` - Mark all as read
 
-### Lead Management
-- `GET /api/leads` - List leads (role-filtered)
-- `POST /api/leads` - Create lead (Draft if no partner)
-- `PUT /api/leads/{id}` - Update lead (auto Draft→New on partner assign)
-- `POST /api/leads/{id}/follow-ups` - Add follow-up with pending_with
+### Grid Report
+- `GET /api/reports/grid-performance` - Get performance data with filters
 
-### Lead Referral (Selling Partners)
-- `POST /api/leads/referral` - Create referral (Draft status)
-- `GET /api/leads/my-referrals` - List partner's referrals
+## Environment Variables Required
 
-### Companies
-- `GET /api/companies` - List companies with subcategories
-- `POST /api/companies` - Create company with subcategory_ids
-- `PUT /api/companies/{id}` - Update company
+```env
+# Backend (.env)
+MONGO_URL=mongodb://...
+DB_NAME=vyapaar_crm
 
-### Master Data
-- `GET /api/master/lead-status` - Lead statuses including Draft
-- `GET /api/master/primary-categories` - Primary categories
-- `GET /api/master/secondary-categories` - Secondary categories
+# Twilio SMS (Optional - for SMS notifications)
+TWILIO_ACCOUNT_SID=your_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_PHONE_NUMBER=+1234567890
 
-## Database Schema
-
-### Users Collection
-```json
-{
-  "id": "uuid",
-  "email": "string",
-  "password": "hashed",
-  "name": "string",
-  "role": "super_admin|selling_partner|sales_associate|customer",
-  "company_id": "uuid|null",
-  "phone": "string|null",
-  "is_active": true,
-  "created_at": "datetime"
-}
+# SendGrid (Optional - for email reminders)
+SENDGRID_API_KEY=your_api_key
+SENDER_EMAIL=noreply@vyapaarnetwork.com
 ```
 
-### Leads Collection
-```json
-{
-  "id": "uuid",
-  "title": "string",
-  "customer_name": "string",
-  "customer_email": "string",
-  "selling_partner_id": "uuid|null",
-  "sales_associate_id": "uuid|null",
-  "referred_by_partner_id": "uuid|null",
-  "status_id": "uuid",
-  "deal_value": "number",
-  "follow_ups": [{
-    "id": "uuid",
-    "scheduled_date": "date",
-    "notes": "string",
-    "pending_with": "customer|selling_partner|null",
-    "is_completed": false
-  }],
-  "comments": [],
-  "created_at": "datetime"
-}
-```
-
-### Companies Collection
-```json
-{
-  "id": "uuid",
-  "name": "string",
-  "type": "selling_partner|customer",
-  "subcategory_ids": ["uuid"],
-  "vyapaar_commission_percentage": 15.0,
-  "is_active": true
-}
-```
+## Architecture
+- **Frontend**: React 19 with Shadcn/UI, TailwindCSS, Recharts
+- **Backend**: FastAPI with MongoDB (Motor async driver)
+- **Authentication**: JWT tokens
+- **SMS**: Twilio (configured, awaiting credentials)
+- **Email**: SendGrid (configured, awaiting credentials)
