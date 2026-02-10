@@ -37,6 +37,11 @@ JWT_EXPIRATION_HOURS = 24
 SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'noreply@vyapaarnetwork.com')
 
+# Twilio SMS Configuration
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
+
 # Create the main app
 app = FastAPI(title="Vyapaar Network CRM API")
 api_router = APIRouter(prefix="/api")
