@@ -9,6 +9,7 @@ import Leads from './pages/Leads';
 import LeadDetail from './pages/LeadDetail';
 import LeadForm from './pages/LeadForm';
 import LeadImport from './pages/LeadImport';
+import LeadReferral from './pages/LeadReferral';
 import Categories from './pages/Categories';
 import Commission from './pages/Commission';
 import Reports from './pages/Reports';
@@ -100,6 +101,13 @@ function AppRoutes() {
       <Route path="/leads/import" element={
         <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'customer']}>
           <LeadImport />
+        </ProtectedRoute>
+      } />
+
+      {/* Lead Referral - Selling Partners Only */}
+      <Route path="/lead-referral" element={
+        <ProtectedRoute allowedRoles={['selling_partner']}>
+          <LeadReferral />
         </ProtectedRoute>
       } />
 
