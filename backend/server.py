@@ -728,13 +728,34 @@ async def create_company(company_data: CompanyCreate, current_user: dict = Depen
         "address": company_data.address,
         "contact_email": company_data.contact_email,
         "contact_phone": company_data.contact_phone,
+        "subcategory_ids": company_data.subcategory_ids or [],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "is_active": True
     }
     
     await db.companies.insert_one(company_doc)
     
-    return CompanyResponse(**{k: v for k, v in company_doc.items() if k != '_id'})
+    # Get subcategory names
+    subcategories = []
+    if company_doc.get('subcategory_ids'):
+        for sub_id in company_doc['subcategory_ids']:
+            sub = await db.secondary_categories.find_one({"id": sub_id}, {"_id": 0})
+            if sub:
+                subcategories.append({"id": sub['id'], "name": sub['name']})
+    
+    return CompanyResponse(
+        id=company_doc['id'],
+        name=company_doc['name'],
+        type=company_doc['type'],
+        vyapaar_commission_percentage=company_doc['vyapaar_commission_percentage'],
+        address=company_doc.get('address'),
+        contact_email=company_doc.get('contact_email'),
+        contact_phone=company_doc.get('contact_phone'),
+        subcategory_ids=company_doc.get('subcategory_ids'),
+        subcategories=subcategories if subcategories else None,
+        created_at=company_doc['created_at'],
+        is_active=company_doc['is_active']
+    )
 
 @api_router.get("/companies", response_model=List[CompanyResponse])
 async def list_companies(type: Optional[str] = None, current_user: dict = Depends(get_current_user)):
@@ -743,14 +764,58 @@ async def list_companies(type: Optional[str] = None, current_user: dict = Depend
         query['type'] = type
     
     companies = await db.companies.find(query, {"_id": 0}).to_list(1000)
-    return [CompanyResponse(**c) for c in companies]
+    
+    result = []
+    for c in companies:
+        subcategories = []
+        if c.get('subcategory_ids'):
+            for sub_id in c['subcategory_ids']:
+                sub = await db.secondary_categories.find_one({"id": sub_id}, {"_id": 0})
+                if sub:
+                    subcategories.append({"id": sub['id'], "name": sub['name']})
+        
+        result.append(CompanyResponse(
+            id=c['id'],
+            name=c['name'],
+            type=c['type'],
+            vyapaar_commission_percentage=c.get('vyapaar_commission_percentage', 15.0),
+            address=c.get('address'),
+            contact_email=c.get('contact_email'),
+            contact_phone=c.get('contact_phone'),
+            subcategory_ids=c.get('subcategory_ids'),
+            subcategories=subcategories if subcategories else None,
+            created_at=c['created_at'],
+            is_active=c.get('is_active', True)
+        ))
+    
+    return result
 
 @api_router.get("/companies/{company_id}", response_model=CompanyResponse)
 async def get_company(company_id: str, current_user: dict = Depends(get_current_user)):
     company = await db.companies.find_one({"id": company_id}, {"_id": 0})
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-    return CompanyResponse(**company)
+    
+    subcategories = []
+    if company.get('subcategory_ids'):
+        for sub_id in company['subcategory_ids']:
+            sub = await db.secondary_categories.find_one({"id": sub_id}, {"_id": 0})
+            if sub:
+                subcategories.append({"id": sub['id'], "name": sub['name']})
+    
+    return CompanyResponse(
+        id=company['id'],
+        name=company['name'],
+        type=company['type'],
+        vyapaar_commission_percentage=company.get('vyapaar_commission_percentage', 15.0),
+        address=company.get('address'),
+        contact_email=company.get('contact_email'),
+        contact_phone=company.get('contact_phone'),
+        subcategory_ids=company.get('subcategory_ids'),
+        subcategories=subcategories if subcategories else None,
+        created_at=company['created_at'],
+        is_active=company.get('is_active', True)
+    )
 
 @api_router.put("/companies/{company_id}", response_model=CompanyResponse)
 async def update_company(company_id: str, company_data: CompanyCreate, current_user: dict = Depends(get_current_user)):
@@ -764,7 +829,27 @@ async def update_company(company_id: str, company_data: CompanyCreate, current_u
         raise HTTPException(status_code=404, detail="Company not found")
     
     company = await db.companies.find_one({"id": company_id}, {"_id": 0})
-    return CompanyResponse(**company)
+    
+    subcategories = []
+    if company.get('subcategory_ids'):
+        for sub_id in company['subcategory_ids']:
+            sub = await db.secondary_categories.find_one({"id": sub_id}, {"_id": 0})
+            if sub:
+                subcategories.append({"id": sub['id'], "name": sub['name']})
+    
+    return CompanyResponse(
+        id=company['id'],
+        name=company['name'],
+        type=company['type'],
+        vyapaar_commission_percentage=company.get('vyapaar_commission_percentage', 15.0),
+        address=company.get('address'),
+        contact_email=company.get('contact_email'),
+        contact_phone=company.get('contact_phone'),
+        subcategory_ids=company.get('subcategory_ids'),
+        subcategories=subcategories if subcategories else None,
+        created_at=company['created_at'],
+        is_active=company.get('is_active', True)
+    )
 
 # ==================== MASTER DATA ROUTES ====================
 
