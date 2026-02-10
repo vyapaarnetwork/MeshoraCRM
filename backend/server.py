@@ -1703,6 +1703,10 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     
     # Create notifications for lead assignment
     if new_partner_id and new_partner_id != old_partner_id:
+        # Get partner details for SMS
+        partner = await db.users.find_one({"id": new_partner_id}, {"_id": 0})
+        partner_name = partner['name'] if partner else 'Unknown'
+        
         await create_notification_for_user(
             new_partner_id,
             notification_type="lead_assigned",
@@ -1717,6 +1721,10 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
             message=f"Lead '{updated_lead['title']}' assigned to partner",
             lead_id=lead_id
         )
+        
+        # Send SMS notifications
+        await send_lead_assignment_sms(new_partner_id, updated_lead['title'], updated_lead['customer_name'])
+        await send_lead_assignment_sms_to_admins(updated_lead['title'], partner_name, updated_lead['customer_name'])
     
     # Create notification for status change
     if 'status_id' in update_data and update_data['status_id'] != lead.get('status_id'):
