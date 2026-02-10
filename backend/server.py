@@ -1118,6 +1118,15 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     update_data = lead_data.model_dump(exclude_unset=True, exclude_none=True)
     update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
     
+    # Check if selling partner is being assigned to a Draft lead
+    if 'selling_partner_id' in update_data and update_data['selling_partner_id']:
+        current_status = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0})
+        if current_status and current_status.get('name', '').lower() == 'draft':
+            # Auto-change status from Draft to New when partner is assigned
+            new_status = await db.lead_statuses.find_one({"name": "New", "is_active": True}, {"_id": 0})
+            if new_status:
+                update_data['status_id'] = new_status['id']
+    
     await db.leads.update_one({"id": lead_id}, {"$set": update_data})
     
     updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
