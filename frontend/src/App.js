@@ -138,10 +138,7 @@ function AppRoutes() {
       {/* Settings placeholder */}
       <Route path="/settings" element={
         <ProtectedRoute>
-          <div className="p-6">
-            <h1 className="text-2xl font-bold">Settings</h1>
-            <p className="text-muted-foreground mt-2">Settings page coming soon...</p>
-          </div>
+          <Settings />
         </ProtectedRoute>
       } />
 
