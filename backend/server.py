@@ -1447,6 +1447,25 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
     }
     
     await db.leads.insert_one(lead_doc)
+    
+    # Create notifications for new lead
+    await create_notification_for_admins(
+        notification_type="new_lead",
+        title="New Lead Created",
+        message=f"New lead '{lead_data.title}' created by {current_user['name']}",
+        lead_id=lead_id
+    )
+    
+    # Notify assigned selling partner
+    if lead_data.selling_partner_id:
+        await create_notification_for_user(
+            lead_data.selling_partner_id,
+            notification_type="lead_assigned",
+            title="New Lead Assigned",
+            message=f"You have been assigned a new lead: {lead_data.title}",
+            lead_id=lead_id
+        )
+    
     return await enrich_lead(lead_doc)
 
 @api_router.post("/leads/referral", response_model=LeadResponse)
