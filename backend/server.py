@@ -1632,6 +1632,10 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
     
     # Check if selling partner is being assigned to a Draft lead
+    old_partner_id = lead.get('selling_partner_id')
+    new_partner_id = update_data.get('selling_partner_id')
+    status_changed = False
+    
     if 'selling_partner_id' in update_data and update_data['selling_partner_id']:
         current_status = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0})
         if current_status and current_status.get('name', '').lower() == 'draft':
@@ -1639,10 +1643,40 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
             new_status = await db.lead_statuses.find_one({"name": "New", "is_active": True}, {"_id": 0})
             if new_status:
                 update_data['status_id'] = new_status['id']
+                status_changed = True
     
     await db.leads.update_one({"id": lead_id}, {"$set": update_data})
     
     updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    
+    # Create notifications for lead assignment
+    if new_partner_id and new_partner_id != old_partner_id:
+        await create_notification_for_user(
+            new_partner_id,
+            notification_type="lead_assigned",
+            title="New Lead Assigned",
+            message=f"You have been assigned a new lead: {updated_lead['title']}",
+            lead_id=lead_id
+        )
+        # Notify admins about the assignment
+        await create_notification_for_admins(
+            notification_type="lead_assigned",
+            title="Lead Assigned",
+            message=f"Lead '{updated_lead['title']}' assigned to partner",
+            lead_id=lead_id
+        )
+    
+    # Create notification for status change
+    if 'status_id' in update_data and update_data['status_id'] != lead.get('status_id'):
+        new_status_doc = await db.lead_statuses.find_one({"id": update_data['status_id']}, {"_id": 0})
+        status_name = new_status_doc['name'] if new_status_doc else 'Unknown'
+        await create_notification_for_admins(
+            notification_type="lead_status_change",
+            title="Lead Status Updated",
+            message=f"Lead '{updated_lead['title']}' status changed to {status_name}",
+            lead_id=lead_id
+        )
+    
     return await enrich_lead(updated_lead)
 
 @api_router.delete("/leads/{lead_id}")
