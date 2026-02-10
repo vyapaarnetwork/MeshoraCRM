@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
@@ -20,29 +21,110 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { Search, Users, Filter, Mail, Phone, Building2, Calendar } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
+import { Search, Users, Filter, Mail, Phone, Building2, Calendar, Plus, Loader2, UserPlus } from 'lucide-react';
 import api, { formatDate, getRoleLabel, getRoleColor } from '../utils/api';
 import { toast } from 'sonner';
 
 const UsersList = () => {
   const { isAdmin } = useAuth();
   const [users, setUsers] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+  
+  // Dialog state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: '',
+    company_id: '',
+    company_name: '',
+    phone: ''
+  });
 
   useEffect(() => {
-    fetchUsers();
+    fetchData();
   }, []);
 
-  const fetchUsers = async () => {
+  const fetchData = async () => {
     try {
-      const response = await api.get('/users');
-      setUsers(response.data);
+      const [usersRes, companiesRes] = await Promise.all([
+        api.get('/users'),
+        api.get('/companies').catch(() => ({ data: [] }))
+      ]);
+      setUsers(usersRes.data);
+      setCompanies(companiesRes.data);
     } catch (error) {
       toast.error('Failed to load users');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openDialog = () => {
+    setFormData({
+      name: '',
+      email: '',
+      password: '',
+      role: '',
+      company_id: '',
+      company_name: '',
+      phone: ''
+    });
+    setDialogOpen(true);
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.name || !formData.email || !formData.password || !formData.role) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+
+    // Validate company for selling_partner and customer
+    if ((formData.role === 'selling_partner' || formData.role === 'customer')) {
+      if (!formData.company_id && !formData.company_name) {
+        toast.error('Please select an existing company or enter a new company name');
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      const payload = {
+        name: formData.name,
+        email: formData.email,
+        password: formData.password,
+        role: formData.role,
+        phone: formData.phone || null,
+        company_id: formData.company_id || null,
+        company_name: formData.company_id ? null : formData.company_name || null
+      };
+
+      await api.post('/users', payload);
+      toast.success('User created successfully');
+      fetchData();
+      setDialogOpen(false);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to create user');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -64,15 +146,35 @@ const UsersList = () => {
     customer: users.filter(u => u.role === 'customer').length
   };
 
+  // Filter companies by type for the dropdown
+  const getCompaniesForRole = (role) => {
+    if (role === 'selling_partner') {
+      return companies.filter(c => c.type === 'selling_partner');
+    } else if (role === 'customer') {
+      return companies.filter(c => c.type === 'customer');
+    }
+    return [];
+  };
+
+  const needsCompany = formData.role === 'selling_partner' || formData.role === 'customer';
+
   if (loading) return <UsersSkeleton />;
 
   return (
     <div className="space-y-6" data-testid="users-page">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Users</h1>
-        <p className="text-muted-foreground mt-1">
-          Manage all platform users and their roles
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Users</h1>
+          <p className="text-muted-foreground mt-1">
+            Manage all platform users and their roles
+          </p>
+        </div>
+        {isAdmin && (
+          <Button onClick={openDialog} data-testid="add-user-btn">
+            <UserPlus className="w-4 h-4 mr-2" />
+            Add User
+          </Button>
+        )}
       </div>
 
       {/* Stats */}
@@ -202,6 +304,138 @@ const UsersList = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Add User Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add New User</DialogTitle>
+            <DialogDescription>
+              Create a new user account. All user types can be created here.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Full Name *</Label>
+                <Input
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="John Doe"
+                  data-testid="user-name-input"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Role *</Label>
+                <Select 
+                  value={formData.role} 
+                  onValueChange={(v) => setFormData({ ...formData, role: v, company_id: '', company_name: '' })}
+                >
+                  <SelectTrigger data-testid="user-role-select">
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="super_admin">Super Admin</SelectItem>
+                    <SelectItem value="selling_partner">Selling Partner</SelectItem>
+                    <SelectItem value="sales_associate">Sales Associate</SelectItem>
+                    <SelectItem value="customer">Customer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Email *</Label>
+              <Input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                placeholder="user@example.com"
+                data-testid="user-email-input"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Password *</Label>
+              <Input
+                type="password"
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                placeholder="Minimum 6 characters"
+                data-testid="user-password-input"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Phone (Optional)</Label>
+              <Input
+                value={formData.phone}
+                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                placeholder="+91 98765 43210"
+                data-testid="user-phone-input"
+              />
+            </div>
+
+            {needsCompany && (
+              <>
+                <div className="space-y-2">
+                  <Label>Select Existing Company</Label>
+                  <Select 
+                    value={formData.company_id} 
+                    onValueChange={(v) => setFormData({ ...formData, company_id: v, company_name: '' })}
+                  >
+                    <SelectTrigger data-testid="user-company-select">
+                      <SelectValue placeholder="Select company (or create new below)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getCompaniesForRole(formData.role).map((company) => (
+                        <SelectItem key={company.id} value={company.id}>
+                          {company.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                {!formData.company_id && (
+                  <div className="space-y-2">
+                    <Label>Or Create New Company</Label>
+                    <Input
+                      value={formData.company_name}
+                      onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
+                      placeholder="New company name"
+                      data-testid="user-new-company-input"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      A new {formData.role === 'selling_partner' ? 'selling partner' : 'customer'} company will be created
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} disabled={submitting} data-testid="user-submit-btn">
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Create User
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
