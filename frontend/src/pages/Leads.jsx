@@ -37,7 +37,8 @@ import {
   Trash2,
   FileText,
   Building2,
-  Calendar
+  Calendar,
+  Upload
 } from 'lucide-react';
 import api, { formatCurrency, formatDate } from '../utils/api';
 import { toast } from 'sonner';
