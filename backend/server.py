@@ -500,6 +500,56 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         created_at=current_user['created_at']
     )
 
+# ==================== PROFILE ROUTES ====================
+
+@api_router.put("/profile", response_model=UserResponse)
+async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depends(get_current_user)):
+    """Update user profile (name, phone)"""
+    update_data = profile_data.model_dump(exclude_unset=True, exclude_none=True)
+    
+    if update_data:
+        await db.users.update_one({"id": current_user['id']}, {"$set": update_data})
+    
+    updated_user = await db.users.find_one({"id": current_user['id']}, {"_id": 0, "password": 0})
+    
+    company_name = None
+    if updated_user.get('company_id'):
+        company = await db.companies.find_one({"id": updated_user['company_id']}, {"_id": 0})
+        if company:
+            company_name = company['name']
+    
+    return UserResponse(
+        id=updated_user['id'],
+        email=updated_user['email'],
+        name=updated_user['name'],
+        role=UserRole(updated_user['role']),
+        company_id=updated_user.get('company_id'),
+        company_name=company_name,
+        phone=updated_user.get('phone'),
+        is_active=updated_user.get('is_active', True),
+        created_at=updated_user['created_at']
+    )
+
+@api_router.post("/profile/change-password")
+async def change_password(password_data: PasswordChange, current_user: dict = Depends(get_current_user)):
+    """Change user password"""
+    # Get user with password
+    user = await db.users.find_one({"id": current_user['id']}, {"_id": 0})
+    
+    # Verify current password
+    if not verify_password(password_data.current_password, user['password']):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    
+    # Validate new password
+    if len(password_data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+    
+    # Update password
+    new_hash = hash_password(password_data.new_password)
+    await db.users.update_one({"id": current_user['id']}, {"$set": {"password": new_hash}})
+    
+    return {"message": "Password changed successfully"}
+
 # ==================== USER ROUTES ====================
 
 @api_router.get("/users", response_model=List[UserResponse])
