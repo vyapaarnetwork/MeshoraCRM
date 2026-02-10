@@ -29,12 +29,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
-import { Search, Users, Filter, Mail, Phone, Building2, Calendar, Plus, Loader2, UserPlus } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
+import { Search, Users, Filter, Mail, Phone, Building2, Calendar, Plus, Loader2, UserPlus, Edit, Trash2 } from 'lucide-react';
 import api, { formatDate, getRoleLabel, getRoleColor } from '../utils/api';
 import { toast } from 'sonner';
 
 const UsersList = () => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,6 +53,7 @@ const UsersList = () => {
   
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -53,6 +64,11 @@ const UsersList = () => {
     company_name: '',
     phone: ''
   });
+
+  // Delete confirmation state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -73,58 +89,114 @@ const UsersList = () => {
     }
   };
 
-  const openDialog = () => {
-    setFormData({
-      name: '',
-      email: '',
-      password: '',
-      role: '',
-      company_id: '',
-      company_name: '',
-      phone: ''
-    });
+  const openDialog = (user = null) => {
+    setEditingUser(user);
+    if (user) {
+      setFormData({
+        name: user.name,
+        email: user.email,
+        password: '',
+        role: user.role,
+        company_id: user.company_id || '',
+        company_name: '',
+        phone: user.phone || ''
+      });
+    } else {
+      setFormData({
+        name: '',
+        email: '',
+        password: '',
+        role: '',
+        company_id: '',
+        company_name: '',
+        phone: ''
+      });
+    }
     setDialogOpen(true);
   };
 
   const handleSubmit = async () => {
-    if (!formData.name || !formData.email || !formData.password || !formData.role) {
+    if (!formData.name || !formData.email || !formData.role) {
       toast.error('Please fill in all required fields');
       return;
     }
 
-    if (formData.password.length < 6) {
+    if (!editingUser && !formData.password) {
+      toast.error('Password is required for new users');
+      return;
+    }
+
+    if (formData.password && formData.password.length < 6) {
       toast.error('Password must be at least 6 characters');
       return;
     }
 
-    // Validate company for selling_partner and customer
-    if ((formData.role === 'selling_partner' || formData.role === 'customer')) {
-      if (!formData.company_id && !formData.company_name) {
-        toast.error('Please select an existing company or enter a new company name');
-        return;
+    // Validate company for roles that need it
+    if (['selling_partner', 'customer', 'sales_associate'].includes(formData.role)) {
+      if (!formData.company_id && !formData.company_name && formData.role !== 'sales_associate') {
+        // For selling_partner and customer, either company_id or company_name is needed
+        // Sales associate can optionally be assigned to a company
       }
     }
 
     setSubmitting(true);
     try {
-      const payload = {
-        name: formData.name,
-        email: formData.email,
-        password: formData.password,
-        role: formData.role,
-        phone: formData.phone || null,
-        company_id: formData.company_id || null,
-        company_name: formData.company_id ? null : formData.company_name || null
-      };
-
-      await api.post('/users', payload);
-      toast.success('User created successfully');
+      if (editingUser) {
+        // Update existing user
+        const payload = {
+          name: formData.name,
+          email: formData.email,
+          role: formData.role,
+          phone: formData.phone || null,
+          company_id: formData.company_id || null
+        };
+        if (formData.password) {
+          payload.password = formData.password;
+        }
+        await api.put(`/users/${editingUser.id}`, payload);
+        toast.success('User updated successfully');
+      } else {
+        // Create new user
+        const payload = {
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          role: formData.role,
+          phone: formData.phone || null,
+          company_id: formData.company_id || null,
+          company_name: formData.company_id ? null : formData.company_name || null
+        };
+        await api.post('/users', payload);
+        toast.success('User created successfully');
+      }
       fetchData();
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to create user');
+      toast.error(error.response?.data?.detail || 'Operation failed');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDeleteClick = (user) => {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!userToDelete) return;
+    
+    setDeleting(true);
+    try {
+      await api.delete(`/users/${userToDelete.id}`);
+      toast.success('User deleted successfully');
+      fetchData();
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to delete user');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -146,17 +218,14 @@ const UsersList = () => {
     customer: users.filter(u => u.role === 'customer').length
   };
 
-  // Filter companies by type for the dropdown
-  const getCompaniesForRole = (role) => {
-    if (role === 'selling_partner') {
-      return companies.filter(c => c.type === 'selling_partner');
-    } else if (role === 'customer') {
-      return companies.filter(c => c.type === 'customer');
-    }
-    return [];
+  // All companies can be assigned to users
+  const getAllCompanies = () => {
+    return companies;
   };
 
-  const needsCompany = formData.role === 'selling_partner' || formData.role === 'customer';
+  // Check if role needs company
+  const needsCompany = ['selling_partner', 'customer', 'sales_associate'].includes(formData.role);
+  const canCreateCompany = ['selling_partner', 'customer'].includes(formData.role);
 
   if (loading) return <UsersSkeleton />;
 
@@ -170,7 +239,7 @@ const UsersList = () => {
           </p>
         </div>
         {isAdmin && (
-          <Button onClick={openDialog} data-testid="add-user-btn">
+          <Button onClick={() => openDialog()} data-testid="add-user-btn">
             <UserPlus className="w-4 h-4 mr-2" />
             Add User
           </Button>
@@ -236,6 +305,7 @@ const UsersList = () => {
                     <TableHead>Contact</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Joined</TableHead>
+                    {isAdmin && <TableHead className="w-[100px]">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -288,6 +358,31 @@ const UsersList = () => {
                           {formatDate(user.created_at)}
                         </div>
                       </TableCell>
+                      {isAdmin && (
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button 
+                              size="icon" 
+                              variant="ghost"
+                              onClick={() => openDialog(user)}
+                              data-testid={`edit-user-${user.id}`}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            {user.id !== currentUser?.id && (
+                              <Button 
+                                size="icon" 
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => handleDeleteClick(user)}
+                                data-testid={`delete-user-${user.id}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -305,13 +400,13 @@ const UsersList = () => {
         </CardContent>
       </Card>
 
-      {/* Add User Dialog */}
+      {/* Add/Edit User Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
+            <DialogTitle>{editingUser ? 'Edit User' : 'Add New User'}</DialogTitle>
             <DialogDescription>
-              Create a new user account. All user types can be created here.
+              {editingUser ? 'Update user details and settings' : 'Create a new user account. All user types can be created here.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -357,12 +452,12 @@ const UsersList = () => {
             </div>
 
             <div className="space-y-2">
-              <Label>Password *</Label>
+              <Label>{editingUser ? 'New Password (leave blank to keep current)' : 'Password *'}</Label>
               <Input
                 type="password"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder="Minimum 6 characters"
+                placeholder={editingUser ? '••••••••' : 'Minimum 6 characters'}
                 data-testid="user-password-input"
               />
             </div>
@@ -380,25 +475,26 @@ const UsersList = () => {
             {needsCompany && (
               <>
                 <div className="space-y-2">
-                  <Label>Select Existing Company</Label>
+                  <Label>Assign to Company {formData.role === 'sales_associate' ? '(Optional)' : ''}</Label>
                   <Select 
                     value={formData.company_id} 
                     onValueChange={(v) => setFormData({ ...formData, company_id: v, company_name: '' })}
                   >
                     <SelectTrigger data-testid="user-company-select">
-                      <SelectValue placeholder="Select company (or create new below)" />
+                      <SelectValue placeholder="Select company" />
                     </SelectTrigger>
                     <SelectContent>
-                      {getCompaniesForRole(formData.role).map((company) => (
+                      <SelectItem value="">None</SelectItem>
+                      {getAllCompanies().map((company) => (
                         <SelectItem key={company.id} value={company.id}>
-                          {company.name}
+                          {company.name} ({company.type === 'selling_partner' ? 'Partner' : 'Customer'})
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 
-                {!formData.company_id && (
+                {canCreateCompany && !formData.company_id && !editingUser && (
                   <div className="space-y-2">
                     <Label>Or Create New Company</Label>
                     <Input
@@ -424,18 +520,48 @@ const UsersList = () => {
               {submitting ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Creating...
+                  {editingUser ? 'Updating...' : 'Creating...'}
                 </>
               ) : (
                 <>
-                  <UserPlus className="w-4 h-4 mr-2" />
-                  Create User
+                  {editingUser ? <Edit className="w-4 h-4 mr-2" /> : <UserPlus className="w-4 h-4 mr-2" />}
+                  {editingUser ? 'Update User' : 'Create User'}
                 </>
               )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete User</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{userToDelete?.name}</strong>? 
+              This action will deactivate the user account.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteConfirm}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
