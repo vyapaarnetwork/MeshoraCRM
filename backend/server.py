@@ -305,6 +305,8 @@ class LeadResponse(BaseModel):
     selling_partner_name: Optional[str] = None
     sales_associate_id: Optional[str] = None
     sales_associate_name: Optional[str] = None
+    referred_by_partner_id: Optional[str] = None
+    referred_by_partner_name: Optional[str] = None
     primary_category_id: str
     primary_category_name: Optional[str] = None
     secondary_category_id: Optional[str] = None
