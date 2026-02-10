@@ -96,6 +96,12 @@ function AppRoutes() {
           <LeadForm />
         </ProtectedRoute>
       } />
+      
+      <Route path="/leads/import" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'customer']}>
+          <LeadImport />
+        </ProtectedRoute>
+      } />
 
       {/* Admin Only Routes */}
       <Route path="/users" element={
