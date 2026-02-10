@@ -612,15 +612,15 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
     company_id = user_data.company_id
     company_name = None
     
-    # Create or use company for selling partners and customers
-    if user_data.role in [UserRole.SELLING_PARTNER, UserRole.CUSTOMER]:
+    # Handle company assignment for all applicable roles
+    if user_data.role in [UserRole.SELLING_PARTNER, UserRole.CUSTOMER, UserRole.SALES_ASSOCIATE]:
         if user_data.company_id:
             # Use existing company
             company = await db.companies.find_one({"id": user_data.company_id}, {"_id": 0})
             if company:
                 company_name = company['name']
-        elif user_data.company_name:
-            # Create new company
+        elif user_data.company_name and user_data.role != UserRole.SALES_ASSOCIATE:
+            # Create new company (only for selling partners and customers)
             company_id = str(uuid.uuid4())
             company_doc = {
                 "id": company_id,
@@ -662,6 +662,108 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         is_active=True,
         created_at=user_doc['created_at']
     )
+
+@api_router.get("/users/{user_id}", response_model=UserResponse)
+async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Get single user details"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can view user details")
+    
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    company_name = None
+    if user.get('company_id'):
+        company = await db.companies.find_one({"id": user['company_id']}, {"_id": 0})
+        if company:
+            company_name = company['name']
+    
+    return UserResponse(
+        id=user['id'],
+        email=user['email'],
+        name=user['name'],
+        role=UserRole(user['role']),
+        company_id=user.get('company_id'),
+        company_name=company_name,
+        phone=user.get('phone'),
+        is_active=user.get('is_active', True),
+        created_at=user['created_at']
+    )
+
+@api_router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: str, user_data: AdminUserUpdate, current_user: dict = Depends(get_current_user)):
+    """Admin updates a user"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can update users")
+    
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Prevent editing the logged-in super admin's role
+    if user_id == current_user['id'] and user_data.role and user_data.role.value != current_user['role']:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    
+    # Check email uniqueness if changing
+    if user_data.email and user_data.email != user['email']:
+        existing = await db.users.find_one({"email": user_data.email})
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
+    
+    update_data = user_data.model_dump(exclude_unset=True, exclude_none=True)
+    
+    # Handle password hashing
+    if 'password' in update_data and update_data['password']:
+        update_data['password'] = hash_password(update_data['password'])
+    elif 'password' in update_data:
+        del update_data['password']
+    
+    # Handle role conversion
+    if 'role' in update_data:
+        update_data['role'] = update_data['role'].value
+    
+    if update_data:
+        await db.users.update_one({"id": user_id}, {"$set": update_data})
+    
+    updated_user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    
+    company_name = None
+    if updated_user.get('company_id'):
+        company = await db.companies.find_one({"id": updated_user['company_id']}, {"_id": 0})
+        if company:
+            company_name = company['name']
+    
+    return UserResponse(
+        id=updated_user['id'],
+        email=updated_user['email'],
+        name=updated_user['name'],
+        role=UserRole(updated_user['role']),
+        company_id=updated_user.get('company_id'),
+        company_name=company_name,
+        phone=updated_user.get('phone'),
+        is_active=updated_user.get('is_active', True),
+        created_at=updated_user['created_at']
+    )
+
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Admin deletes a user"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can delete users")
+    
+    # Prevent self-deletion
+    if user_id == current_user['id']:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Soft delete - set is_active to False
+    await db.users.update_one({"id": user_id}, {"$set": {"is_active": False}})
+    
+    return {"message": "User deleted successfully"}
 
 @api_router.get("/users", response_model=List[UserResponse])
 async def list_users(role: Optional[str] = None, current_user: dict = Depends(get_current_user)):
