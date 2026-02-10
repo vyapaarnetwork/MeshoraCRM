@@ -7,6 +7,7 @@ import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Skeleton } from '../components/ui/skeleton';
+import { Alert, AlertDescription } from '../components/ui/alert';
 import {
   Select,
   SelectContent,
@@ -14,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { ArrowLeft, Loader2, Save } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, AlertCircle } from 'lucide-react';
 import api from '../utils/api';
 import { toast } from 'sonner';
 
@@ -386,6 +387,15 @@ const LeadForm = () => {
                         ))}
                       </SelectContent>
                     </Select>
+                    {!isEditing && !formData.selling_partner_id && (
+                      <Alert className="border-amber-200 bg-amber-50 text-amber-800">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-xs">
+                          Without a selling partner, this lead will be saved as <strong>Draft</strong>.
+                          It will move to "New" status when a partner is assigned.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="sales_associate_id">Sales Associate (Referral)</Label>
