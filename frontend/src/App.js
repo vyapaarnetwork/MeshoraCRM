@@ -8,11 +8,13 @@ import Dashboard from './pages/Dashboard';
 import Leads from './pages/Leads';
 import LeadDetail from './pages/LeadDetail';
 import LeadForm from './pages/LeadForm';
+import LeadImport from './pages/LeadImport';
 import Categories from './pages/Categories';
 import Commission from './pages/Commission';
 import Reports from './pages/Reports';
 import Users from './pages/Users';
 import Companies from './pages/Companies';
+import Settings from './pages/Settings';
 import './App.css';
 
 // Protected Route Component
