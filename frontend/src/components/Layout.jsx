@@ -31,7 +31,8 @@ import {
   Send,
   Check,
   Clock,
-  ExternalLink
+  ExternalLink,
+  Grid3X3
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
