@@ -1332,6 +1332,74 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
     await db.leads.insert_one(lead_doc)
     return await enrich_lead(lead_doc)
 
+@api_router.post("/leads/referral", response_model=LeadResponse)
+async def create_lead_referral(referral_data: LeadReferralCreate, current_user: dict = Depends(get_current_user)):
+    """Selling Partner creates a lead referral - always in Draft status"""
+    if current_user['role'] != UserRole.SELLING_PARTNER.value:
+        raise HTTPException(status_code=403, detail="Only selling partners can create lead referrals")
+    
+    # Validate primary category
+    primary = await db.primary_categories.find_one({"id": referral_data.primary_category_id}, {"_id": 0})
+    if not primary:
+        raise HTTPException(status_code=404, detail="Primary category not found")
+    
+    # Get Draft status
+    draft_status = await db.lead_statuses.find_one({"name": "Draft", "is_active": True}, {"_id": 0})
+    if not draft_status:
+        raise HTTPException(status_code=500, detail="Draft status not found")
+    
+    lead_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    
+    # Build description with referral notes
+    description = referral_data.description or ""
+    if referral_data.referral_notes:
+        description = f"{description}\n\n**Referral Notes:** {referral_data.referral_notes}".strip()
+    
+    lead_doc = {
+        "id": lead_id,
+        "title": referral_data.title,
+        "description": description if description else None,
+        "customer_name": referral_data.customer_name,
+        "customer_email": referral_data.customer_email,
+        "customer_phone": referral_data.customer_phone,
+        "customer_company": referral_data.customer_company,
+        "selling_partner_id": None,  # No partner assigned yet - will be assigned by admin
+        "sales_associate_id": None,
+        "referred_by_partner_id": current_user['id'],  # Track who referred this lead
+        "primary_category_id": referral_data.primary_category_id,
+        "secondary_category_id": referral_data.secondary_category_id,
+        "deal_value": referral_data.estimated_deal_value or 0,
+        "commission_override": None,
+        "sales_associate_commission": None,
+        "status_id": draft_status['id'],
+        "follow_ups": [],
+        "comments": [],
+        "created_by": current_user['id'],
+        "created_at": now,
+        "updated_at": now
+    }
+    
+    await db.leads.insert_one(lead_doc)
+    return await enrich_lead(lead_doc)
+
+@api_router.get("/leads/my-referrals", response_model=List[LeadResponse])
+async def list_my_referrals(current_user: dict = Depends(get_current_user)):
+    """Selling Partner lists their referred leads"""
+    if current_user['role'] != UserRole.SELLING_PARTNER.value:
+        raise HTTPException(status_code=403, detail="Only selling partners can view their referrals")
+    
+    leads = await db.leads.find(
+        {"referred_by_partner_id": current_user['id']},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(1000)
+    
+    result = []
+    for lead in leads:
+        result.append(await enrich_lead(lead))
+    
+    return result
+
 @api_router.get("/leads", response_model=List[LeadResponse])
 async def list_leads(
     status_id: Optional[str] = None,
