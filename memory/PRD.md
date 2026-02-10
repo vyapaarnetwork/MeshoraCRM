@@ -89,12 +89,10 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 
 ### P0 - Critical (Next Sprint)
 - [ ] SendGrid API key configuration for email reminders
-- [ ] Profile settings page with password change
 
 ### P1 - High Priority
 - [ ] Email templates for follow-up reminders
 - [ ] Lead assignment workflow
-- [ ] Bulk lead import from CSV
 - [ ] Dashboard date range filters
 
 ### P2 - Medium Priority  
@@ -111,6 +109,5 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 
 ## Next Tasks
 1. Provide SendGrid API key to enable email reminders
-2. Implement profile settings page
-3. Add email templates for different notification types
-4. Enhance reporting with more visualization options
+2. Add email templates for different notification types
+3. Enhance lead assignment workflow for auto-routing
