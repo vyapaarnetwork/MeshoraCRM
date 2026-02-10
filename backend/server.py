@@ -665,6 +665,53 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         created_at=user_doc['created_at']
     )
 
+# NOTE: These specific routes must be defined BEFORE /users/{user_id} to avoid route conflicts
+@api_router.get("/users/selling-partners", response_model=List[UserResponse])
+async def list_selling_partners(current_user: dict = Depends(get_current_user)):
+    users = await db.users.find({"role": UserRole.SELLING_PARTNER.value}, {"_id": 0, "password": 0}).to_list(1000)
+    
+    result = []
+    for user in users:
+        company_name = None
+        if user.get('company_id'):
+            company = await db.companies.find_one({"id": user['company_id']}, {"_id": 0})
+            if company:
+                company_name = company['name']
+        
+        result.append(UserResponse(
+            id=user['id'],
+            email=user['email'],
+            name=user['name'],
+            role=UserRole(user['role']),
+            company_id=user.get('company_id'),
+            company_name=company_name,
+            phone=user.get('phone'),
+            is_active=user.get('is_active', True),
+            created_at=user['created_at']
+        ))
+    
+    return result
+
+@api_router.get("/users/sales-associates", response_model=List[UserResponse])
+async def list_sales_associates(current_user: dict = Depends(get_current_user)):
+    users = await db.users.find({"role": UserRole.SALES_ASSOCIATE.value}, {"_id": 0, "password": 0}).to_list(1000)
+    
+    result = []
+    for user in users:
+        result.append(UserResponse(
+            id=user['id'],
+            email=user['email'],
+            name=user['name'],
+            role=UserRole(user['role']),
+            company_id=user.get('company_id'),
+            company_name=None,
+            phone=user.get('phone'),
+            is_active=user.get('is_active', True),
+            created_at=user['created_at']
+        ))
+    
+    return result
+
 @api_router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """Get single user details"""
