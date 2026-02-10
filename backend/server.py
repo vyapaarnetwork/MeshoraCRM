@@ -666,6 +666,52 @@ async def create_notification_for_user(user_id: str, notification_type: str, tit
     """Create a notification for a specific user"""
     await create_notification(user_id, notification_type, title, message, lead_id, data)
 
+# ==================== SMS HELPERS ====================
+
+def send_sms(to_phone: str, message: str) -> bool:
+    """Send SMS using Twilio"""
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_PHONE_NUMBER:
+        logger.warning("Twilio credentials not configured, skipping SMS")
+        return False
+    
+    if not to_phone:
+        logger.warning("No phone number provided, skipping SMS")
+        return False
+    
+    try:
+        # Ensure phone number is in E.164 format
+        phone = to_phone.strip()
+        if not phone.startswith('+'):
+            # Assume Indian number if no country code
+            phone = '+91' + phone.replace(' ', '').replace('-', '')
+        
+        client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        sms = client.messages.create(
+            body=message,
+            from_=TWILIO_PHONE_NUMBER,
+            to=phone
+        )
+        logger.info(f"SMS sent successfully to {phone}: {sms.sid}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send SMS to {to_phone}: {str(e)}")
+        return False
+
+async def send_lead_assignment_sms(partner_id: str, lead_title: str, customer_name: str):
+    """Send SMS notification when a lead is assigned to a partner"""
+    partner = await db.users.find_one({"id": partner_id}, {"_id": 0})
+    if partner and partner.get('phone'):
+        message = f"Vyapaar Network: New lead assigned to you!\n\nLead: {lead_title}\nCustomer: {customer_name}\n\nLogin to view details."
+        send_sms(partner['phone'], message)
+
+async def send_lead_assignment_sms_to_admins(lead_title: str, partner_name: str, customer_name: str):
+    """Send SMS notification to all admins when a lead is assigned"""
+    admins = await db.users.find({"role": "super_admin", "is_active": True}, {"_id": 0}).to_list(100)
+    for admin in admins:
+        if admin.get('phone'):
+            message = f"Vyapaar Network: Lead assigned!\n\nLead: {lead_title}\nAssigned to: {partner_name}\nCustomer: {customer_name}"
+            send_sms(admin['phone'], message)
+
 # ==================== NOTIFICATION ROUTES ====================
 
 @api_router.get("/notifications", response_model=List[NotificationResponse])
