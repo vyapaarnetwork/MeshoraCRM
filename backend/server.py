@@ -407,6 +407,13 @@ async def send_followup_reminder(to_email: str, lead_title: str, followup_date: 
 
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate):
+    # Only allow customer self-registration; other roles must be created by admin
+    if user_data.role != UserRole.CUSTOMER:
+        raise HTTPException(
+            status_code=403, 
+            detail="Only customers can self-register. Please contact admin for other account types."
+        )
+    
     existing = await db.users.find_one({"email": user_data.email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -415,13 +422,13 @@ async def register(user_data: UserCreate):
     company_id = None
     company_name = None
     
-    # Create company if needed
-    if user_data.role in [UserRole.SELLING_PARTNER, UserRole.CUSTOMER] and user_data.company_name:
+    # Create company for customer if provided
+    if user_data.company_name:
         company_id = str(uuid.uuid4())
         company_doc = {
             "id": company_id,
             "name": user_data.company_name,
-            "type": "selling_partner" if user_data.role == UserRole.SELLING_PARTNER else "customer",
+            "type": "customer",
             "vyapaar_commission_percentage": 15.0,
             "address": None,
             "contact_email": user_data.email,
@@ -2440,6 +2447,7 @@ async def seed_data():
     
     # Seed Lead Statuses
     statuses = [
+        {"id": str(uuid.uuid4()), "name": "Draft", "color": "#94A3B8", "order": 0, "is_active": True},
         {"id": str(uuid.uuid4()), "name": "New", "color": "#4169E1", "order": 1, "is_active": True},
         {"id": str(uuid.uuid4()), "name": "Qualified", "color": "#10B981", "order": 2, "is_active": True},
         {"id": str(uuid.uuid4()), "name": "Proposal", "color": "#F59E0B", "order": 3, "is_active": True},
