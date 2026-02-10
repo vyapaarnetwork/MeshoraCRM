@@ -92,6 +92,36 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: UserResponse
 
+# Profile Update Models
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+# Bulk Import Models
+class BulkImportResult(BaseModel):
+    total_rows: int
+    successful: int
+    failed: int
+    errors: List[Dict[str, Any]]
+
+# Enhanced Commission Model for locked deals
+class LockedCommission(BaseModel):
+    deal_value: float
+    vyapaar_base_percentage: float
+    commission_override_percentage: Optional[float] = None
+    final_vyapaar_percentage: float
+    selling_partner_revenue: float
+    vyapaar_gross_commission: float
+    sales_associate_percentage: Optional[float] = None
+    sales_associate_commission: Optional[float] = None
+    vyapaar_net_earnings: float
+    locked_at: str
+    locked_by: str
+
 # Company Model
 class CompanyCreate(BaseModel):
     name: str
