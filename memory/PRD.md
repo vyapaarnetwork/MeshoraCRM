@@ -17,7 +17,7 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Transparent commission calculation and breakdown
 - Role-specific dashboards with analytics
 - Reports with filters and CSV export
-- SendGrid email integration for follow-up reminders
+- SendGrid email integration for follow-up reminders (configured, requires API key)
 
 ## Architecture
 - **Frontend**: React 19 with Shadcn/UI, TailwindCSS, Recharts
@@ -26,16 +26,16 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - **Email**: SendGrid (configured, requires API key)
 - **Styling**: Manrope + Inter fonts, Blue (#4169E1) + Red (#DC143C) brand colors
 
-## What's Been Implemented (Feb 9, 2025)
+## What's Been Implemented
 
-### Phase 1 - MVP Complete
+### Phase 1 - MVP Complete (Feb 9, 2025)
 - [x] User registration for all 4 roles with company creation
 - [x] JWT authentication with login/logout
 - [x] Role-based access control in frontend and backend
 - [x] Master Data Management:
   - Primary Categories (HR, IT, Marketing, Finance, Compliance)
   - Secondary Categories mapped to primary
-  - Lead Statuses (New, Qualified, Proposal, Negotiation, Won, Lost, On Hold)
+  - Lead Statuses (Draft, New, Qualified, Proposal, Negotiation, Won, Lost, On Hold)
   - Commission Templates (Standard 15%, Premium Partner 12%, High Value 10%)
 - [x] Lead Management:
   - Create, read, update, delete leads
@@ -74,16 +74,32 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - Column reference with required/optional fields
   - Import result summary with error details
 - [x] Enhanced Reporting & Commission Engine:
-  - Vyapaar Revenue Report (Admin):
-    - Gross Commission, SA Payouts, Net Revenue
-    - Partner Profitability table
-    - Category Contribution chart
-    - Period breakdown (Monthly/Quarterly/Yearly)
+  - Vyapaar Revenue Report (Admin)
   - Detailed Partner Performance Reports
-  - Detailed Sales Associate Earnings with lifetime view
   - Deal-Level Commission Statement API
   - Commission Locking for Won deals
-  - Revenue & Commission Trend charts
+
+### Phase 3 - User Management & Lead State Improvements (Feb 10, 2025)
+- [x] Customer-Only Self Registration:
+  - Registration page restricted to customers only
+  - Sales Associates and Selling Partners created by Admin only
+  - Info banner explaining role restrictions
+- [x] Admin User Creation:
+  - Add User button on Users page (Admin only)
+  - Create users of any role type
+  - Company selection/creation for applicable roles
+- [x] Draft Lead Status:
+  - "Draft" status added to lead pipeline (order 0)
+  - Leads without selling partner default to Draft
+  - Auto-transition from Draft to New when partner assigned
+  - Visual indicator in lead form
+- [x] Partner Sub-categories:
+  - Selling partners can have multiple service sub-categories
+  - Checkbox selection grouped by primary category
+  - Sub-categories displayed in Companies table
+- [x] Follow-up "Pending With" Assignment:
+  - Follow-ups can specify pending with "Customer" or "Selling Partner"
+  - Visual indicator in follow-up list
 
 ## Prioritized Backlog
 
@@ -92,7 +108,7 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 
 ### P1 - High Priority
 - [ ] Email templates for follow-up reminders
-- [ ] Lead assignment workflow
+- [ ] Lead assignment workflow with auto-routing
 - [ ] Dashboard date range filters
 
 ### P2 - Medium Priority  
@@ -107,7 +123,18 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Mobile-responsive improvements
 - [ ] Custom dashboard widgets
 
-## Next Tasks
-1. Provide SendGrid API key to enable email reminders
-2. Add email templates for different notification types
-3. Enhance lead assignment workflow for auto-routing
+## Test Credentials
+- **Super Admin**: admin@vyapaarnetwork.com / admin123
+
+## API Endpoints Summary
+- `POST /api/auth/register` - Customer registration only
+- `POST /api/auth/login` - User authentication
+- `POST /api/users` - Admin creates user (any role)
+- `GET /api/users` - List all users (Admin)
+- `GET /api/leads` - List leads (role-filtered)
+- `POST /api/leads` - Create lead (Draft if no partner)
+- `PUT /api/leads/{id}` - Update lead (auto Draft→New on partner assign)
+- `POST /api/leads/{id}/follow-ups` - Add follow-up with pending_with
+- `GET /api/companies` - List companies with subcategories
+- `POST /api/companies` - Create company with subcategory_ids
+- `GET /api/master/lead-status` - Lead statuses including Draft
