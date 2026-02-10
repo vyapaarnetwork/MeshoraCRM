@@ -303,12 +303,12 @@ const GridReport = () => {
             </div>
             <div className="space-y-2">
               <Label>Partner</Label>
-              <Select value={filters.partner_id} onValueChange={(v) => handleFilterChange('partner_id', v)}>
+              <Select value={filters.partner_id || 'all'} onValueChange={(v) => handleFilterChange('partner_id', v === 'all' ? '' : v)}>
                 <SelectTrigger data-testid="filter-partner">
                   <SelectValue placeholder="All Partners" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Partners</SelectItem>
+                  <SelectItem value="all">All Partners</SelectItem>
                   {partners.map(p => (
                     <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                   ))}
@@ -317,12 +317,12 @@ const GridReport = () => {
             </div>
             <div className="space-y-2">
               <Label>Category</Label>
-              <Select value={filters.category_id} onValueChange={(v) => handleFilterChange('category_id', v)}>
+              <Select value={filters.category_id || 'all'} onValueChange={(v) => handleFilterChange('category_id', v === 'all' ? '' : v)}>
                 <SelectTrigger data-testid="filter-category">
                   <SelectValue placeholder="All Categories" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Categories</SelectItem>
+                  <SelectItem value="all">All Categories</SelectItem>
                   {categories.map(c => (
                     <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}
@@ -331,12 +331,12 @@ const GridReport = () => {
             </div>
             <div className="space-y-2">
               <Label>Status</Label>
-              <Select value={filters.status_id} onValueChange={(v) => handleFilterChange('status_id', v)}>
+              <Select value={filters.status_id || 'all'} onValueChange={(v) => handleFilterChange('status_id', v === 'all' ? '' : v)}>
                 <SelectTrigger data-testid="filter-status">
                   <SelectValue placeholder="All Statuses" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Statuses</SelectItem>
+                  <SelectItem value="all">All Statuses</SelectItem>
                   {statuses.map(s => (
                     <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                   ))}
