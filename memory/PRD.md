@@ -36,7 +36,7 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - Primary Categories (HR, IT, Marketing, Finance, Compliance)
   - Secondary Categories mapped to primary
   - Lead Statuses (New, Qualified, Proposal, Negotiation, Won, Lost, On Hold)
-  - Commission Templates (Standard 15%, Premium 12%, High Value 10%)
+  - Commission Templates (Standard 15%, Premium Partner 12%, High Value 10%)
 - [x] Lead Management:
   - Create, read, update, delete leads
   - Category and status tracking
@@ -62,6 +62,28 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - Companies management
   - Categories management (Primary, Secondary, Lead Status)
   - Commission Templates management
+
+### Phase 2 - Enhanced Features (Feb 10, 2025)
+- [x] Profile Settings Page:
+  - Update name and phone number
+  - Change password functionality
+  - Account details display
+- [x] Lead Bulk Import:
+  - CSV import with validation
+  - Sample template download
+  - Column reference with required/optional fields
+  - Import result summary with error details
+- [x] Enhanced Reporting & Commission Engine:
+  - Vyapaar Revenue Report (Admin):
+    - Gross Commission, SA Payouts, Net Revenue
+    - Partner Profitability table
+    - Category Contribution chart
+    - Period breakdown (Monthly/Quarterly/Yearly)
+  - Detailed Partner Performance Reports
+  - Detailed Sales Associate Earnings with lifetime view
+  - Deal-Level Commission Statement API
+  - Commission Locking for Won deals
+  - Revenue & Commission Trend charts
 
 ## Prioritized Backlog
 
