@@ -194,11 +194,13 @@ class CommissionTemplateResponse(BaseModel):
 class FollowUpCreate(BaseModel):
     scheduled_date: str
     notes: Optional[str] = None
+    pending_with: Optional[str] = None  # "selling_partner" or "customer"
 
 class FollowUpResponse(BaseModel):
     id: str
     scheduled_date: str
     notes: Optional[str] = None
+    pending_with: Optional[str] = None
     is_completed: bool
     completed_at: Optional[str] = None
     completion_notes: Optional[str] = None
