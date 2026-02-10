@@ -1371,9 +1371,10 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
 
 @api_router.post("/leads/referral", response_model=LeadResponse)
 async def create_lead_referral(referral_data: LeadReferralCreate, current_user: dict = Depends(get_current_user)):
-    """Selling Partner creates a lead referral - always in Draft status"""
-    if current_user['role'] != UserRole.SELLING_PARTNER.value:
-        raise HTTPException(status_code=403, detail="Only selling partners can create lead referrals")
+    """Selling Partner or Sales Associate creates a lead referral - always in Draft status"""
+    allowed_roles = [UserRole.SELLING_PARTNER.value, UserRole.SALES_ASSOCIATE.value]
+    if current_user['role'] not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Only selling partners and sales associates can create lead referrals")
     
     # Validate primary category
     primary = await db.primary_categories.find_one({"id": referral_data.primary_category_id}, {"_id": 0})
@@ -1393,6 +1394,16 @@ async def create_lead_referral(referral_data: LeadReferralCreate, current_user: 
     if referral_data.referral_notes:
         description = f"{description}\n\n**Referral Notes:** {referral_data.referral_notes}".strip()
     
+    # Determine referral source
+    referred_by_partner_id = None
+    referred_by_associate_id = None
+    is_internal_request = referral_data.is_internal_request
+    
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        referred_by_partner_id = current_user['id']
+    else:
+        referred_by_associate_id = current_user['id']
+    
     lead_doc = {
         "id": lead_id,
         "title": referral_data.title,
@@ -1403,7 +1414,9 @@ async def create_lead_referral(referral_data: LeadReferralCreate, current_user: 
         "customer_company": referral_data.customer_company,
         "selling_partner_id": None,  # No partner assigned yet - will be assigned by admin
         "sales_associate_id": None,
-        "referred_by_partner_id": current_user['id'],  # Track who referred this lead
+        "referred_by_partner_id": referred_by_partner_id,
+        "referred_by_associate_id": referred_by_associate_id,
+        "is_internal_request": is_internal_request,  # Selling Partner requesting services
         "primary_category_id": referral_data.primary_category_id,
         "secondary_category_id": referral_data.secondary_category_id,
         "deal_value": referral_data.estimated_deal_value or 0,
@@ -1418,18 +1431,31 @@ async def create_lead_referral(referral_data: LeadReferralCreate, current_user: 
     }
     
     await db.leads.insert_one(lead_doc)
+    
+    # Create notification for admins about new referral
+    await create_notification_for_admins(
+        notification_type="new_referral",
+        title="New Lead Referral",
+        message=f"{current_user['name']} submitted a new lead referral: {referral_data.title}",
+        lead_id=lead_id
+    )
+    
     return await enrich_lead(lead_doc)
 
 @api_router.get("/leads/my-referrals", response_model=List[LeadResponse])
 async def list_my_referrals(current_user: dict = Depends(get_current_user)):
-    """Selling Partner lists their referred leads"""
-    if current_user['role'] != UserRole.SELLING_PARTNER.value:
-        raise HTTPException(status_code=403, detail="Only selling partners can view their referrals")
+    """Selling Partner or Sales Associate lists their referred leads"""
+    allowed_roles = [UserRole.SELLING_PARTNER.value, UserRole.SALES_ASSOCIATE.value]
+    if current_user['role'] not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Only selling partners and sales associates can view their referrals")
     
-    leads = await db.leads.find(
-        {"referred_by_partner_id": current_user['id']},
-        {"_id": 0}
-    ).sort("created_at", -1).to_list(1000)
+    # Build query based on role
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        query = {"referred_by_partner_id": current_user['id']}
+    else:
+        query = {"referred_by_associate_id": current_user['id']}
+    
+    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     
     result = []
     for lead in leads:
