@@ -144,6 +144,13 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
+      {/* Grid Report - Admin Only */}
+      <Route path="/grid-report" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <GridReport />
+        </ProtectedRoute>
+      } />
+
       {/* Settings placeholder */}
       <Route path="/settings" element={
         <ProtectedRoute>
