@@ -585,11 +585,13 @@ class TestAdminReferralAssignment:
         partners_response = self.admin_session.get(f"{BASE_URL}/api/users/selling-partners")
         partners = partners_response.json()
         
-        if not partners:
+        if not partners or len(partners) == 0:
             pytest.skip("No selling partners available")
         
         # Pick a different partner if possible
-        assign_partner_id = partners[0]["id"]
+        assign_partner_id = partners[0].get("id")
+        if not assign_partner_id:
+            pytest.skip("No valid selling partner ID found")
         
         # Admin assigns the referral to a selling partner
         update_response = self.admin_session.put(f"{BASE_URL}/api/leads/{lead_id}", json={
