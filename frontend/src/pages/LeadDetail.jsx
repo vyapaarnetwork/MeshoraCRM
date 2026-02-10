@@ -12,6 +12,13 @@ import { Avatar, AvatarFallback } from '../components/ui/avatar';
 import { Calendar } from '../components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { ScrollArea } from '../components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
 import { 
   ArrowLeft, 
   Edit, 
@@ -27,7 +34,8 @@ import {
   Plus,
   Check,
   Clock,
-  Send
+  Send,
+  UserCheck
 } from 'lucide-react';
 import api, { formatCurrency, formatDate, formatDateTime, getRoleLabel, getRoleColor } from '../utils/api';
 import { toast } from 'sonner';
@@ -41,7 +49,7 @@ const LeadDetail = () => {
   const [loading, setLoading] = useState(true);
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
-  const [newFollowUp, setNewFollowUp] = useState({ date: null, notes: '' });
+  const [newFollowUp, setNewFollowUp] = useState({ date: null, notes: '', pending_with: '' });
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
 
   useEffect(() => {
@@ -87,10 +95,11 @@ const LeadDetail = () => {
     try {
       const response = await api.post(`/leads/${id}/follow-ups`, {
         scheduled_date: format(newFollowUp.date, 'yyyy-MM-dd'),
-        notes: newFollowUp.notes
+        notes: newFollowUp.notes,
+        pending_with: newFollowUp.pending_with || null
       });
       setLead(response.data);
-      setNewFollowUp({ date: null, notes: '' });
+      setNewFollowUp({ date: null, notes: '', pending_with: '' });
       setShowFollowUpForm(false);
       toast.success('Follow-up scheduled');
     } catch (error) {
@@ -363,6 +372,18 @@ const LeadDetail = () => {
                       />
                     </PopoverContent>
                   </Popover>
+                  <Select 
+                    value={newFollowUp.pending_with} 
+                    onValueChange={(v) => setNewFollowUp({ ...newFollowUp, pending_with: v })}
+                  >
+                    <SelectTrigger data-testid="pending-with-select">
+                      <SelectValue placeholder="Pending with (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="customer">Customer</SelectItem>
+                      <SelectItem value="selling_partner">Selling Partner</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Textarea
                     placeholder="Notes (optional)"
                     value={newFollowUp.notes}
@@ -418,8 +439,14 @@ const LeadDetail = () => {
                           </Button>
                         )}
                       </div>
+                      {followUp.pending_with && (
+                        <div className="flex items-center gap-1 text-xs text-blue-600 mt-1">
+                          <UserCheck className="w-3 h-3" />
+                          Pending with: {followUp.pending_with === 'customer' ? 'Customer' : 'Selling Partner'}
+                        </div>
+                      )}
                       {followUp.notes && (
-                        <p className="text-xs text-muted-foreground">{followUp.notes}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{followUp.notes}</p>
                       )}
                       {followUp.is_completed && followUp.completed_at && (
                         <p className="text-xs text-green-600 mt-1">
