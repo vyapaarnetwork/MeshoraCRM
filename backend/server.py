@@ -1675,6 +1675,567 @@ async def export_leads(
     
     return {"data": export_data, "format": format}
 
+# ==================== ENHANCED REPORTS ====================
+
+@api_router.get("/reports/vyapaar-revenue")
+async def get_vyapaar_revenue_report(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    period: Optional[str] = None,  # monthly, quarterly, yearly
+    current_user: dict = Depends(get_current_user)
+):
+    """Vyapaar Internal Revenue Report - Admin only"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can access this report")
+    
+    query = {}
+    if start_date:
+        query['created_at'] = {"$gte": start_date}
+    if end_date:
+        if 'created_at' not in query:
+            query['created_at'] = {}
+        query['created_at']['$lte'] = end_date
+    
+    leads = await db.leads.find(query, {"_id": 0}).to_list(10000)
+    
+    # Get statuses
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(100)
+    status_map = {s['id']: s['name'].lower() for s in statuses}
+    
+    # Get categories
+    categories = await db.primary_categories.find({}, {"_id": 0}).to_list(100)
+    category_map = {c['id']: c['name'] for c in categories}
+    
+    # Get users
+    users = await db.users.find({}, {"_id": 0, "password": 0}).to_list(1000)
+    user_map = {u['id']: u['name'] for u in users}
+    
+    total_gross_commission = 0
+    total_sa_payouts = 0
+    total_net_revenue = 0
+    partner_wise = {}
+    category_wise = {}
+    period_wise = {}
+    won_deals = []
+    
+    for lead in leads:
+        status_name = status_map.get(lead.get('status_id', ''), '').lower()
+        
+        if 'won' in status_name:
+            deal_value = lead.get('deal_value', 0)
+            vyapaar_pct = lead.get('commission_override') or 15.0
+            vyapaar_gross = deal_value * (vyapaar_pct / 100)
+            
+            sa_pct = lead.get('sales_associate_commission', 0) or 0
+            sa_payout = vyapaar_gross * (sa_pct / 100) if sa_pct else 0
+            vyapaar_net = vyapaar_gross - sa_payout
+            
+            total_gross_commission += vyapaar_gross
+            total_sa_payouts += sa_payout
+            total_net_revenue += vyapaar_net
+            
+            # Partner-wise
+            partner_id = lead.get('selling_partner_id')
+            if partner_id:
+                if partner_id not in partner_wise:
+                    partner_wise[partner_id] = {
+                        "name": user_map.get(partner_id, "Unknown"),
+                        "deals": 0,
+                        "revenue": 0,
+                        "vyapaar_commission": 0
+                    }
+                partner_wise[partner_id]['deals'] += 1
+                partner_wise[partner_id]['revenue'] += deal_value
+                partner_wise[partner_id]['vyapaar_commission'] += vyapaar_gross
+            
+            # Category-wise
+            cat_id = lead.get('primary_category_id')
+            if cat_id:
+                if cat_id not in category_wise:
+                    category_wise[cat_id] = {
+                        "name": category_map.get(cat_id, "Unknown"),
+                        "deals": 0,
+                        "revenue": 0,
+                        "commission": 0
+                    }
+                category_wise[cat_id]['deals'] += 1
+                category_wise[cat_id]['revenue'] += deal_value
+                category_wise[cat_id]['commission'] += vyapaar_gross
+            
+            # Period-wise
+            created_at = lead.get('created_at', '')[:10]
+            if period == 'monthly':
+                period_key = created_at[:7]
+            elif period == 'quarterly':
+                month = int(created_at[5:7])
+                quarter = (month - 1) // 3 + 1
+                period_key = f"{created_at[:4]}-Q{quarter}"
+            elif period == 'yearly':
+                period_key = created_at[:4]
+            else:
+                period_key = created_at[:7]  # default to monthly
+            
+            if period_key not in period_wise:
+                period_wise[period_key] = {
+                    "period": period_key,
+                    "deals": 0,
+                    "revenue": 0,
+                    "gross_commission": 0,
+                    "sa_payouts": 0,
+                    "net_revenue": 0
+                }
+            period_wise[period_key]['deals'] += 1
+            period_wise[period_key]['revenue'] += deal_value
+            period_wise[period_key]['gross_commission'] += vyapaar_gross
+            period_wise[period_key]['sa_payouts'] += sa_payout
+            period_wise[period_key]['net_revenue'] += vyapaar_net
+            
+            # Add to won deals list
+            won_deals.append({
+                "id": lead['id'],
+                "title": lead['title'],
+                "deal_value": deal_value,
+                "vyapaar_commission": round(vyapaar_gross, 2),
+                "sa_payout": round(sa_payout, 2),
+                "net_revenue": round(vyapaar_net, 2),
+                "partner": user_map.get(partner_id, "Unassigned"),
+                "category": category_map.get(cat_id, "Unknown"),
+                "date": lead.get('created_at', '')[:10]
+            })
+    
+    return {
+        "summary": {
+            "total_won_deals": len(won_deals),
+            "total_deal_value": round(sum(d['deal_value'] for d in won_deals), 2),
+            "gross_commission": round(total_gross_commission, 2),
+            "sa_payouts": round(total_sa_payouts, 2),
+            "net_revenue": round(total_net_revenue, 2)
+        },
+        "partner_profitability": sorted(partner_wise.values(), key=lambda x: x['vyapaar_commission'], reverse=True),
+        "category_contribution": sorted(category_wise.values(), key=lambda x: x['commission'], reverse=True),
+        "period_breakdown": sorted(period_wise.values(), key=lambda x: x['period']),
+        "deals": won_deals
+    }
+
+@api_router.get("/reports/deal/{lead_id}/commission-statement")
+async def get_deal_commission_statement(
+    lead_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Deal-Level Commission Statement with full breakdown"""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    # Access control
+    if current_user['role'] == UserRole.SELLING_PARTNER.value and lead.get('selling_partner_id') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value and lead.get('sales_associate_id') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get related data
+    selling_partner = None
+    partner_company = None
+    if lead.get('selling_partner_id'):
+        selling_partner = await db.users.find_one({"id": lead['selling_partner_id']}, {"_id": 0, "password": 0})
+        if selling_partner and selling_partner.get('company_id'):
+            partner_company = await db.companies.find_one({"id": selling_partner['company_id']}, {"_id": 0})
+    
+    sales_associate = None
+    if lead.get('sales_associate_id'):
+        sales_associate = await db.users.find_one({"id": lead['sales_associate_id']}, {"_id": 0, "password": 0})
+    
+    status = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0})
+    category = await db.primary_categories.find_one({"id": lead.get('primary_category_id')}, {"_id": 0})
+    
+    # Calculate commission breakdown
+    deal_value = lead.get('deal_value', 0)
+    
+    # Get base commission from partner company
+    base_commission_pct = partner_company.get('vyapaar_commission_percentage', 15.0) if partner_company else 15.0
+    
+    # Check for override
+    override_pct = lead.get('commission_override')
+    final_vyapaar_pct = override_pct if override_pct is not None else base_commission_pct
+    
+    # Calculate amounts
+    vyapaar_gross = deal_value * (final_vyapaar_pct / 100)
+    selling_partner_revenue = deal_value - vyapaar_gross
+    
+    sa_pct = lead.get('sales_associate_commission', 0) or 0
+    sa_commission = vyapaar_gross * (sa_pct / 100) if sa_pct else 0
+    vyapaar_net = vyapaar_gross - sa_commission
+    
+    # Check if locked
+    locked_commission = lead.get('locked_commission')
+    is_locked = locked_commission is not None
+    
+    return {
+        "deal_info": {
+            "id": lead['id'],
+            "title": lead['title'],
+            "customer_name": lead['customer_name'],
+            "customer_company": lead.get('customer_company'),
+            "category": category['name'] if category else "Unknown",
+            "status": status['name'] if status else "Unknown",
+            "created_at": lead['created_at'],
+            "updated_at": lead['updated_at']
+        },
+        "participants": {
+            "selling_partner": {
+                "id": selling_partner['id'] if selling_partner else None,
+                "name": selling_partner['name'] if selling_partner else "Unassigned",
+                "company": partner_company['name'] if partner_company else None
+            } if selling_partner else None,
+            "sales_associate": {
+                "id": sales_associate['id'],
+                "name": sales_associate['name']
+            } if sales_associate else None
+        },
+        "commission_calculation": {
+            "deal_value": deal_value,
+            "base_commission_percentage": base_commission_pct,
+            "override_percentage": override_pct,
+            "final_vyapaar_percentage": final_vyapaar_pct,
+            "vyapaar_gross_commission": round(vyapaar_gross, 2),
+            "selling_partner_revenue": round(selling_partner_revenue, 2),
+            "sales_associate_percentage": sa_pct if sa_pct else None,
+            "sales_associate_commission": round(sa_commission, 2) if sa_commission else None,
+            "vyapaar_net_earnings": round(vyapaar_net, 2)
+        },
+        "is_locked": is_locked,
+        "locked_commission": locked_commission,
+        "calculation_timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@api_router.get("/reports/selling-partner/{partner_id}/detailed")
+async def get_detailed_partner_report(
+    partner_id: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    period: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Detailed Selling Partner Performance Report"""
+    if current_user['role'] not in [UserRole.SUPER_ADMIN.value, UserRole.SELLING_PARTNER.value]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if current_user['role'] == UserRole.SELLING_PARTNER.value and current_user['id'] != partner_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    query = {"selling_partner_id": partner_id}
+    if start_date:
+        query['created_at'] = {"$gte": start_date}
+    if end_date:
+        if 'created_at' not in query:
+            query['created_at'] = {}
+        query['created_at']['$lte'] = end_date
+    
+    leads = await db.leads.find(query, {"_id": 0}).to_list(10000)
+    
+    # Get partner info
+    partner = await db.users.find_one({"id": partner_id}, {"_id": 0, "password": 0})
+    partner_company = None
+    if partner and partner.get('company_id'):
+        partner_company = await db.companies.find_one({"id": partner['company_id']}, {"_id": 0})
+    
+    # Get statuses and categories
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(100)
+    status_map = {s['id']: s['name'].lower() for s in statuses}
+    
+    categories = await db.primary_categories.find({}, {"_id": 0}).to_list(100)
+    category_map = {c['id']: c['name'] for c in categories}
+    
+    # Aggregate data
+    total_deals = len(leads)
+    won_deals = 0
+    lost_deals = 0
+    total_deal_value = 0
+    total_revenue_generated = 0
+    total_commission_to_vyapaar = 0
+    category_breakdown = {}
+    period_breakdown = {}
+    deals_list = []
+    
+    for lead in leads:
+        status_name = status_map.get(lead.get('status_id', ''), '').lower()
+        deal_value = lead.get('deal_value', 0)
+        total_deal_value += deal_value
+        
+        # Category breakdown
+        cat_id = lead.get('primary_category_id')
+        cat_name = category_map.get(cat_id, "Unknown")
+        if cat_name not in category_breakdown:
+            category_breakdown[cat_name] = {"deals": 0, "value": 0, "won": 0}
+        category_breakdown[cat_name]['deals'] += 1
+        category_breakdown[cat_name]['value'] += deal_value
+        
+        # Period breakdown
+        created_at = lead.get('created_at', '')[:10]
+        if period == 'monthly':
+            period_key = created_at[:7]
+        elif period == 'quarterly':
+            month = int(created_at[5:7]) if len(created_at) >= 7 else 1
+            quarter = (month - 1) // 3 + 1
+            period_key = f"{created_at[:4]}-Q{quarter}"
+        elif period == 'yearly':
+            period_key = created_at[:4]
+        else:
+            period_key = created_at[:7]
+        
+        if period_key not in period_breakdown:
+            period_breakdown[period_key] = {"deals": 0, "won": 0, "value": 0, "revenue": 0}
+        period_breakdown[period_key]['deals'] += 1
+        period_breakdown[period_key]['value'] += deal_value
+        
+        if 'won' in status_name:
+            won_deals += 1
+            category_breakdown[cat_name]['won'] += 1
+            period_breakdown[period_key]['won'] += 1
+            
+            vyapaar_pct = lead.get('commission_override') or 15.0
+            partner_revenue = deal_value * (1 - vyapaar_pct / 100)
+            total_revenue_generated += partner_revenue
+            total_commission_to_vyapaar += deal_value * (vyapaar_pct / 100)
+            period_breakdown[period_key]['revenue'] += partner_revenue
+            
+            deals_list.append({
+                "id": lead['id'],
+                "title": lead['title'],
+                "deal_value": deal_value,
+                "partner_revenue": round(partner_revenue, 2),
+                "vyapaar_commission": round(deal_value * (vyapaar_pct / 100), 2),
+                "category": cat_name,
+                "date": created_at
+            })
+        elif 'lost' in status_name:
+            lost_deals += 1
+    
+    return {
+        "partner_info": {
+            "id": partner_id,
+            "name": partner['name'] if partner else "Unknown",
+            "company": partner_company['name'] if partner_company else None,
+            "base_commission_rate": partner_company.get('vyapaar_commission_percentage', 15.0) if partner_company else 15.0
+        },
+        "summary": {
+            "total_deals": total_deals,
+            "won_deals": won_deals,
+            "lost_deals": lost_deals,
+            "conversion_rate": round(won_deals / total_deals * 100, 2) if total_deals > 0 else 0,
+            "total_deal_value": round(total_deal_value, 2),
+            "total_revenue_generated": round(total_revenue_generated, 2),
+            "commission_paid_to_vyapaar": round(total_commission_to_vyapaar, 2)
+        },
+        "category_breakdown": [{"category": k, **v} for k, v in sorted(category_breakdown.items(), key=lambda x: x[1]['value'], reverse=True)],
+        "period_breakdown": sorted([{"period": k, **v} for k, v in period_breakdown.items()], key=lambda x: x['period']),
+        "won_deals": deals_list
+    }
+
+@api_router.get("/reports/sales-associate/{associate_id}/detailed")
+async def get_detailed_associate_report(
+    associate_id: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    period: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Detailed Sales Associate Earnings Report with lifetime view"""
+    if current_user['role'] not in [UserRole.SUPER_ADMIN.value, UserRole.SALES_ASSOCIATE.value]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if current_user['role'] == UserRole.SALES_ASSOCIATE.value and current_user['id'] != associate_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    query = {"sales_associate_id": associate_id}
+    if start_date:
+        query['created_at'] = {"$gte": start_date}
+    if end_date:
+        if 'created_at' not in query:
+            query['created_at'] = {}
+        query['created_at']['$lte'] = end_date
+    
+    leads = await db.leads.find(query, {"_id": 0}).to_list(10000)
+    
+    # Get associate info
+    associate = await db.users.find_one({"id": associate_id}, {"_id": 0, "password": 0})
+    
+    # Get statuses
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(100)
+    status_map = {s['id']: s['name'].lower() for s in statuses}
+    
+    # Get users for partner names
+    users = await db.users.find({}, {"_id": 0, "password": 0}).to_list(1000)
+    user_map = {u['id']: u['name'] for u in users}
+    
+    # Aggregate data
+    total_referrals = len(leads)
+    converted = 0
+    pending = 0
+    lost = 0
+    total_deal_value_influenced = 0
+    total_vyapaar_revenue_influenced = 0
+    total_earnings = 0
+    period_breakdown = {}
+    deals_list = []
+    
+    for lead in leads:
+        status_name = status_map.get(lead.get('status_id', ''), '').lower()
+        deal_value = lead.get('deal_value', 0)
+        total_deal_value_influenced += deal_value
+        
+        # Period breakdown
+        created_at = lead.get('created_at', '')[:10]
+        if period == 'monthly':
+            period_key = created_at[:7]
+        elif period == 'quarterly':
+            month = int(created_at[5:7]) if len(created_at) >= 7 else 1
+            quarter = (month - 1) // 3 + 1
+            period_key = f"{created_at[:4]}-Q{quarter}"
+        elif period == 'yearly':
+            period_key = created_at[:4]
+        else:
+            period_key = created_at[:7]
+        
+        if period_key not in period_breakdown:
+            period_breakdown[period_key] = {"referrals": 0, "converted": 0, "earnings": 0}
+        period_breakdown[period_key]['referrals'] += 1
+        
+        if 'won' in status_name:
+            converted += 1
+            period_breakdown[period_key]['converted'] += 1
+            
+            vyapaar_pct = lead.get('commission_override') or 15.0
+            vyapaar_share = deal_value * (vyapaar_pct / 100)
+            total_vyapaar_revenue_influenced += vyapaar_share
+            
+            sa_pct = lead.get('sales_associate_commission', 0) or 0
+            earnings = vyapaar_share * (sa_pct / 100) if sa_pct else 0
+            total_earnings += earnings
+            period_breakdown[period_key]['earnings'] += earnings
+            
+            deals_list.append({
+                "id": lead['id'],
+                "title": lead['title'],
+                "deal_value": deal_value,
+                "vyapaar_share": round(vyapaar_share, 2),
+                "commission_percentage": sa_pct,
+                "earnings": round(earnings, 2),
+                "partner": user_map.get(lead.get('selling_partner_id'), "Unknown"),
+                "date": created_at,
+                "status": "Won"
+            })
+        elif 'lost' in status_name:
+            lost += 1
+        else:
+            pending += 1
+            # Forecast earnings for pending deals
+            vyapaar_pct = lead.get('commission_override') or 15.0
+            vyapaar_share = deal_value * (vyapaar_pct / 100)
+            sa_pct = lead.get('sales_associate_commission', 0) or 0
+            potential_earnings = vyapaar_share * (sa_pct / 100) if sa_pct else 0
+            
+            if potential_earnings > 0:
+                deals_list.append({
+                    "id": lead['id'],
+                    "title": lead['title'],
+                    "deal_value": deal_value,
+                    "vyapaar_share": round(vyapaar_share, 2),
+                    "commission_percentage": sa_pct,
+                    "earnings": round(potential_earnings, 2),
+                    "partner": user_map.get(lead.get('selling_partner_id'), "Unknown"),
+                    "date": created_at,
+                    "status": "Pending (Forecasted)"
+                })
+    
+    # Calculate forecasted earnings from open deals
+    forecasted_earnings = sum(d['earnings'] for d in deals_list if d['status'] == "Pending (Forecasted)")
+    
+    return {
+        "associate_info": {
+            "id": associate_id,
+            "name": associate['name'] if associate else "Unknown",
+            "email": associate['email'] if associate else None
+        },
+        "summary": {
+            "total_referrals": total_referrals,
+            "converted_deals": converted,
+            "pending_deals": pending,
+            "lost_deals": lost,
+            "conversion_rate": round(converted / total_referrals * 100, 2) if total_referrals > 0 else 0,
+            "total_deal_value_influenced": round(total_deal_value_influenced, 2),
+            "vyapaar_revenue_influenced": round(total_vyapaar_revenue_influenced, 2),
+            "total_earnings": round(total_earnings, 2),
+            "forecasted_earnings": round(forecasted_earnings, 2)
+        },
+        "lifetime_earnings": round(total_earnings, 2),
+        "period_breakdown": sorted([{"period": k, **v} for k, v in period_breakdown.items()], key=lambda x: x['period']),
+        "deals": deals_list
+    }
+
+@api_router.post("/leads/{lead_id}/lock-commission")
+async def lock_deal_commission(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Lock commission values when deal is marked as Won"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can lock commissions")
+    
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    # Check if deal is won
+    status = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0})
+    if not status or 'won' not in status['name'].lower():
+        raise HTTPException(status_code=400, detail="Can only lock commission for Won deals")
+    
+    # Check if already locked
+    if lead.get('locked_commission'):
+        raise HTTPException(status_code=400, detail="Commission already locked for this deal")
+    
+    # Get partner company for base rate
+    base_commission_pct = 15.0
+    if lead.get('selling_partner_id'):
+        partner = await db.users.find_one({"id": lead['selling_partner_id']}, {"_id": 0})
+        if partner and partner.get('company_id'):
+            company = await db.companies.find_one({"id": partner['company_id']}, {"_id": 0})
+            if company:
+                base_commission_pct = company.get('vyapaar_commission_percentage', 15.0)
+    
+    # Calculate locked values
+    deal_value = lead.get('deal_value', 0)
+    override_pct = lead.get('commission_override')
+    final_pct = override_pct if override_pct is not None else base_commission_pct
+    
+    vyapaar_gross = deal_value * (final_pct / 100)
+    selling_partner_revenue = deal_value - vyapaar_gross
+    
+    sa_pct = lead.get('sales_associate_commission', 0) or 0
+    sa_commission = vyapaar_gross * (sa_pct / 100) if sa_pct else 0
+    vyapaar_net = vyapaar_gross - sa_commission
+    
+    locked_commission = {
+        "deal_value": deal_value,
+        "vyapaar_base_percentage": base_commission_pct,
+        "commission_override_percentage": override_pct,
+        "final_vyapaar_percentage": final_pct,
+        "selling_partner_revenue": round(selling_partner_revenue, 2),
+        "vyapaar_gross_commission": round(vyapaar_gross, 2),
+        "sales_associate_percentage": sa_pct if sa_pct else None,
+        "sales_associate_commission": round(sa_commission, 2) if sa_commission else None,
+        "vyapaar_net_earnings": round(vyapaar_net, 2),
+        "locked_at": datetime.now(timezone.utc).isoformat(),
+        "locked_by": current_user['id']
+    }
+    
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$set": {"locked_commission": locked_commission, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    return {"message": "Commission locked successfully", "locked_commission": locked_commission}
+
 # ==================== SEED DATA ====================
 
 @api_router.post("/seed")
