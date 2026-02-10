@@ -109,14 +109,24 @@ const Leads = () => {
           </p>
         </div>
         {!isSalesAssociate && (
-          <Button 
-            onClick={() => navigate('/leads/new')} 
-            className="bg-primary"
-            data-testid="create-lead-btn"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Create Lead
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline"
+              onClick={() => navigate('/leads/import')}
+              data-testid="import-leads-btn"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Import
+            </Button>
+            <Button 
+              onClick={() => navigate('/leads/new')} 
+              className="bg-primary"
+              data-testid="create-lead-btn"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create Lead
+            </Button>
+          </div>
         )}
       </div>
 
