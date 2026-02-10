@@ -2681,6 +2681,178 @@ async def get_detailed_partner_report(
         "won_deals": deals_list
     }
 
+@api_router.get("/reports/grid-performance")
+async def get_grid_performance_report(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    partner_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+    status_id: Optional[str] = None,
+    sort_by: Optional[str] = "deal_value",  # deal_value, created_at, vyapaar_commission, partner_revenue
+    sort_order: Optional[str] = "desc",  # asc, desc
+    current_user: dict = Depends(get_current_user)
+):
+    """Grid Performance Report - Detailed performance data for all partners (Admin only)"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can access this report")
+    
+    # Build query
+    query = {}
+    if start_date:
+        query['created_at'] = {"$gte": start_date}
+    if end_date:
+        if 'created_at' not in query:
+            query['created_at'] = {}
+        query['created_at']['$lte'] = end_date
+    if partner_id:
+        query['selling_partner_id'] = partner_id
+    if category_id:
+        query['primary_category_id'] = category_id
+    if status_id:
+        query['status_id'] = status_id
+    
+    leads = await db.leads.find(query, {"_id": 0}).to_list(10000)
+    
+    # Get reference data
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(100)
+    status_map = {s['id']: s for s in statuses}
+    
+    categories = await db.primary_categories.find({}, {"_id": 0}).to_list(100)
+    category_map = {c['id']: c['name'] for c in categories}
+    
+    users = await db.users.find({}, {"_id": 0, "password": 0}).to_list(1000)
+    user_map = {u['id']: u for u in users}
+    
+    companies = await db.companies.find({}, {"_id": 0}).to_list(1000)
+    company_map = {c['id']: c for c in companies}
+    
+    # Build grid data
+    grid_data = []
+    summary = {
+        "total_leads": 0,
+        "total_deal_value": 0,
+        "total_vyapaar_commission": 0,
+        "total_partner_revenue": 0,
+        "won_deals": 0,
+        "lost_deals": 0,
+        "pending_deals": 0
+    }
+    
+    partner_summary = {}
+    
+    for lead in leads:
+        status = status_map.get(lead.get('status_id', ''), {})
+        status_name = status.get('name', 'Unknown').lower()
+        
+        partner = user_map.get(lead.get('selling_partner_id'), {})
+        partner_company = company_map.get(partner.get('company_id', ''), {}) if partner else {}
+        
+        deal_value = lead.get('deal_value', 0)
+        vyapaar_pct = lead.get('commission_override') or partner_company.get('vyapaar_commission_percentage', 15.0)
+        vyapaar_commission = deal_value * (vyapaar_pct / 100)
+        partner_revenue = deal_value - vyapaar_commission
+        
+        # Update summary
+        summary['total_leads'] += 1
+        summary['total_deal_value'] += deal_value
+        
+        if 'won' in status_name:
+            summary['won_deals'] += 1
+            summary['total_vyapaar_commission'] += vyapaar_commission
+            summary['total_partner_revenue'] += partner_revenue
+        elif 'lost' in status_name:
+            summary['lost_deals'] += 1
+        else:
+            summary['pending_deals'] += 1
+        
+        # Partner summary
+        partner_id_key = lead.get('selling_partner_id', 'unassigned')
+        if partner_id_key not in partner_summary:
+            partner_summary[partner_id_key] = {
+                "partner_id": partner_id_key,
+                "partner_name": partner.get('name', 'Unassigned'),
+                "company_name": partner_company.get('name', '-'),
+                "total_leads": 0,
+                "won_deals": 0,
+                "total_deal_value": 0,
+                "vyapaar_commission": 0,
+                "partner_revenue": 0,
+                "conversion_rate": 0
+            }
+        
+        partner_summary[partner_id_key]['total_leads'] += 1
+        partner_summary[partner_id_key]['total_deal_value'] += deal_value
+        
+        if 'won' in status_name:
+            partner_summary[partner_id_key]['won_deals'] += 1
+            partner_summary[partner_id_key]['vyapaar_commission'] += vyapaar_commission
+            partner_summary[partner_id_key]['partner_revenue'] += partner_revenue
+        
+        # Grid row
+        grid_data.append({
+            "id": lead['id'],
+            "title": lead['title'],
+            "customer_name": lead['customer_name'],
+            "customer_email": lead['customer_email'],
+            "customer_company": lead.get('customer_company', '-'),
+            "partner_id": lead.get('selling_partner_id'),
+            "partner_name": partner.get('name', 'Unassigned'),
+            "company_name": partner_company.get('name', '-'),
+            "category": category_map.get(lead.get('primary_category_id'), 'Unknown'),
+            "status": status.get('name', 'Unknown'),
+            "status_color": status.get('color', '#94A3B8'),
+            "deal_value": deal_value,
+            "vyapaar_commission_pct": vyapaar_pct,
+            "vyapaar_commission": round(vyapaar_commission, 2),
+            "partner_revenue": round(partner_revenue, 2),
+            "created_at": lead['created_at'],
+            "updated_at": lead['updated_at'],
+            "is_won": 'won' in status_name
+        })
+    
+    # Calculate conversion rates
+    for ps in partner_summary.values():
+        if ps['total_leads'] > 0:
+            ps['conversion_rate'] = round(ps['won_deals'] / ps['total_leads'] * 100, 2)
+        ps['vyapaar_commission'] = round(ps['vyapaar_commission'], 2)
+        ps['partner_revenue'] = round(ps['partner_revenue'], 2)
+    
+    # Sort grid data
+    reverse = sort_order == 'desc'
+    if sort_by in ['deal_value', 'vyapaar_commission', 'partner_revenue']:
+        grid_data.sort(key=lambda x: x.get(sort_by, 0), reverse=reverse)
+    elif sort_by == 'created_at':
+        grid_data.sort(key=lambda x: x.get('created_at', ''), reverse=reverse)
+    elif sort_by == 'partner_name':
+        grid_data.sort(key=lambda x: x.get('partner_name', '').lower(), reverse=reverse)
+    elif sort_by == 'status':
+        grid_data.sort(key=lambda x: x.get('status', '').lower(), reverse=reverse)
+    
+    # Sort partner summary by won deals
+    partner_list = sorted(partner_summary.values(), key=lambda x: x['won_deals'], reverse=True)
+    
+    # Round summary values
+    summary['total_deal_value'] = round(summary['total_deal_value'], 2)
+    summary['total_vyapaar_commission'] = round(summary['total_vyapaar_commission'], 2)
+    summary['total_partner_revenue'] = round(summary['total_partner_revenue'], 2)
+    
+    return {
+        "summary": summary,
+        "partner_summary": partner_list,
+        "grid_data": grid_data,
+        "filters": {
+            "start_date": start_date,
+            "end_date": end_date,
+            "partner_id": partner_id,
+            "category_id": category_id,
+            "status_id": status_id
+        },
+        "sort": {
+            "by": sort_by,
+            "order": sort_order
+        }
+    }
+
 @api_router.get("/reports/sales-associate/{associate_id}/detailed")
 async def get_detailed_associate_report(
     associate_id: str,
