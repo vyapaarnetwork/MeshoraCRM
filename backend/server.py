@@ -998,12 +998,27 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
     if not primary:
         raise HTTPException(status_code=404, detail="Primary category not found")
     
-    # Get default status if not provided
+    # Get status based on selling partner assignment
     status_id = lead_data.status_id
     if not status_id:
-        default_status = await db.lead_statuses.find_one({"is_active": True}, {"_id": 0}, sort=[("order", 1)])
-        if default_status:
-            status_id = default_status['id']
+        # If no selling partner, set to Draft; otherwise set to New
+        if not lead_data.selling_partner_id and current_user['role'] == UserRole.SUPER_ADMIN.value:
+            draft_status = await db.lead_statuses.find_one({"name": "Draft", "is_active": True}, {"_id": 0})
+            if draft_status:
+                status_id = draft_status['id']
+            else:
+                # Fallback to first status
+                default_status = await db.lead_statuses.find_one({"is_active": True}, {"_id": 0}, sort=[("order", 1)])
+                if default_status:
+                    status_id = default_status['id']
+        else:
+            new_status = await db.lead_statuses.find_one({"name": "New", "is_active": True}, {"_id": 0})
+            if new_status:
+                status_id = new_status['id']
+            else:
+                default_status = await db.lead_statuses.find_one({"is_active": True}, {"_id": 0}, sort=[("order", 1)])
+                if default_status:
+                    status_id = default_status['id']
     
     lead_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
