@@ -1,0 +1,88 @@
+{
+  "summary": "Comprehensive testing of Vyapaar Network CRM new features completed. All 15 backend tests passed (100%). Frontend UI verified for all new features including customer-only registration, admin user creation, Draft lead status, follow-up pending_with field, and company subcategories.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "passed_tests": [
+    "Customer self-registration success",
+    "Selling partner self-registration rejected (403)",
+    "Sales associate self-registration rejected (403)",
+    "Super admin self-registration rejected (403)",
+    "Admin login works correctly",
+    "Admin can create selling partner users",
+    "Admin can create sales associate users",
+    "Admin can create customer users",
+    "Draft status exists in lead statuses",
+    "Lead without partner gets Draft status",
+    "Draft to New status transition when partner assigned",
+    "Follow-up with pending_with=customer",
+    "Follow-up with pending_with=selling_partner",
+    "Company creation with subcategories",
+    "Company list includes subcategory information"
+  ],
+  
+  "features_verified": {
+    "customer_only_registration": {
+      "status": "WORKING",
+      "details": "Registration page shows 'Customer Registration' badge, button says 'Create Customer Account', info message about contacting admin for other roles is present"
+    },
+    "admin_user_creation": {
+      "status": "WORKING",
+      "details": "Add User dialog shows all 4 role options (Super Admin, Selling Partner, Sales Associate, Customer). Dialog description says 'All user types can be created here.'"
+    },
+    "draft_lead_status": {
+      "status": "WORKING",
+      "details": "Lead form shows warning: 'Without a selling partner, this lead will be saved as Draft. It will move to New status when a partner is assigned.' Dashboard shows Draft status in pipeline progress."
+    },
+    "draft_to_new_transition": {
+      "status": "WORKING",
+      "details": "Backend test confirmed leads transition from Draft to New when selling partner is assigned"
+    },
+    "followup_pending_with": {
+      "status": "WORKING",
+      "details": "Lead detail page shows follow-ups with 'Pending with: Customer' and 'Pending with: Selling Partner' labels"
+    },
+    "company_subcategories": {
+      "status": "WORKING",
+      "details": "Companies page has Sub-categories column showing badges like 'Recruitment', 'Training'. Backend API supports subcategory_ids array for selling partners."
+    }
+  },
+  
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [],
+  
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  
+  "test_credentials": {
+    "super_admin": {"email": "admin@vyapaarnetwork.com", "password": "admin123"}
+  },
+  
+  "seed_data_creation": "Test users created: Admin Created SP, Admin Created SA, Admin Created Customer. Test leads created with Draft status.",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "All new features are working correctly. Backend tests in /app/backend/tests/test_new_features.py cover all new functionality. The app has 4 user roles (super_admin, selling_partner, sales_associate, customer). Only customers can self-register; other roles must be created by admin via POST /api/users endpoint."
+}
