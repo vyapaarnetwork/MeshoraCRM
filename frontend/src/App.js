@@ -104,9 +104,9 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
-      {/* Lead Referral - Selling Partners Only */}
+      {/* Lead Referral - Selling Partners and Sales Associates */}
       <Route path="/lead-referral" element={
-        <ProtectedRoute allowedRoles={['selling_partner']}>
+        <ProtectedRoute allowedRoles={['selling_partner', 'sales_associate']}>
           <LeadReferral />
         </ProtectedRoute>
       } />
