@@ -26,7 +26,8 @@ import {
   BarChart3,
   Menu,
   X,
-  Bell
+  Bell,
+  Send
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 
@@ -59,6 +60,16 @@ const Layout = ({ children }) => {
         roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer']
       },
     ];
+
+    // Lead Referral menu for Selling Partners
+    if (isSellingPartner) {
+      items.push({
+        label: 'Lead Referral',
+        icon: Send,
+        path: '/lead-referral',
+        roles: ['selling_partner']
+      });
+    }
 
     if (isAdmin) {
       items.push(
