@@ -1213,6 +1213,10 @@ async def enrich_lead(lead: dict) -> LeadResponse:
     if lead.get('sales_associate_id'):
         sales_associate = await db.users.find_one({"id": lead['sales_associate_id']}, {"_id": 0})
     
+    referred_by_partner = None
+    if lead.get('referred_by_partner_id'):
+        referred_by_partner = await db.users.find_one({"id": lead['referred_by_partner_id']}, {"_id": 0})
+    
     primary_category = await db.primary_categories.find_one({"id": lead['primary_category_id']}, {"_id": 0})
     
     secondary_category = None
@@ -1257,6 +1261,8 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         selling_partner_name=selling_partner['name'] if selling_partner else None,
         sales_associate_id=lead.get('sales_associate_id'),
         sales_associate_name=sales_associate['name'] if sales_associate else None,
+        referred_by_partner_id=lead.get('referred_by_partner_id'),
+        referred_by_partner_name=referred_by_partner['name'] if referred_by_partner else None,
         primary_category_id=lead['primary_category_id'],
         primary_category_name=primary_category['name'] if primary_category else None,
         secondary_category_id=lead.get('secondary_category_id'),
