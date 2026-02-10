@@ -15,6 +15,7 @@ import jwt
 import bcrypt
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+from twilio.rest import Client as TwilioClient
 from enum import Enum
 import csv
 import io
