@@ -567,6 +567,72 @@ async def change_password(password_data: PasswordChange, current_user: dict = De
 
 # ==================== USER ROUTES ====================
 
+@api_router.post("/users", response_model=UserResponse)
+async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(get_current_user)):
+    """Admin creates a new user of any type"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can create users")
+    
+    # Check if email exists
+    existing = await db.users.find_one({"email": user_data.email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    user_id = str(uuid.uuid4())
+    company_id = user_data.company_id
+    company_name = None
+    
+    # Create or use company for selling partners and customers
+    if user_data.role in [UserRole.SELLING_PARTNER, UserRole.CUSTOMER]:
+        if user_data.company_id:
+            # Use existing company
+            company = await db.companies.find_one({"id": user_data.company_id}, {"_id": 0})
+            if company:
+                company_name = company['name']
+        elif user_data.company_name:
+            # Create new company
+            company_id = str(uuid.uuid4())
+            company_doc = {
+                "id": company_id,
+                "name": user_data.company_name,
+                "type": "selling_partner" if user_data.role == UserRole.SELLING_PARTNER else "customer",
+                "vyapaar_commission_percentage": 15.0,
+                "address": None,
+                "contact_email": user_data.email,
+                "contact_phone": user_data.phone,
+                "subcategory_ids": [],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "is_active": True
+            }
+            await db.companies.insert_one(company_doc)
+            company_name = user_data.company_name
+    
+    user_doc = {
+        "id": user_id,
+        "email": user_data.email,
+        "password": hash_password(user_data.password),
+        "name": user_data.name,
+        "role": user_data.role.value,
+        "company_id": company_id,
+        "phone": user_data.phone,
+        "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.users.insert_one(user_doc)
+    
+    return UserResponse(
+        id=user_id,
+        email=user_data.email,
+        name=user_data.name,
+        role=user_data.role,
+        company_id=company_id,
+        company_name=company_name,
+        phone=user_data.phone,
+        is_active=True,
+        created_at=user_doc['created_at']
+    )
+
 @api_router.get("/users", response_model=List[UserResponse])
 async def list_users(role: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
