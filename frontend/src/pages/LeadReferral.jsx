@@ -7,6 +7,7 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
+import { Switch } from '../components/ui/switch';
 import {
   Table,
   TableBody,
@@ -30,6 +31,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '../components/ui/tabs';
 import { 
   Plus, 
   Send, 
@@ -43,21 +50,24 @@ import {
   DollarSign,
   Clock,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  ShoppingCart
 } from 'lucide-react';
 import api, { formatDate, formatCurrency } from '../utils/api';
 import { toast } from 'sonner';
 
 const LeadReferral = () => {
-  const { user } = useAuth();
+  const { user, isSellingPartner } = useAuth();
   const [referrals, setReferrals] = useState([]);
   const [primaryCategories, setPrimaryCategories] = useState([]);
   const [secondaryCategories, setSecondaryCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('referrals');
   
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [isInternalRequest, setIsInternalRequest] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -92,18 +102,19 @@ const LeadReferral = () => {
     }
   };
 
-  const openDialog = () => {
+  const openDialog = (internal = false) => {
+    setIsInternalRequest(internal);
     setFormData({
       title: '',
       description: '',
-      customer_name: '',
-      customer_email: '',
+      customer_name: internal ? user?.name || '' : '',
+      customer_email: internal ? user?.email || '' : '',
       customer_phone: '',
-      customer_company: '',
+      customer_company: internal ? user?.company_name || '' : '',
       primary_category_id: '',
       secondary_category_id: '',
       estimated_deal_value: '',
-      referral_notes: ''
+      referral_notes: internal ? 'Internal service request from selling partner' : ''
     });
     setDialogOpen(true);
   };
@@ -126,15 +137,18 @@ const LeadReferral = () => {
         primary_category_id: formData.primary_category_id,
         secondary_category_id: formData.secondary_category_id || null,
         estimated_deal_value: formData.estimated_deal_value ? parseFloat(formData.estimated_deal_value) : null,
-        referral_notes: formData.referral_notes || null
+        referral_notes: formData.referral_notes || null,
+        is_internal_request: isInternalRequest
       };
 
       await api.post('/leads/referral', payload);
-      toast.success('Lead referral submitted successfully! It will be reviewed by the admin.');
+      toast.success(isInternalRequest 
+        ? 'Internal request submitted successfully!' 
+        : 'Lead referral submitted successfully! It will be reviewed by the admin.');
       fetchData();
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to submit referral');
+      toast.error(error.response?.data?.detail || 'Failed to submit');
     } finally {
       setSubmitting(false);
     }
@@ -145,12 +159,16 @@ const LeadReferral = () => {
     ? secondaryCategories.filter(c => c.primary_category_id === formData.primary_category_id)
     : [];
 
-  // Stats
+  // Stats - separate internal requests from referrals
+  const externalReferrals = referrals.filter(r => !r.is_internal_request);
+  const internalRequests = referrals.filter(r => r.is_internal_request);
+  
   const stats = {
     total: referrals.length,
     draft: referrals.filter(r => r.status_name === 'Draft').length,
     assigned: referrals.filter(r => r.status_name !== 'Draft').length,
-    won: referrals.filter(r => r.status_name === 'Won').length
+    won: referrals.filter(r => r.status_name === 'Won').length,
+    internal: internalRequests.length
   };
 
   const getStatusIcon = (status) => {
@@ -166,7 +184,19 @@ const LeadReferral = () => {
     }
   };
 
+  const getReferralSource = (referral) => {
+    if (referral.referred_by_partner_name) {
+      return { name: referral.referred_by_partner_name, type: 'Partner' };
+    }
+    if (referral.referred_by_associate_name) {
+      return { name: referral.referred_by_associate_name, type: 'Associate' };
+    }
+    return { name: 'Unknown', type: '' };
+  };
+
   if (loading) return <LeadReferralSkeleton />;
+
+  const roleLabel = isSellingPartner ? 'Partner' : 'Associate';
 
   return (
     <div className="space-y-6" data-testid="lead-referral-page">
@@ -174,22 +204,32 @@ const LeadReferral = () => {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Lead Referrals</h1>
           <p className="text-muted-foreground mt-1">
-            Refer leads to Vyapaar Network for assignment
+            {isSellingPartner 
+              ? 'Refer leads or request internal services' 
+              : 'Refer leads to Vyapaar Network for assignment'}
           </p>
         </div>
-        <Button onClick={openDialog} data-testid="new-referral-btn">
-          <Plus className="w-4 h-4 mr-2" />
-          New Referral
-        </Button>
+        <div className="flex gap-2">
+          {isSellingPartner && (
+            <Button variant="outline" onClick={() => openDialog(true)} data-testid="internal-request-btn">
+              <ShoppingCart className="w-4 h-4 mr-2" />
+              Internal Request
+            </Button>
+          )}
+          <Button onClick={() => openDialog(false)} data-testid="new-referral-btn">
+            <Plus className="w-4 h-4 mr-2" />
+            New Referral
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Total Referrals</p>
+                <p className="text-sm text-muted-foreground">Total Submissions</p>
                 <p className="text-2xl font-bold">{stats.total}</p>
               </div>
               <div className="p-3 rounded-lg bg-primary/10 text-primary">
@@ -237,6 +277,21 @@ const LeadReferral = () => {
             </div>
           </CardContent>
         </Card>
+        {isSellingPartner && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Internal Requests</p>
+                  <p className="text-2xl font-bold text-purple-600">{stats.internal}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-purple-100 text-purple-600">
+                  <ShoppingCart className="w-5 h-5" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Info Card */}
@@ -251,129 +306,86 @@ const LeadReferral = () => {
                 <li>Your referral will be saved in <strong>Draft</strong> status</li>
                 <li>Super Admin will review and assign it to the right Selling Partner</li>
                 <li>Once assigned, the lead status changes to <strong>New</strong></li>
-                <li>You can track the progress of your referrals here</li>
+                {isSellingPartner && (
+                  <li className="text-purple-700"><strong>Internal Request:</strong> Use this when your company needs services from other partners</li>
+                )}
               </ul>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Referrals Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="w-5 h-5 text-primary" />
-            My Referrals ({referrals.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {referrals.length > 0 ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Lead</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Est. Value</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Assigned To</TableHead>
-                    <TableHead>Submitted</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {referrals.map((referral) => (
-                    <TableRow key={referral.id} data-testid={`referral-row-${referral.id}`}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{referral.title}</p>
-                          {referral.description && (
-                            <p className="text-xs text-muted-foreground line-clamp-1">
-                              {referral.description}
-                            </p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-1 text-sm">
-                            <User className="w-3 h-3 text-muted-foreground" />
-                            {referral.customer_name}
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <Mail className="w-3 h-3" />
-                            {referral.customer_email}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{referral.primary_category_name}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {referral.deal_value > 0 ? (
-                          <span className="font-medium">{formatCurrency(referral.deal_value)}</span>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge 
-                          style={{ backgroundColor: referral.status_color + '20', color: referral.status_color, borderColor: referral.status_color }}
-                          className="flex items-center gap-1 w-fit"
-                        >
-                          {getStatusIcon(referral.status_name)}
-                          {referral.status_name}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {referral.selling_partner_name ? (
-                          <span className="text-sm">{referral.selling_partner_name}</span>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">Pending Assignment</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {formatDate(referral.created_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Send className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-              <h3 className="font-semibold mb-1">No referrals yet</h3>
-              <p className="text-muted-foreground text-sm mb-4">
-                Submit your first lead referral to get started
-              </p>
-              <Button onClick={openDialog}>
-                <Plus className="w-4 h-4 mr-2" />
-                New Referral
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Tabs for Selling Partners */}
+      {isSellingPartner ? (
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList>
+            <TabsTrigger value="referrals">Lead Referrals ({externalReferrals.length})</TabsTrigger>
+            <TabsTrigger value="internal">Internal Requests ({internalRequests.length})</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="referrals">
+            <ReferralsTable 
+              referrals={externalReferrals}
+              getStatusIcon={getStatusIcon}
+              getReferralSource={getReferralSource}
+              onNewReferral={() => openDialog(false)}
+              emptyTitle="No referrals yet"
+              emptyMessage="Submit your first lead referral to get started"
+            />
+          </TabsContent>
+          
+          <TabsContent value="internal">
+            <ReferralsTable 
+              referrals={internalRequests}
+              getStatusIcon={getStatusIcon}
+              getReferralSource={getReferralSource}
+              onNewReferral={() => openDialog(true)}
+              emptyTitle="No internal requests"
+              emptyMessage="Request services from other partners when needed"
+              isInternal
+            />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <ReferralsTable 
+          referrals={referrals}
+          getStatusIcon={getStatusIcon}
+          getReferralSource={getReferralSource}
+          onNewReferral={() => openDialog(false)}
+          emptyTitle="No referrals yet"
+          emptyMessage="Submit your first lead referral to get started"
+        />
+      )}
 
       {/* New Referral Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Submit Lead Referral</DialogTitle>
+            <DialogTitle>
+              {isInternalRequest ? 'Submit Internal Request' : 'Submit Lead Referral'}
+            </DialogTitle>
             <DialogDescription>
-              Refer a potential lead for assignment to the right selling partner
+              {isInternalRequest 
+                ? 'Request services from other selling partners for your company'
+                : 'Refer a potential lead for assignment to the right selling partner'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {isInternalRequest && (
+              <div className="p-3 bg-purple-50 rounded-lg text-sm text-purple-800">
+                <strong>Internal Request:</strong> This lead will be created with your company as the customer. 
+                It will be assigned to another selling partner who can fulfill your requirement.
+              </div>
+            )}
+
             {/* Lead Info */}
             <div className="space-y-2">
               <Label>Lead Title *</Label>
               <Input
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                placeholder="e.g., Website Development for ABC Corp"
+                placeholder={isInternalRequest ? "e.g., IT Support Services for our office" : "e.g., Website Development for ABC Corp"}
                 data-testid="referral-title-input"
               />
             </div>
@@ -392,17 +404,18 @@ const LeadReferral = () => {
             <div className="border-t pt-4">
               <Label className="text-base font-semibold flex items-center gap-2 mb-3">
                 <User className="w-4 h-4" />
-                Customer Details
+                {isInternalRequest ? 'Your Details (as Customer)' : 'Customer Details'}
               </Label>
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Customer Name *</Label>
+                  <Label>Contact Name *</Label>
                   <Input
                     value={formData.customer_name}
                     onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
                     placeholder="John Doe"
                     data-testid="referral-customer-name"
+                    disabled={isInternalRequest}
                   />
                 </div>
                 <div className="space-y-2">
@@ -411,6 +424,7 @@ const LeadReferral = () => {
                     value={formData.customer_company}
                     onChange={(e) => setFormData({ ...formData, customer_company: e.target.value })}
                     placeholder="ABC Corporation"
+                    disabled={isInternalRequest}
                   />
                 </div>
               </div>
@@ -424,6 +438,7 @@ const LeadReferral = () => {
                     onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
                     placeholder="john@abc.com"
                     data-testid="referral-customer-email"
+                    disabled={isInternalRequest}
                   />
                 </div>
                 <div className="space-y-2">
@@ -481,7 +496,7 @@ const LeadReferral = () => {
               </div>
 
               <div className="space-y-2 mt-3">
-                <Label>Estimated Deal Value (₹)</Label>
+                <Label>Estimated {isInternalRequest ? 'Budget' : 'Deal Value'} (₹)</Label>
                 <Input
                   type="number"
                   value={formData.estimated_deal_value}
@@ -493,11 +508,13 @@ const LeadReferral = () => {
 
             {/* Notes */}
             <div className="space-y-2 border-t pt-4">
-              <Label>Referral Notes</Label>
+              <Label>Additional Notes</Label>
               <Textarea
                 value={formData.referral_notes}
                 onChange={(e) => setFormData({ ...formData, referral_notes: e.target.value })}
-                placeholder="Any additional notes for the admin reviewing this referral..."
+                placeholder={isInternalRequest 
+                  ? "Any specific requirements or timeline..."
+                  : "Any additional notes for the admin reviewing this referral..."}
                 rows={2}
               />
             </div>
@@ -516,7 +533,7 @@ const LeadReferral = () => {
               ) : (
                 <>
                   <Send className="w-4 h-4 mr-2" />
-                  Submit Referral
+                  {isInternalRequest ? 'Submit Request' : 'Submit Referral'}
                 </>
               )}
             </Button>
@@ -526,6 +543,111 @@ const LeadReferral = () => {
     </div>
   );
 };
+
+// Referrals Table Component
+const ReferralsTable = ({ referrals, getStatusIcon, getReferralSource, onNewReferral, emptyTitle, emptyMessage, isInternal = false }) => (
+  <Card>
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+        {isInternal ? <ShoppingCart className="w-5 h-5 text-purple-600" /> : <FileText className="w-5 h-5 text-primary" />}
+        {isInternal ? 'Internal Requests' : 'My Referrals'} ({referrals.length})
+      </CardTitle>
+    </CardHeader>
+    <CardContent>
+      {referrals.length > 0 ? (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Lead</TableHead>
+                <TableHead>Customer</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Est. Value</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Assigned To</TableHead>
+                <TableHead>Submitted</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {referrals.map((referral) => (
+                <TableRow key={referral.id} data-testid={`referral-row-${referral.id}`}>
+                  <TableCell>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium">{referral.title}</p>
+                        {referral.is_internal_request && (
+                          <Badge variant="outline" className="text-purple-600 border-purple-300">
+                            Internal
+                          </Badge>
+                        )}
+                      </div>
+                      {referral.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-1">
+                          {referral.description}
+                        </p>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-1 text-sm">
+                        <User className="w-3 h-3 text-muted-foreground" />
+                        {referral.customer_name}
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Mail className="w-3 h-3" />
+                        {referral.customer_email}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{referral.primary_category_name}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    {referral.deal_value > 0 ? (
+                      <span className="font-medium">{formatCurrency(referral.deal_value)}</span>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge 
+                      style={{ backgroundColor: referral.status_color + '20', color: referral.status_color, borderColor: referral.status_color }}
+                      className="flex items-center gap-1 w-fit"
+                    >
+                      {getStatusIcon(referral.status_name)}
+                      {referral.status_name}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {referral.selling_partner_name ? (
+                      <span className="text-sm">{referral.selling_partner_name}</span>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">Pending Assignment</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {formatDate(referral.created_at)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          {isInternal ? <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" /> : <Send className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />}
+          <h3 className="font-semibold mb-1">{emptyTitle}</h3>
+          <p className="text-muted-foreground text-sm mb-4">{emptyMessage}</p>
+          <Button onClick={onNewReferral}>
+            <Plus className="w-4 h-4 mr-2" />
+            {isInternal ? 'New Request' : 'New Referral'}
+          </Button>
+        </div>
+      )}
+    </CardContent>
+  </Card>
+);
 
 const LeadReferralSkeleton = () => (
   <div className="space-y-6">
