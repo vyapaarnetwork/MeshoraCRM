@@ -177,6 +177,34 @@ class LeadReferralCreate(BaseModel):
     secondary_category_id: Optional[str] = None
     estimated_deal_value: Optional[float] = None
     referral_notes: Optional[str] = None
+    is_internal_request: bool = False  # For Selling Partners requesting services
+
+# Notification Models
+class NotificationType(str, Enum):
+    NEW_LEAD = "new_lead"
+    LEAD_ASSIGNED = "lead_assigned"
+    LEAD_UPDATED = "lead_updated"
+    LEAD_STATUS_CHANGE = "lead_status_change"
+    NEW_REFERRAL = "new_referral"
+    FOLLOW_UP_REMINDER = "follow_up_reminder"
+
+class NotificationCreate(BaseModel):
+    type: NotificationType
+    title: str
+    message: str
+    lead_id: Optional[str] = None
+    user_id: str  # Recipient
+    data: Optional[Dict[str, Any]] = None
+
+class NotificationResponse(BaseModel):
+    id: str
+    type: str
+    title: str
+    message: str
+    lead_id: Optional[str] = None
+    is_read: bool
+    created_at: str
+    data: Optional[Dict[str, Any]] = None
 
 # Master Data Models
 class LeadStatusCreate(BaseModel):
