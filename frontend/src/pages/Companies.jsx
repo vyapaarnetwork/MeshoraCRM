@@ -29,13 +29,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { Plus, Edit, Building2, Percent, Search, Loader2 } from 'lucide-react';
+import { Checkbox } from '../components/ui/checkbox';
+import { Plus, Edit, Building2, Percent, Search, Loader2, Tag, X } from 'lucide-react';
 import api, { formatDate } from '../utils/api';
 import { toast } from 'sonner';
 
 const Companies = () => {
   const { isAdmin } = useAuth();
   const [companies, setCompanies] = useState([]);
+  const [secondaryCategories, setSecondaryCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -48,20 +50,25 @@ const Companies = () => {
     vyapaar_commission_percentage: '15',
     address: '',
     contact_email: '',
-    contact_phone: ''
+    contact_phone: '',
+    subcategory_ids: []
   });
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchCompanies();
+    fetchData();
   }, []);
 
-  const fetchCompanies = async () => {
+  const fetchData = async () => {
     try {
-      const response = await api.get('/companies');
-      setCompanies(response.data);
+      const [companiesRes, categoriesRes] = await Promise.all([
+        api.get('/companies'),
+        api.get('/master/secondary-categories')
+      ]);
+      setCompanies(companiesRes.data);
+      setSecondaryCategories(categoriesRes.data);
     } catch (error) {
-      toast.error('Failed to load companies');
+      toast.error('Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -75,14 +82,16 @@ const Companies = () => {
       vyapaar_commission_percentage: company.vyapaar_commission_percentage.toString(),
       address: company.address || '',
       contact_email: company.contact_email || '',
-      contact_phone: company.contact_phone || ''
+      contact_phone: company.contact_phone || '',
+      subcategory_ids: company.subcategory_ids || []
     } : {
       name: '',
       type: '',
       vyapaar_commission_percentage: '15',
       address: '',
       contact_email: '',
-      contact_phone: ''
+      contact_phone: '',
+      subcategory_ids: []
     });
     setDialogOpen(true);
   };
@@ -97,7 +106,8 @@ const Companies = () => {
     try {
       const payload = {
         ...formData,
-        vyapaar_commission_percentage: parseFloat(formData.vyapaar_commission_percentage)
+        vyapaar_commission_percentage: parseFloat(formData.vyapaar_commission_percentage),
+        subcategory_ids: formData.type === 'selling_partner' ? formData.subcategory_ids : []
       };
 
       if (editingCompany) {
@@ -108,13 +118,22 @@ const Companies = () => {
         toast.success('Company created successfully');
       }
 
-      fetchCompanies();
+      fetchData();
       setDialogOpen(false);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Operation failed');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const toggleSubcategory = (categoryId) => {
+    setFormData(prev => ({
+      ...prev,
+      subcategory_ids: prev.subcategory_ids.includes(categoryId)
+        ? prev.subcategory_ids.filter(id => id !== categoryId)
+        : [...prev.subcategory_ids, categoryId]
+    }));
   };
 
   const filteredCompanies = companies.filter(company => {
@@ -128,6 +147,16 @@ const Companies = () => {
     selling_partners: companies.filter(c => c.type === 'selling_partner').length,
     customers: companies.filter(c => c.type === 'customer').length
   };
+
+  // Group secondary categories by primary category
+  const categoriesByPrimary = secondaryCategories.reduce((acc, cat) => {
+    const primaryName = cat.primary_category_name || 'Other';
+    if (!acc[primaryName]) {
+      acc[primaryName] = [];
+    }
+    acc[primaryName].push(cat);
+    return acc;
+  }, {});
 
   if (loading) return <CompaniesSkeleton />;
 
@@ -228,6 +257,7 @@ const Companies = () => {
                     <TableHead>Company</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Commission Rate</TableHead>
+                    <TableHead>Sub-categories</TableHead>
                     <TableHead>Contact</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="w-[80px]">Actions</TableHead>
@@ -259,6 +289,24 @@ const Companies = () => {
                           <Percent className="w-3 h-3 text-muted-foreground" />
                           <span className="font-medium">{company.vyapaar_commission_percentage}%</span>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        {company.subcategories && company.subcategories.length > 0 ? (
+                          <div className="flex flex-wrap gap-1 max-w-[200px]">
+                            {company.subcategories.slice(0, 3).map((sub) => (
+                              <Badge key={sub.id} variant="outline" className="text-xs">
+                                {sub.name}
+                              </Badge>
+                            ))}
+                            {company.subcategories.length > 3 && (
+                              <Badge variant="outline" className="text-xs">
+                                +{company.subcategories.length - 3} more
+                              </Badge>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">-</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         {company.contact_email && (
@@ -309,7 +357,7 @@ const Companies = () => {
 
       {/* Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingCompany ? 'Edit Company' : 'Add New Company'}
@@ -334,7 +382,7 @@ const Companies = () => {
               <Label>Company Type *</Label>
               <Select 
                 value={formData.type} 
-                onValueChange={(v) => setFormData({ ...formData, type: v })}
+                onValueChange={(v) => setFormData({ ...formData, type: v, subcategory_ids: [] })}
               >
                 <SelectTrigger data-testid="company-type-select">
                   <SelectValue placeholder="Select type" />
@@ -362,6 +410,65 @@ const Companies = () => {
                 Default commission rate for this company's deals
               </p>
             </div>
+
+            {/* Sub-categories section for selling partners */}
+            {formData.type === 'selling_partner' && (
+              <div className="space-y-3">
+                <Label className="flex items-center gap-2">
+                  <Tag className="w-4 h-4" />
+                  Service Sub-categories
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Select the service categories this partner specializes in
+                </p>
+                
+                {/* Selected subcategories */}
+                {formData.subcategory_ids.length > 0 && (
+                  <div className="flex flex-wrap gap-2 p-2 bg-muted rounded-md">
+                    {formData.subcategory_ids.map(id => {
+                      const cat = secondaryCategories.find(c => c.id === id);
+                      return cat ? (
+                        <Badge key={id} variant="secondary" className="flex items-center gap-1">
+                          {cat.name}
+                          <X 
+                            className="w-3 h-3 cursor-pointer" 
+                            onClick={() => toggleSubcategory(id)}
+                          />
+                        </Badge>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+
+                {/* Category selection */}
+                <div className="border rounded-md max-h-[200px] overflow-y-auto">
+                  {Object.entries(categoriesByPrimary).map(([primaryName, categories]) => (
+                    <div key={primaryName} className="border-b last:border-b-0">
+                      <div className="px-3 py-2 bg-muted/50 font-medium text-sm">
+                        {primaryName}
+                      </div>
+                      <div className="p-2 space-y-1">
+                        {categories.map(cat => (
+                          <div key={cat.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={cat.id}
+                              checked={formData.subcategory_ids.includes(cat.id)}
+                              onCheckedChange={() => toggleSubcategory(cat.id)}
+                            />
+                            <label
+                              htmlFor={cat.id}
+                              className="text-sm cursor-pointer"
+                            >
+                              {cat.name}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
