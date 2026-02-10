@@ -1195,6 +1195,219 @@ async def add_comment(lead_id: str, comment_data: CommentCreate, current_user: d
     updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
     return await enrich_lead(updated_lead)
 
+# ==================== BULK IMPORT ====================
+
+@api_router.get("/leads/import/template")
+async def get_import_template(current_user: dict = Depends(get_current_user)):
+    """Get CSV template for bulk lead import"""
+    # Get categories and statuses for template reference
+    categories = await db.primary_categories.find({"is_active": True}, {"_id": 0}).to_list(100)
+    statuses = await db.lead_statuses.find({"is_active": True}, {"_id": 0}).to_list(100)
+    
+    category_names = ", ".join([c['name'] for c in categories])
+    status_names = ", ".join([s['name'] for s in statuses])
+    
+    return {
+        "columns": [
+            {"name": "title", "required": True, "description": "Lead title", "example": "Website Development Project"},
+            {"name": "description", "required": False, "description": "Lead description", "example": "Need a new corporate website"},
+            {"name": "customer_name", "required": True, "description": "Customer contact name", "example": "John Doe"},
+            {"name": "customer_email", "required": True, "description": "Customer email", "example": "john@company.com"},
+            {"name": "customer_phone", "required": False, "description": "Customer phone", "example": "+91 98765 43210"},
+            {"name": "customer_company", "required": False, "description": "Customer company name", "example": "ABC Corp"},
+            {"name": "primary_category", "required": True, "description": f"Category name. Options: {category_names}", "example": "IT"},
+            {"name": "deal_value", "required": False, "description": "Deal value in INR", "example": "100000"},
+            {"name": "status", "required": False, "description": f"Lead status. Options: {status_names}. Default: New", "example": "New"}
+        ],
+        "sample_data": [
+            {
+                "title": "ERP Implementation",
+                "description": "Complete ERP solution for manufacturing",
+                "customer_name": "Rajesh Kumar",
+                "customer_email": "rajesh@techcorp.in",
+                "customer_phone": "+91 98765 43210",
+                "customer_company": "TechCorp Industries",
+                "primary_category": "IT",
+                "deal_value": "500000",
+                "status": "New"
+            },
+            {
+                "title": "HR Consulting",
+                "description": "Recruitment and training services",
+                "customer_name": "Priya Sharma",
+                "customer_email": "priya@startupxyz.com",
+                "customer_phone": "+91 87654 32109",
+                "customer_company": "StartupXYZ",
+                "primary_category": "HR",
+                "deal_value": "150000",
+                "status": "Qualified"
+            },
+            {
+                "title": "Digital Marketing Campaign",
+                "description": "Social media and SEO services",
+                "customer_name": "Amit Patel",
+                "customer_email": "amit@retailbrand.com",
+                "customer_phone": "",
+                "customer_company": "RetailBrand Pvt Ltd",
+                "primary_category": "Marketing",
+                "deal_value": "75000",
+                "status": "New"
+            }
+        ],
+        "available_categories": [c['name'] for c in categories],
+        "available_statuses": [s['name'] for s in statuses]
+    }
+
+@api_router.get("/leads/import/download-sample")
+async def download_sample_csv(current_user: dict = Depends(get_current_user)):
+    """Download sample CSV file for bulk import"""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Header row
+    writer.writerow([
+        'title', 'description', 'customer_name', 'customer_email', 
+        'customer_phone', 'customer_company', 'primary_category', 
+        'deal_value', 'status'
+    ])
+    
+    # Sample data rows
+    writer.writerow([
+        'ERP Implementation', 'Complete ERP solution for manufacturing',
+        'Rajesh Kumar', 'rajesh@techcorp.in', '+91 98765 43210',
+        'TechCorp Industries', 'IT', '500000', 'New'
+    ])
+    writer.writerow([
+        'HR Consulting', 'Recruitment and training services',
+        'Priya Sharma', 'priya@startupxyz.com', '+91 87654 32109',
+        'StartupXYZ', 'HR', '150000', 'Qualified'
+    ])
+    writer.writerow([
+        'Digital Marketing Campaign', 'Social media and SEO services',
+        'Amit Patel', 'amit@retailbrand.com', '',
+        'RetailBrand Pvt Ltd', 'Marketing', '75000', 'New'
+    ])
+    
+    output.seek(0)
+    
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=lead_import_template.csv"}
+    )
+
+@api_router.post("/leads/import", response_model=BulkImportResult)
+async def bulk_import_leads(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Bulk import leads from CSV file"""
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    
+    # Read file content
+    content = await file.read()
+    content = content.decode('utf-8')
+    
+    # Parse CSV
+    reader = csv.DictReader(io.StringIO(content))
+    
+    # Get categories and statuses for mapping
+    categories = await db.primary_categories.find({"is_active": True}, {"_id": 0}).to_list(100)
+    category_map = {c['name'].lower(): c['id'] for c in categories}
+    
+    statuses = await db.lead_statuses.find({"is_active": True}, {"_id": 0}).to_list(100)
+    status_map = {s['name'].lower(): s['id'] for s in statuses}
+    default_status = next((s['id'] for s in statuses if s['name'].lower() == 'new'), None)
+    
+    total_rows = 0
+    successful = 0
+    failed = 0
+    errors = []
+    
+    for row_num, row in enumerate(reader, start=2):  # Start from 2 (1 is header)
+        total_rows += 1
+        row_errors = []
+        
+        # Validate required fields
+        title = row.get('title', '').strip()
+        customer_name = row.get('customer_name', '').strip()
+        customer_email = row.get('customer_email', '').strip()
+        primary_category = row.get('primary_category', '').strip()
+        
+        if not title:
+            row_errors.append("Title is required")
+        if not customer_name:
+            row_errors.append("Customer name is required")
+        if not customer_email:
+            row_errors.append("Customer email is required")
+        elif not re.match(r'^[^@]+@[^@]+\.[^@]+$', customer_email):
+            row_errors.append("Invalid email format")
+        
+        # Validate category
+        category_id = category_map.get(primary_category.lower()) if primary_category else None
+        if not category_id:
+            row_errors.append(f"Invalid category: {primary_category}. Available: {', '.join(category_map.keys())}")
+        
+        # Get status
+        status_name = row.get('status', 'New').strip()
+        status_id = status_map.get(status_name.lower(), default_status)
+        
+        # Parse deal value
+        deal_value = 0
+        try:
+            deal_value_str = row.get('deal_value', '0').strip()
+            if deal_value_str:
+                deal_value = float(deal_value_str.replace(',', ''))
+        except ValueError:
+            row_errors.append(f"Invalid deal value: {row.get('deal_value')}")
+        
+        if row_errors:
+            failed += 1
+            errors.append({"row": row_num, "errors": row_errors, "data": dict(row)})
+            continue
+        
+        # Create lead
+        lead_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        
+        lead_doc = {
+            "id": lead_id,
+            "title": title,
+            "description": row.get('description', '').strip() or None,
+            "customer_name": customer_name,
+            "customer_email": customer_email,
+            "customer_phone": row.get('customer_phone', '').strip() or None,
+            "customer_company": row.get('customer_company', '').strip() or None,
+            "selling_partner_id": None,
+            "sales_associate_id": None,
+            "primary_category_id": category_id,
+            "secondary_category_id": None,
+            "deal_value": deal_value,
+            "commission_override": None,
+            "sales_associate_commission": None,
+            "status_id": status_id,
+            "follow_ups": [],
+            "comments": [],
+            "created_by": current_user['id'],
+            "created_at": now,
+            "updated_at": now
+        }
+        
+        try:
+            await db.leads.insert_one(lead_doc)
+            successful += 1
+        except Exception as e:
+            failed += 1
+            errors.append({"row": row_num, "errors": [str(e)], "data": dict(row)})
+    
+    return BulkImportResult(
+        total_rows=total_rows,
+        successful=successful,
+        failed=failed,
+        errors=errors
+    )
+
 # ==================== DASHBOARD & REPORTS ====================
 
 @api_router.get("/dashboard/stats", response_model=DashboardStats)
