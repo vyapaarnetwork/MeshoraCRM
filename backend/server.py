@@ -2056,6 +2056,7 @@ async def get_entity_documents(entity_type: str, entity_id: str, current_user: d
 # ==================== LEAD ROUTES ====================
 
 async def enrich_lead(lead: dict) -> LeadResponse:
+    """Enrich a single lead with related data - used for single lead fetch"""
     # Get related data
     selling_partner = None
     if lead.get('selling_partner_id'):
@@ -2159,6 +2160,168 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         created_at=lead['created_at'],
         updated_at=lead['updated_at']
     )
+
+async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
+    """Bulk enrich leads with related data - optimized for list queries"""
+    if not leads:
+        return []
+    
+    # Collect all unique IDs
+    user_ids = set()
+    category_ids = set()
+    secondary_category_ids = set()
+    status_ids = set()
+    lead_ids = set()
+    company_ids = set()
+    
+    for lead in leads:
+        lead_ids.add(lead['id'])
+        if lead.get('selling_partner_id'):
+            user_ids.add(lead['selling_partner_id'])
+        if lead.get('sales_associate_id'):
+            user_ids.add(lead['sales_associate_id'])
+        if lead.get('referred_by_partner_id'):
+            user_ids.add(lead['referred_by_partner_id'])
+        if lead.get('referred_by_associate_id'):
+            user_ids.add(lead['referred_by_associate_id'])
+        if lead.get('created_by'):
+            user_ids.add(lead['created_by'])
+        if lead.get('primary_category_id'):
+            category_ids.add(lead['primary_category_id'])
+        if lead.get('secondary_category_id'):
+            secondary_category_ids.add(lead['secondary_category_id'])
+        if lead.get('status_id'):
+            status_ids.add(lead['status_id'])
+    
+    # Bulk fetch all related data in parallel
+    users_list, categories_list, secondary_categories_list, statuses_list, documents_list = await asyncio.gather(
+        db.users.find({"id": {"$in": list(user_ids)}}, {"_id": 0}).to_list(1000) if user_ids else asyncio.coroutine(lambda: [])(),
+        db.primary_categories.find({"id": {"$in": list(category_ids)}}, {"_id": 0}).to_list(100) if category_ids else asyncio.coroutine(lambda: [])(),
+        db.secondary_categories.find({"id": {"$in": list(secondary_category_ids)}}, {"_id": 0}).to_list(100) if secondary_category_ids else asyncio.coroutine(lambda: [])(),
+        db.lead_statuses.find({"id": {"$in": list(status_ids)}}, {"_id": 0}).to_list(100) if status_ids else asyncio.coroutine(lambda: [])(),
+        db.documents.find({"entity_type": "lead", "entity_id": {"$in": list(lead_ids)}}, {"_id": 0}).to_list(1000)
+    )
+    
+    # Build lookup dictionaries
+    users_map = {u['id']: u for u in users_list}
+    categories_map = {c['id']: c for c in categories_list}
+    secondary_categories_map = {c['id']: c for c in secondary_categories_list}
+    statuses_map = {s['id']: s for s in statuses_list}
+    
+    # Group documents by lead_id
+    docs_by_lead = {}
+    doc_uploader_ids = set()
+    for doc in documents_list:
+        lead_id = doc['entity_id']
+        if lead_id not in docs_by_lead:
+            docs_by_lead[lead_id] = []
+        docs_by_lead[lead_id].append(doc)
+        if doc.get('uploaded_by'):
+            doc_uploader_ids.add(doc['uploaded_by'])
+    
+    # Fetch document uploaders if not already in users_map
+    missing_uploader_ids = doc_uploader_ids - set(users_map.keys())
+    if missing_uploader_ids:
+        uploaders = await db.users.find({"id": {"$in": list(missing_uploader_ids)}}, {"_id": 0}).to_list(100)
+        for u in uploaders:
+            users_map[u['id']] = u
+    
+    # Get company IDs for commission calculation
+    for user in users_list:
+        if user.get('company_id'):
+            company_ids.add(user['company_id'])
+    
+    # Fetch companies for commission calculation
+    companies_list = await db.companies.find({"id": {"$in": list(company_ids)}}, {"_id": 0}).to_list(100) if company_ids else []
+    companies_map = {c['id']: c for c in companies_list}
+    
+    # Enrich each lead
+    result = []
+    for lead in leads:
+        selling_partner = users_map.get(lead.get('selling_partner_id'))
+        sales_associate = users_map.get(lead.get('sales_associate_id'))
+        referred_by_partner = users_map.get(lead.get('referred_by_partner_id'))
+        referred_by_associate = users_map.get(lead.get('referred_by_associate_id'))
+        created_by_user = users_map.get(lead.get('created_by'))
+        primary_category = categories_map.get(lead.get('primary_category_id'))
+        secondary_category = secondary_categories_map.get(lead.get('secondary_category_id'))
+        status = statuses_map.get(lead.get('status_id'))
+        
+        # Build document responses
+        doc_responses = []
+        for doc in docs_by_lead.get(lead['id'], []):
+            uploader = users_map.get(doc.get('uploaded_by'))
+            doc_responses.append(DocumentResponse(
+                id=doc['id'],
+                filename=doc['filename'],
+                original_filename=doc['original_filename'],
+                file_size=doc['file_size'],
+                content_type=doc['content_type'],
+                tag=doc['tag'],
+                description=doc.get('description'),
+                uploaded_by=doc['uploaded_by'],
+                uploaded_by_name=uploader['name'] if uploader else None,
+                uploaded_at=doc['uploaded_at']
+            ))
+        
+        # Calculate commission
+        vyapaar_percentage = lead.get('commission_override')
+        if not vyapaar_percentage:
+            if selling_partner and selling_partner.get('company_id'):
+                company = companies_map.get(selling_partner['company_id'])
+                if company:
+                    vyapaar_percentage = company.get('vyapaar_commission_percentage', 15.0)
+                else:
+                    vyapaar_percentage = 15.0
+            else:
+                vyapaar_percentage = 15.0
+        
+        commission_breakdown = None
+        if lead.get('deal_value', 0) > 0:
+            commission_breakdown = calculate_commission(
+                lead['deal_value'],
+                vyapaar_percentage,
+                lead.get('sales_associate_commission')
+            )
+        
+        result.append(LeadResponse(
+            id=lead['id'],
+            title=lead['title'],
+            description=lead.get('description'),
+            customer_name=lead['customer_name'],
+            customer_email=lead['customer_email'],
+            customer_phone=lead.get('customer_phone'),
+            customer_company=lead.get('customer_company'),
+            selling_partner_id=lead.get('selling_partner_id'),
+            selling_partner_name=selling_partner['name'] if selling_partner else None,
+            sales_associate_id=lead.get('sales_associate_id'),
+            sales_associate_name=sales_associate['name'] if sales_associate else None,
+            referred_by_partner_id=lead.get('referred_by_partner_id'),
+            referred_by_partner_name=referred_by_partner['name'] if referred_by_partner else None,
+            referred_by_associate_id=lead.get('referred_by_associate_id'),
+            referred_by_associate_name=referred_by_associate['name'] if referred_by_associate else None,
+            is_internal_request=lead.get('is_internal_request', False),
+            primary_category_id=lead['primary_category_id'],
+            primary_category_name=primary_category['name'] if primary_category else None,
+            secondary_category_id=lead.get('secondary_category_id'),
+            secondary_category_name=secondary_category['name'] if secondary_category else None,
+            deal_value=lead.get('deal_value', 0),
+            commission_override=lead.get('commission_override'),
+            sales_associate_commission=lead.get('sales_associate_commission'),
+            commission_breakdown=commission_breakdown,
+            status_id=lead.get('status_id'),
+            status_name=status['name'] if status else None,
+            status_color=status['color'] if status else None,
+            follow_ups=[FollowUpResponse(**f) for f in lead.get('follow_ups', [])],
+            comments=[CommentResponse(**c) for c in lead.get('comments', [])],
+            documents=doc_responses,
+            created_by=lead['created_by'],
+            created_by_name=created_by_user['name'] if created_by_user else None,
+            created_at=lead['created_at'],
+            updated_at=lead['updated_at']
+        ))
+    
+    return result
 
 @api_router.post("/leads", response_model=LeadResponse)
 async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_current_user)):
