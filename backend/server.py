@@ -2525,11 +2525,7 @@ async def list_leads(
     
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     
-    result = []
-    for lead in leads:
-        result.append(await enrich_lead(lead))
-    
-    return result
+    return await enrich_leads_bulk(leads)
 
 @api_router.get("/leads/{lead_id}", response_model=LeadResponse)
 async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
