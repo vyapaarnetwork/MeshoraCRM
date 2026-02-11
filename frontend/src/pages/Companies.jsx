@@ -322,7 +322,7 @@ const Companies = () => {
                     <TableHead>Sub-categories</TableHead>
                     <TableHead>Contact</TableHead>
                     <TableHead>Created</TableHead>
-                    <TableHead className="w-[80px]">Actions</TableHead>
+                    <TableHead className="w-[120px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
