@@ -221,23 +221,29 @@ const Layout = ({ children }) => {
       >
         {/* Logo */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800">
-          <Link to="/dashboard" className="flex items-center">
-            {sidebarCollapsed ? (
-              <img src={LOGO_SHORT_URL} alt="Vyapaar Network" className="h-10 w-auto" />
-            ) : (
-              <img src={LOGO_LONG_URL} alt="Vyapaar Network" className="h-10 w-auto" />
-            )}
-          </Link>
-          {!sidebarCollapsed && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="text-slate-400 hover:text-white hover:bg-slate-800"
-              data-testid="sidebar-toggle"
+          {sidebarCollapsed ? (
+            <button 
+              onClick={() => setSidebarCollapsed(false)}
+              className="flex items-center mx-auto"
+              title="Expand sidebar"
             >
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
+              <img src={LOGO_SHORT_URL} alt="Vyapaar Network" className="h-10 w-auto" />
+            </button>
+          ) : (
+            <>
+              <Link to="/dashboard" className="flex items-center">
+                <img src={LOGO_LONG_URL} alt="Vyapaar Network" className="h-10 w-auto" />
+              </Link>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSidebarCollapsed(true)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800"
+                data-testid="sidebar-toggle"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+            </>
           )}
         </div>
 
