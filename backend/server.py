@@ -1384,6 +1384,89 @@ async def delete_commission_template(template_id: str, current_user: dict = Depe
     
     return {"message": "Commission template deleted"}
 
+# Document Tag Master Data Models
+class DocumentTagCreate(BaseModel):
+    name: str
+    tag_key: str
+    entity_type: str  # "lead" or "company"
+    color: Optional[str] = "#4169E1"
+
+class DocumentTagResponse(BaseModel):
+    id: str
+    name: str
+    tag_key: str
+    entity_type: str
+    color: str
+    is_active: bool
+
+# Document Tags Master Data
+@api_router.post("/master/document-tags", response_model=DocumentTagResponse)
+async def create_document_tag(tag_data: DocumentTagCreate, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can create document tags")
+    
+    if tag_data.entity_type not in ["lead", "company"]:
+        raise HTTPException(status_code=400, detail="entity_type must be 'lead' or 'company'")
+    
+    # Check for duplicate tag_key within entity_type
+    existing = await db.document_tags.find_one({
+        "tag_key": tag_data.tag_key, 
+        "entity_type": tag_data.entity_type,
+        "is_active": True
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail="Tag key already exists for this entity type")
+    
+    tag_id = str(uuid.uuid4())
+    tag_doc = {
+        "id": tag_id,
+        "name": tag_data.name,
+        "tag_key": tag_data.tag_key.lower().replace(' ', '_'),
+        "entity_type": tag_data.entity_type,
+        "color": tag_data.color,
+        "is_active": True
+    }
+    
+    await db.document_tags.insert_one(tag_doc)
+    return DocumentTagResponse(**{k: v for k, v in tag_doc.items() if k != '_id'})
+
+@api_router.get("/master/document-tags", response_model=List[DocumentTagResponse])
+async def list_document_tags(entity_type: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    query = {"is_active": True}
+    if entity_type:
+        query["entity_type"] = entity_type
+    
+    tags = await db.document_tags.find(query, {"_id": 0}).to_list(100)
+    return [DocumentTagResponse(**t) for t in tags]
+
+@api_router.put("/master/document-tags/{tag_id}", response_model=DocumentTagResponse)
+async def update_document_tag(tag_id: str, tag_data: DocumentTagCreate, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can update document tags")
+    
+    update_data = tag_data.model_dump(exclude_unset=True)
+    if 'tag_key' in update_data:
+        update_data['tag_key'] = update_data['tag_key'].lower().replace(' ', '_')
+    
+    result = await db.document_tags.update_one({"id": tag_id}, {"$set": update_data})
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Document tag not found")
+    
+    tag = await db.document_tags.find_one({"id": tag_id}, {"_id": 0})
+    return DocumentTagResponse(**tag)
+
+@api_router.delete("/master/document-tags/{tag_id}")
+async def delete_document_tag(tag_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can delete document tags")
+    
+    result = await db.document_tags.update_one({"id": tag_id}, {"$set": {"is_active": False}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Document tag not found")
+    
+    return {"message": "Document tag deleted"}
+
 # ==================== DOCUMENT UPLOAD ROUTES ====================
 
 @api_router.post("/documents/upload")
