@@ -298,7 +298,7 @@ const Layout = ({ children }) => {
       >
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800">
           <Link to="/dashboard" className="flex items-center gap-2" onClick={() => setMobileMenuOpen(false)}>
-            <img src={LOGO_URL} alt="Vyapaar Network" className="h-8 w-auto" />
+            <img src={LOGO_LONG_URL} alt="Vyapaar Network" className="h-10 w-auto" />
           </Link>
           <Button
             variant="ghost"
