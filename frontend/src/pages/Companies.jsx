@@ -66,6 +66,7 @@ const Companies = () => {
 
   useEffect(() => {
     fetchData();
+    fetchDocumentTags();
   }, []);
 
   const fetchData = async () => {
@@ -80,6 +81,58 @@ const Companies = () => {
       toast.error('Failed to load data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchDocumentTags = async () => {
+    try {
+      const response = await api.get('/master/document-tags?entity_type=company');
+      if (response.data && response.data.length > 0) {
+        setDocumentTags(response.data.map(t => ({ value: t.tag_key, label: t.name })));
+      }
+    } catch (error) {
+      // Use default tags
+      console.log('Using default company document tags');
+    }
+  };
+
+  const fetchCompanyDocuments = async (companyId) => {
+    try {
+      const response = await api.get(`/documents/entity/company/${companyId}`);
+      setDocuments(response.data);
+    } catch (error) {
+      console.error('Failed to fetch documents:', error);
+    }
+  };
+
+  const openDocumentsDialog = (company) => {
+    setSelectedCompanyId(company.id);
+    setSelectedCompanyName(company.name);
+    fetchCompanyDocuments(company.id);
+    setDocumentsDialogOpen(true);
+  };
+
+  const openUploadDialog = (company) => {
+    setSelectedCompanyId(company.id);
+    setSelectedCompanyName(company.name);
+    setUploadDialogOpen(true);
+  };
+
+  const handleDocumentUploaded = () => {
+    if (selectedCompanyId) {
+      fetchCompanyDocuments(selectedCompanyId);
+    }
+  };
+
+  const handleDeleteDocument = async (docId) => {
+    try {
+      await api.delete(`/documents/${docId}`);
+      toast.success('Document deleted');
+      if (selectedCompanyId) {
+        fetchCompanyDocuments(selectedCompanyId);
+      }
+    } catch (error) {
+      toast.error('Failed to delete document');
     }
   };
 
