@@ -54,6 +54,9 @@ const LeadDetail = () => {
   const [submittingComment, setSubmittingComment] = useState(false);
   const [newFollowUp, setNewFollowUp] = useState({ date: null, notes: '', pending_with: '' });
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [documentTags, setDocumentTags] = useState(LEAD_DOCUMENT_TAGS);
 
   useEffect(() => {
     fetchLead();
