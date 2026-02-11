@@ -32,7 +32,8 @@ import {
   Check,
   Clock,
   ExternalLink,
-  Grid3X3
+  Grid3X3,
+  Paperclip
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
