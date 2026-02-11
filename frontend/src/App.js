@@ -18,6 +18,7 @@ import Users from './pages/Users';
 import Companies from './pages/Companies';
 import Settings from './pages/Settings';
 import DocumentTags from './pages/DocumentTags';
+import EmailTemplates from './pages/EmailTemplates';
 import './App.css';
 
 // Protected Route Component
