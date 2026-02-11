@@ -1467,6 +1467,454 @@ async def delete_document_tag(tag_id: str, current_user: dict = Depends(get_curr
     
     return {"message": "Document tag deleted"}
 
+# ==================== EMAIL TEMPLATES ====================
+
+# Email Template Event Types
+class EmailTemplateEvent(str, Enum):
+    NEW_LEAD = "new_lead"
+    LEAD_ASSIGNED = "lead_assigned"
+    LEAD_STATUS_CHANGED = "lead_status_changed"
+    LEAD_WON = "lead_won"
+    LEAD_LOST = "lead_lost"
+    FOLLOW_UP_REMINDER = "follow_up_reminder"
+
+# Template Variables by Event
+EMAIL_TEMPLATE_VARIABLES = {
+    "new_lead": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{customer_email}}", "description": "Customer's email address"},
+        {"key": "{{customer_phone}}", "description": "Customer's phone number"},
+        {"key": "{{customer_company}}", "description": "Customer's company name"},
+        {"key": "{{category_name}}", "description": "Lead category"},
+        {"key": "{{deal_value}}", "description": "Deal value amount"},
+        {"key": "{{created_by}}", "description": "Name of person who created the lead"},
+        {"key": "{{created_date}}", "description": "Date when lead was created"},
+    ],
+    "lead_assigned": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{customer_email}}", "description": "Customer's email address"},
+        {"key": "{{customer_phone}}", "description": "Customer's phone number"},
+        {"key": "{{partner_name}}", "description": "Assigned partner's name"},
+        {"key": "{{partner_email}}", "description": "Assigned partner's email"},
+        {"key": "{{category_name}}", "description": "Lead category"},
+        {"key": "{{deal_value}}", "description": "Deal value amount"},
+    ],
+    "lead_status_changed": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{old_status}}", "description": "Previous status name"},
+        {"key": "{{new_status}}", "description": "New status name"},
+        {"key": "{{partner_name}}", "description": "Assigned partner's name"},
+        {"key": "{{deal_value}}", "description": "Deal value amount"},
+        {"key": "{{changed_by}}", "description": "Name of person who changed the status"},
+    ],
+    "lead_won": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{customer_company}}", "description": "Customer's company name"},
+        {"key": "{{partner_name}}", "description": "Partner's name"},
+        {"key": "{{deal_value}}", "description": "Final deal value"},
+        {"key": "{{commission_amount}}", "description": "Commission earned"},
+        {"key": "{{category_name}}", "description": "Lead category"},
+    ],
+    "lead_lost": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{partner_name}}", "description": "Partner's name"},
+        {"key": "{{deal_value}}", "description": "Deal value"},
+        {"key": "{{category_name}}", "description": "Lead category"},
+        {"key": "{{lost_reason}}", "description": "Reason for losing (if provided)"},
+    ],
+    "follow_up_reminder": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{customer_phone}}", "description": "Customer's phone number"},
+        {"key": "{{follow_up_date}}", "description": "Scheduled follow-up date"},
+        {"key": "{{follow_up_notes}}", "description": "Notes for the follow-up"},
+        {"key": "{{pending_with}}", "description": "Who the follow-up is pending with"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+}
+
+# Default templates
+DEFAULT_EMAIL_TEMPLATES = {
+    "new_lead": {
+        "subject": "New Lead Created: {{lead_title}}",
+        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #2563eb;">New Lead Created</h2>
+    <p>A new lead has been created in Vyapaar Network CRM.</p>
+    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p><strong>Lead Title:</strong> {{lead_title}}</p>
+        <p><strong>Customer:</strong> {{customer_name}}</p>
+        <p><strong>Email:</strong> {{customer_email}}</p>
+        <p><strong>Category:</strong> {{category_name}}</p>
+        <p><strong>Deal Value:</strong> {{deal_value}}</p>
+        <p><strong>Created By:</strong> {{created_by}}</p>
+    </div>
+    <p>Login to CRM to view more details.</p>
+    <p>Best regards,<br>Vyapaar Network CRM</p>
+</div>"""
+    },
+    "lead_assigned": {
+        "subject": "Lead Assigned to You: {{lead_title}}",
+        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #2563eb;">Lead Assigned to You</h2>
+    <p>Hi {{partner_name}},</p>
+    <p>A new lead has been assigned to you.</p>
+    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p><strong>Lead Title:</strong> {{lead_title}}</p>
+        <p><strong>Customer:</strong> {{customer_name}}</p>
+        <p><strong>Email:</strong> {{customer_email}}</p>
+        <p><strong>Phone:</strong> {{customer_phone}}</p>
+        <p><strong>Category:</strong> {{category_name}}</p>
+        <p><strong>Deal Value:</strong> {{deal_value}}</p>
+    </div>
+    <p>Please login to CRM and follow up with the customer.</p>
+    <p>Best regards,<br>Vyapaar Network CRM</p>
+</div>"""
+    },
+    "lead_status_changed": {
+        "subject": "Lead Status Updated: {{lead_title}}",
+        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #2563eb;">Lead Status Changed</h2>
+    <p>The status of a lead has been updated.</p>
+    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p><strong>Lead:</strong> {{lead_title}}</p>
+        <p><strong>Customer:</strong> {{customer_name}}</p>
+        <p><strong>Previous Status:</strong> {{old_status}}</p>
+        <p><strong>New Status:</strong> <span style="color: #16a34a; font-weight: bold;">{{new_status}}</span></p>
+        <p><strong>Changed By:</strong> {{changed_by}}</p>
+    </div>
+    <p>Best regards,<br>Vyapaar Network CRM</p>
+</div>"""
+    },
+    "lead_won": {
+        "subject": "🎉 Congratulations! Deal Won: {{lead_title}}",
+        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #16a34a;">🎉 Deal Won!</h2>
+    <p>Congratulations! A deal has been successfully closed.</p>
+    <div style="background: #dcfce7; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p><strong>Lead:</strong> {{lead_title}}</p>
+        <p><strong>Customer:</strong> {{customer_name}}</p>
+        <p><strong>Company:</strong> {{customer_company}}</p>
+        <p><strong>Partner:</strong> {{partner_name}}</p>
+        <p><strong>Deal Value:</strong> <span style="font-size: 1.2em; color: #16a34a;">{{deal_value}}</span></p>
+        <p><strong>Commission:</strong> {{commission_amount}}</p>
+    </div>
+    <p>Great work! Keep it up!</p>
+    <p>Best regards,<br>Vyapaar Network CRM</p>
+</div>"""
+    },
+    "lead_lost": {
+        "subject": "Lead Lost: {{lead_title}}",
+        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #dc2626;">Lead Lost</h2>
+    <p>Unfortunately, a lead has been marked as lost.</p>
+    <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p><strong>Lead:</strong> {{lead_title}}</p>
+        <p><strong>Customer:</strong> {{customer_name}}</p>
+        <p><strong>Partner:</strong> {{partner_name}}</p>
+        <p><strong>Deal Value:</strong> {{deal_value}}</p>
+        <p><strong>Category:</strong> {{category_name}}</p>
+    </div>
+    <p>Review the lead details to understand what went wrong and improve future conversions.</p>
+    <p>Best regards,<br>Vyapaar Network CRM</p>
+</div>"""
+    },
+    "follow_up_reminder": {
+        "subject": "Follow-up Reminder: {{lead_title}}",
+        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #f59e0b;">⏰ Follow-up Reminder</h2>
+    <p>Hi {{recipient_name}},</p>
+    <p>This is a reminder for your upcoming follow-up.</p>
+    <div style="background: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <p><strong>Lead:</strong> {{lead_title}}</p>
+        <p><strong>Customer:</strong> {{customer_name}}</p>
+        <p><strong>Phone:</strong> {{customer_phone}}</p>
+        <p><strong>Scheduled Date:</strong> {{follow_up_date}}</p>
+        <p><strong>Notes:</strong> {{follow_up_notes}}</p>
+    </div>
+    <p>Please ensure to complete this follow-up on time.</p>
+    <p>Best regards,<br>Vyapaar Network CRM</p>
+</div>"""
+    }
+}
+
+# Email Template Models
+class EmailTemplateCreate(BaseModel):
+    event_type: EmailTemplateEvent
+    subject: str
+    body: str
+    is_enabled: bool = True
+
+class EmailTemplateUpdate(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    is_enabled: Optional[bool] = None
+
+class EmailTemplateResponse(BaseModel):
+    id: str
+    event_type: str
+    event_label: str
+    subject: str
+    body: str
+    is_enabled: bool
+    variables: List[Dict[str, str]]
+    updated_at: Optional[str] = None
+
+# Event labels for display
+EVENT_LABELS = {
+    "new_lead": "New Lead Created",
+    "lead_assigned": "Lead Assigned to Partner",
+    "lead_status_changed": "Lead Status Changed",
+    "lead_won": "Lead Won (Deal Closed)",
+    "lead_lost": "Lead Lost",
+    "follow_up_reminder": "Follow-up Reminder"
+}
+
+# Email Template Routes
+@api_router.get("/email-templates", response_model=List[EmailTemplateResponse])
+async def list_email_templates(current_user: dict = Depends(get_current_user)):
+    """Get all email templates"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can access email templates")
+    
+    templates = await db.email_templates.find({"is_active": True}, {"_id": 0}).to_list(100)
+    
+    # Create response with existing templates or defaults
+    result = []
+    for event_type in EmailTemplateEvent:
+        existing = next((t for t in templates if t['event_type'] == event_type.value), None)
+        
+        if existing:
+            result.append(EmailTemplateResponse(
+                id=existing['id'],
+                event_type=existing['event_type'],
+                event_label=EVENT_LABELS.get(existing['event_type'], existing['event_type']),
+                subject=existing['subject'],
+                body=existing['body'],
+                is_enabled=existing.get('is_enabled', True),
+                variables=EMAIL_TEMPLATE_VARIABLES.get(existing['event_type'], []),
+                updated_at=existing.get('updated_at')
+            ))
+        else:
+            # Return default template
+            default = DEFAULT_EMAIL_TEMPLATES.get(event_type.value, {"subject": "", "body": ""})
+            result.append(EmailTemplateResponse(
+                id="",
+                event_type=event_type.value,
+                event_label=EVENT_LABELS.get(event_type.value, event_type.value),
+                subject=default['subject'],
+                body=default['body'],
+                is_enabled=True,
+                variables=EMAIL_TEMPLATE_VARIABLES.get(event_type.value, []),
+                updated_at=None
+            ))
+    
+    return result
+
+@api_router.get("/email-templates/{event_type}", response_model=EmailTemplateResponse)
+async def get_email_template(event_type: str, current_user: dict = Depends(get_current_user)):
+    """Get a specific email template"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can access email templates")
+    
+    if event_type not in [e.value for e in EmailTemplateEvent]:
+        raise HTTPException(status_code=400, detail="Invalid event type")
+    
+    template = await db.email_templates.find_one({"event_type": event_type, "is_active": True}, {"_id": 0})
+    
+    if template:
+        return EmailTemplateResponse(
+            id=template['id'],
+            event_type=template['event_type'],
+            event_label=EVENT_LABELS.get(template['event_type'], template['event_type']),
+            subject=template['subject'],
+            body=template['body'],
+            is_enabled=template.get('is_enabled', True),
+            variables=EMAIL_TEMPLATE_VARIABLES.get(template['event_type'], []),
+            updated_at=template.get('updated_at')
+        )
+    else:
+        # Return default
+        default = DEFAULT_EMAIL_TEMPLATES.get(event_type, {"subject": "", "body": ""})
+        return EmailTemplateResponse(
+            id="",
+            event_type=event_type,
+            event_label=EVENT_LABELS.get(event_type, event_type),
+            subject=default['subject'],
+            body=default['body'],
+            is_enabled=True,
+            variables=EMAIL_TEMPLATE_VARIABLES.get(event_type, []),
+            updated_at=None
+        )
+
+@api_router.put("/email-templates/{event_type}", response_model=EmailTemplateResponse)
+async def update_email_template(event_type: str, template_data: EmailTemplateUpdate, current_user: dict = Depends(get_current_user)):
+    """Update or create an email template"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can update email templates")
+    
+    if event_type not in [e.value for e in EmailTemplateEvent]:
+        raise HTTPException(status_code=400, detail="Invalid event type")
+    
+    existing = await db.email_templates.find_one({"event_type": event_type, "is_active": True}, {"_id": 0})
+    now = datetime.now(timezone.utc).isoformat()
+    
+    if existing:
+        # Update existing
+        update_data = template_data.model_dump(exclude_unset=True, exclude_none=True)
+        update_data['updated_at'] = now
+        await db.email_templates.update_one({"id": existing['id']}, {"$set": update_data})
+        template = await db.email_templates.find_one({"id": existing['id']}, {"_id": 0})
+    else:
+        # Create new
+        default = DEFAULT_EMAIL_TEMPLATES.get(event_type, {"subject": "", "body": ""})
+        template_id = str(uuid.uuid4())
+        template = {
+            "id": template_id,
+            "event_type": event_type,
+            "subject": template_data.subject or default['subject'],
+            "body": template_data.body or default['body'],
+            "is_enabled": template_data.is_enabled if template_data.is_enabled is not None else True,
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now
+        }
+        await db.email_templates.insert_one(template)
+    
+    return EmailTemplateResponse(
+        id=template['id'],
+        event_type=template['event_type'],
+        event_label=EVENT_LABELS.get(template['event_type'], template['event_type']),
+        subject=template['subject'],
+        body=template['body'],
+        is_enabled=template.get('is_enabled', True),
+        variables=EMAIL_TEMPLATE_VARIABLES.get(template['event_type'], []),
+        updated_at=template.get('updated_at')
+    )
+
+@api_router.post("/email-templates/{event_type}/reset")
+async def reset_email_template(event_type: str, current_user: dict = Depends(get_current_user)):
+    """Reset an email template to default"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can reset email templates")
+    
+    if event_type not in [e.value for e in EmailTemplateEvent]:
+        raise HTTPException(status_code=400, detail="Invalid event type")
+    
+    # Soft delete existing
+    await db.email_templates.update_many(
+        {"event_type": event_type, "is_active": True},
+        {"$set": {"is_active": False}}
+    )
+    
+    return {"message": "Template reset to default"}
+
+@api_router.post("/email-templates/{event_type}/preview")
+async def preview_email_template(event_type: str, template_data: EmailTemplateUpdate, current_user: dict = Depends(get_current_user)):
+    """Preview an email template with sample data"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can preview email templates")
+    
+    # Sample data for preview
+    sample_data = {
+        "{{lead_title}}": "Website Development Project",
+        "{{customer_name}}": "John Smith",
+        "{{customer_email}}": "john@example.com",
+        "{{customer_phone}}": "+91 98765 43210",
+        "{{customer_company}}": "Tech Solutions Ltd",
+        "{{partner_name}}": "ABC Digital Services",
+        "{{partner_email}}": "partner@abcdigital.com",
+        "{{category_name}}": "IT Services",
+        "{{deal_value}}": "₹1,50,000",
+        "{{commission_amount}}": "₹22,500",
+        "{{created_by}}": "Super Admin",
+        "{{created_date}}": "11 Feb 2025",
+        "{{old_status}}": "In Progress",
+        "{{new_status}}": "Won",
+        "{{changed_by}}": "Super Admin",
+        "{{follow_up_date}}": "15 Feb 2025",
+        "{{follow_up_notes}}": "Discuss project timeline and deliverables",
+        "{{pending_with}}": "Customer",
+        "{{recipient_name}}": "Sales Partner",
+        "{{lost_reason}}": "Budget constraints"
+    }
+    
+    subject = template_data.subject or ""
+    body = template_data.body or ""
+    
+    # Replace variables with sample data
+    for key, value in sample_data.items():
+        subject = subject.replace(key, value)
+        body = body.replace(key, value)
+    
+    return {
+        "subject": subject,
+        "body": body
+    }
+
+@api_router.get("/email-templates/variables/{event_type}")
+async def get_template_variables(event_type: str, current_user: dict = Depends(get_current_user)):
+    """Get available variables for an event type"""
+    if event_type not in [e.value for e in EmailTemplateEvent]:
+        raise HTTPException(status_code=400, detail="Invalid event type")
+    
+    return {
+        "event_type": event_type,
+        "event_label": EVENT_LABELS.get(event_type, event_type),
+        "variables": EMAIL_TEMPLATE_VARIABLES.get(event_type, [])
+    }
+
+# Email Sending Helper with Template Support
+async def render_and_send_email(event_type: str, to_email: str, variables: Dict[str, str]):
+    """Render email template and send via SendGrid"""
+    if not SENDGRID_API_KEY:
+        logger.warning("SendGrid API key not configured, skipping email")
+        return False
+    
+    # Get template
+    template = await db.email_templates.find_one({"event_type": event_type, "is_active": True}, {"_id": 0})
+    
+    if template:
+        if not template.get('is_enabled', True):
+            logger.info(f"Email template {event_type} is disabled, skipping")
+            return False
+        subject = template['subject']
+        body = template['body']
+    else:
+        # Use default
+        default = DEFAULT_EMAIL_TEMPLATES.get(event_type)
+        if not default:
+            logger.warning(f"No template found for event {event_type}")
+            return False
+        subject = default['subject']
+        body = default['body']
+    
+    # Replace variables
+    for key, value in variables.items():
+        placeholder = "{{" + key + "}}"
+        subject = subject.replace(placeholder, str(value) if value else "")
+        body = body.replace(placeholder, str(value) if value else "")
+    
+    # Send email
+    try:
+        message = Mail(
+            from_email=SENDER_EMAIL,
+            to_emails=to_email,
+            subject=subject,
+            html_content=body
+        )
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg.send(message)
+        logger.info(f"Email sent to {to_email} for event {event_type}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email: {str(e)}")
+        return False
+
 # ==================== DOCUMENT UPLOAD ROUTES ====================
 
 @api_router.post("/documents/upload")
