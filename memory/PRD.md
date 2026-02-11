@@ -67,6 +67,27 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - Global search across all columns
   - Pagination with page navigation
 
+### Phase 5 - Document Management (Feb 11, 2025)
+- [x] **Document Tags Master Data**:
+  - Admin can create, edit, delete document tags
+  - Tags organized by entity type (Lead/Company)
+  - Predefined tags: Proposal, Contract, Invoice, Quotation (leads); Corporate Profile, Product Catalog, Brochure (companies)
+  - Each tag has name, key, entity_type, and color
+  - New "Document Tags" menu item in sidebar for admin
+
+- [x] **Lead Document Upload**:
+  - Documents section on Lead Detail page
+  - Upload button opens dialog with file picker
+  - Select document type (tag) and add optional description
+  - Max file size: 10MB
+  - Supported formats: PDF, Word, Excel, Images
+  - View, download, and delete (admin only) functionality
+
+- [x] **Company Document Upload**:
+  - Paperclip icon in Companies table opens documents dialog
+  - Upload corporate profiles, brochures, catalogs
+  - Same functionality as lead documents
+
 ## Prioritized Backlog
 
 ### P0 - Critical (Requires User Input)
@@ -90,11 +111,27 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Mobile-responsive improvements
 - [ ] Custom dashboard widgets
 
+## Refactoring Needed
+- **Critical**: Backend monolith (server.py is 2700+ lines) should be split into modular routers
+- **High**: N+1 query issues in data aggregation endpoints should use MongoDB $lookup
+
 ## Test Credentials
 - **Super Admin**: admin@vyapaarnetwork.com / admin123
 - **Selling Partner**: partner1@test.com / test123
 
 ## Key API Endpoints
+
+### Document Tags Master Data
+- `GET /api/master/document-tags` - List all tags (optional: ?entity_type=lead|company)
+- `POST /api/master/document-tags` - Create new tag
+- `PUT /api/master/document-tags/{id}` - Update tag
+- `DELETE /api/master/document-tags/{id}` - Delete tag
+
+### Document Upload
+- `POST /api/documents/upload` - Upload document (form data: file, entity_type, entity_id, tag, description)
+- `GET /api/documents/entity/{entity_type}/{entity_id}` - Get documents for entity
+- `GET /api/documents/{id}/download` - Download document
+- `DELETE /api/documents/{id}` - Delete document (admin only)
 
 ### Lead Referral
 - `POST /api/leads/referral` - Create referral (both partners and associates)
@@ -130,5 +167,10 @@ SENDER_EMAIL=noreply@vyapaarnetwork.com
 - **Frontend**: React 19 with Shadcn/UI, TailwindCSS, Recharts
 - **Backend**: FastAPI with MongoDB (Motor async driver)
 - **Authentication**: JWT tokens
+- **File Storage**: Local uploads directory (/app/backend/uploads)
 - **SMS**: Twilio (configured, awaiting credentials)
 - **Email**: SendGrid (configured, awaiting credentials)
+
+## Test Reports
+- `/app/test_reports/iteration_4.json` - Notifications, Grid Report, Lead Referral tests
+- `/app/test_reports/iteration_5.json` - Document Management tests
