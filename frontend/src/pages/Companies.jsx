@@ -382,14 +382,26 @@ const Companies = () => {
                         {formatDate(company.created_at)}
                       </TableCell>
                       <TableCell>
-                        <Button 
-                          size="icon" 
-                          variant="ghost"
-                          onClick={() => openDialog(company)}
-                          data-testid={`edit-company-${company.id}`}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button 
+                            size="icon" 
+                            variant="ghost"
+                            onClick={() => openDocumentsDialog(company)}
+                            data-testid={`docs-company-${company.id}`}
+                            title="View Documents"
+                          >
+                            <Paperclip className="w-4 h-4" />
+                          </Button>
+                          <Button 
+                            size="icon" 
+                            variant="ghost"
+                            onClick={() => openDialog(company)}
+                            data-testid={`edit-company-${company.id}`}
+                            title="Edit Company"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
