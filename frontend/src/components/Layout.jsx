@@ -39,7 +39,8 @@ import {
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
 
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
+const LOGO_LONG_URL = "https://customer-assets.emergentagent.com/job_vyapaar-crm/artifacts/b8fhtq1b_Vyapaar%20Network%20Logo%20White%20Long.jpg";
+const LOGO_SHORT_URL = "https://customer-assets.emergentagent.com/job_vyapaar-crm/artifacts/dabvz2ii_Vyapaar%20Network%20Logo%20White%20Short.jpg";
 
 const Layout = ({ children }) => {
   const { user, logout, isAdmin, isSellingPartner, isSalesAssociate, isCustomer } = useAuth();
