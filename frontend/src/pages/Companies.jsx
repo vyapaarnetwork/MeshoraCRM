@@ -56,6 +56,14 @@ const Companies = () => {
   });
   const [submitting, setSubmitting] = useState(false);
 
+  // Document upload states
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [documentsDialogOpen, setDocumentsDialogOpen] = useState(false);
+  const [selectedCompanyId, setSelectedCompanyId] = useState(null);
+  const [selectedCompanyName, setSelectedCompanyName] = useState('');
+  const [documents, setDocuments] = useState([]);
+  const [documentTags, setDocumentTags] = useState(COMPANY_DOCUMENT_TAGS);
+
   useEffect(() => {
     fetchData();
   }, []);
