@@ -216,6 +216,30 @@ class NotificationResponse(BaseModel):
     created_at: str
     data: Optional[Dict[str, Any]] = None
 
+# Document Models
+class DocumentTag(str, Enum):
+    PROPOSAL = "proposal"
+    CONTRACT = "contract"
+    INVOICE = "invoice"
+    QUOTATION = "quotation"
+    CORPORATE_PROFILE = "corporate_profile"
+    PRODUCT_CATALOG = "product_catalog"
+    BROCHURE = "brochure"
+    CERTIFICATE = "certificate"
+    OTHER = "other"
+
+class DocumentResponse(BaseModel):
+    id: str
+    filename: str
+    original_filename: str
+    file_size: int
+    content_type: str
+    tag: str
+    description: Optional[str] = None
+    uploaded_by: str
+    uploaded_by_name: Optional[str] = None
+    uploaded_at: str
+
 # Master Data Models
 class LeadStatusCreate(BaseModel):
     name: str
