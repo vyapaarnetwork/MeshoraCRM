@@ -1416,6 +1416,24 @@ async def enrich_lead(lead: dict) -> LeadResponse:
     
     created_by_user = await db.users.find_one({"id": lead['created_by']}, {"_id": 0})
     
+    # Get documents for this lead
+    documents = await db.documents.find({"entity_type": "lead", "entity_id": lead['id']}, {"_id": 0}).to_list(100)
+    doc_responses = []
+    for doc in documents:
+        uploader = await db.users.find_one({"id": doc['uploaded_by']}, {"_id": 0})
+        doc_responses.append(DocumentResponse(
+            id=doc['id'],
+            filename=doc['filename'],
+            original_filename=doc['original_filename'],
+            file_size=doc['file_size'],
+            content_type=doc['content_type'],
+            tag=doc['tag'],
+            description=doc.get('description'),
+            uploaded_by=doc['uploaded_by'],
+            uploaded_by_name=uploader['name'] if uploader else None,
+            uploaded_at=doc['uploaded_at']
+        ))
+    
     # Calculate commission
     vyapaar_percentage = lead.get('commission_override')
     if not vyapaar_percentage:
@@ -1466,6 +1484,7 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         status_color=status['color'] if status else None,
         follow_ups=[FollowUpResponse(**f) for f in lead.get('follow_ups', [])],
         comments=[CommentResponse(**c) for c in lead.get('comments', [])],
+        documents=doc_responses,
         created_by=lead['created_by'],
         created_by_name=created_by_user['name'] if created_by_user else None,
         created_at=lead['created_at'],
