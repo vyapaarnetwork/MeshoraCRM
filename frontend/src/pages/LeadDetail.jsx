@@ -60,6 +60,8 @@ const LeadDetail = () => {
 
   useEffect(() => {
     fetchLead();
+    fetchDocuments();
+    fetchDocumentTags();
   }, [id]);
 
   const fetchLead = async () => {
@@ -72,6 +74,42 @@ const LeadDetail = () => {
       navigate('/leads');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchDocuments = async () => {
+    try {
+      const response = await api.get(`/documents/entity/lead/${id}`);
+      setDocuments(response.data);
+    } catch (error) {
+      console.error('Failed to fetch documents:', error);
+    }
+  };
+
+  const fetchDocumentTags = async () => {
+    try {
+      const response = await api.get('/master/document-tags?entity_type=lead');
+      if (response.data && response.data.length > 0) {
+        setDocumentTags(response.data.map(t => ({ value: t.tag_key, label: t.name })));
+      }
+    } catch (error) {
+      // Use default tags if master data not configured
+      console.log('Using default document tags');
+    }
+  };
+
+  const handleDocumentUploaded = () => {
+    fetchDocuments();
+  };
+
+  const handleDeleteDocument = async (docId) => {
+    if (!isAdmin) return;
+    try {
+      await api.delete(`/documents/${docId}`);
+      toast.success('Document deleted');
+      fetchDocuments();
+    } catch (error) {
+      toast.error('Failed to delete document');
     }
   };
 
