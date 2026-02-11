@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 class VyapaarCRMTester:
-    def __init__(self, base_url: str = "https://multitenantcrm-4.preview.emergentagent.com"):
+    def __init__(self, base_url: str = "https://vyapaar-crm.preview.emergentagent.com"):
         self.base_url = base_url.rstrip('/')
         self.admin_token = None
         self.partner_token = None
