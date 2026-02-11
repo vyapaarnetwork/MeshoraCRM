@@ -537,6 +537,16 @@ const LeadDetail = () => {
           </Card>
         </div>
       </div>
+
+      {/* Document Upload Dialog */}
+      <DocumentUploadDialog
+        open={showUploadDialog}
+        onOpenChange={setShowUploadDialog}
+        entityType="lead"
+        entityId={id}
+        tags={documentTags}
+        onUploadComplete={handleDocumentUploaded}
+      />
     </div>
   );
 };
