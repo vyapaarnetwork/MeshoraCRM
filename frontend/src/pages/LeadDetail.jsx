@@ -35,8 +35,11 @@ import {
   Check,
   Clock,
   Send,
-  UserCheck
+  UserCheck,
+  Paperclip,
+  Upload
 } from 'lucide-react';
+import { DocumentUploadDialog, DocumentList, LEAD_DOCUMENT_TAGS } from '../components/DocumentUpload';
 import api, { formatCurrency, formatDate, formatDateTime, getRoleLabel, getRoleColor } from '../utils/api';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
