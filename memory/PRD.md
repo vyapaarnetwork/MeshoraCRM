@@ -4,7 +4,7 @@
 Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with 4 user roles (Selling Partner, Sales Associate, Customer, Super Admin), master data management, lead management with follow-ups and comments, transparent commission logic, role-specific dashboards, and comprehensive reports.
 
 ## User Personas
-1. **Super Admin (Vyapaar Network Team)**: Full system access, manages all masters, users, leads, commissions, reports, and grid analytics
+1. **Super Admin (Vyapaar Network Team)**: Full system access, manages all masters, users, leads, commissions, reports, email templates, and grid analytics
 2. **Selling Partner**: Company that sells products/services, can refer leads, request internal services, views assigned leads and commission summary
 3. **Sales Associate**: Independent individual who brings leads, earns perpetual commission, can refer leads
 4. **Customer**: Company/individual looking for vendors, can submit and track lead requests
@@ -27,75 +27,43 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] Follow-up "Pending With" Assignment
 
 ### Phase 4 - Lead Referral, Notifications & Grid Report (Feb 10, 2025)
-- [x] **Lead Referral for Both Roles**:
-  - Selling Partners AND Sales Associates can now create lead referrals
-  - Referrals saved with referred_by_partner_id or referred_by_associate_id
-  - All referrals start in Draft status until admin assigns a partner
-  
-- [x] **Internal Request Feature (Selling Partners)**:
-  - Selling Partners can request services from other partners
-  - "Internal Request" button with is_internal_request flag
-  - Pre-fills partner's details as the customer
-  - Separate tab view for internal requests vs external referrals
-
-- [x] **Notifications System**:
-  - Bell icon in header with unread count badge
-  - Dropdown showing recent notifications
-  - Notification types: new_lead, lead_assigned, lead_status_change, new_referral
-  - Click notification to navigate to lead detail
-  - "Mark all as read" functionality
-  - Auto-created on lead creation, assignment, and referral submission
-
-- [x] **SMS Notifications (Twilio)**:
-  - Integration code ready for Twilio SMS
-  - Sends SMS when lead is assigned to partner
-  - Notifies both assigned partner and super admins
-  - Gracefully handles missing credentials (logs warning, doesn't fail)
-
-- [x] **Grid Report Page (Super Admin)**:
-  - Comprehensive performance dashboard
-  - Summary stats: Total Leads, Won/Lost Deals, Deal Value, Vyapaar Commission, Partner Revenue
-  - Partner Performance Summary table with conversion rates
-  - Detailed Lead Grid with all deal data
-  - Filters: Date range, Partner, Category, Status
-  - Export to CSV functionality
-
-- [x] **Sortable/Filterable Tables**:
-  - Reusable SortableTable component
-  - Click column header to sort (asc/desc)
-  - Sort indicator shows current direction
-  - Global search across all columns
-  - Pagination with page navigation
+- [x] Lead Referral for Selling Partners and Sales Associates
+- [x] Internal Request Feature (Partner as Customer)
+- [x] In-App Notification System with bell icon
+- [x] SMS Notifications via Twilio (backend ready, awaiting credentials)
+- [x] Grid Report with filterable/sortable performance data
+- [x] Reusable SortableTable component
 
 ### Phase 5 - Document Management (Feb 11, 2025)
-- [x] **Document Tags Master Data**:
-  - Admin can create, edit, delete document tags
-  - Tags organized by entity type (Lead/Company)
-  - Predefined tags: Proposal, Contract, Invoice, Quotation (leads); Corporate Profile, Product Catalog, Brochure (companies)
-  - Each tag has name, key, entity_type, and color
-  - New "Document Tags" menu item in sidebar for admin
+- [x] Document Tags Master Data (admin-configurable tags for leads/companies)
+- [x] Lead Document Upload with tags (Proposal, Contract, Invoice, Quotation)
+- [x] Company Document Upload (Corporate Profile, Product Catalog, Brochure)
+- [x] Document view, download, and delete functionality
 
-- [x] **Lead Document Upload**:
-  - Documents section on Lead Detail page
-  - Upload button opens dialog with file picker
-  - Select document type (tag) and add optional description
-  - Max file size: 10MB
-  - Supported formats: PDF, Word, Excel, Images
-  - View, download, and delete (admin only) functionality
-
-- [x] **Company Document Upload**:
-  - Paperclip icon in Companies table opens documents dialog
-  - Upload corporate profiles, brochures, catalogs
-  - Same functionality as lead documents
+### Phase 6 - Email Templates (Feb 11, 2025)
+- [x] **Configurable Email Templates**: Super Admin can edit email templates for 6 events:
+  - New Lead Created
+  - Lead Assigned to Partner
+  - Lead Status Changed
+  - Lead Won (Deal Closed)
+  - Lead Lost
+  - Follow-up Reminder
+- [x] **Template Variables Display**: Shows available placeholders with descriptions
+  - Variables like `{{lead_title}}`, `{{customer_name}}`, `{{partner_name}}`, `{{deal_value}}`
+  - Copy and Insert buttons for each variable
+- [x] **Email Preview**: Preview templates with sample data before saving
+- [x] **Enable/Disable Toggle**: Turn individual email notifications on/off
+- [x] **Reset to Default**: Restore any template to its original content
+- [x] **HTML Support**: Rich formatting in email body
 
 ## Prioritized Backlog
 
 ### P0 - Critical (Requires User Input)
-- [ ] **Twilio SMS Credentials**: Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER to backend/.env
-- [ ] **SendGrid API Key**: Configure for email reminders
+- [ ] **SendGrid API Key**: Add `SENDGRID_API_KEY` and `SENDER_EMAIL` to backend/.env for email notifications
+- [ ] **Twilio Credentials**: Add `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` for SMS
 
 ### P1 - High Priority
-- [ ] Email templates for follow-up reminders
+- [ ] Automated follow-up email reminders (cron job to check upcoming follow-ups)
 - [ ] Lead auto-routing based on partner sub-categories
 - [ ] Dashboard date range filters
 
@@ -112,39 +80,38 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Custom dashboard widgets
 
 ## Refactoring Needed
-- **Critical**: Backend monolith (server.py is 2700+ lines) should be split into modular routers
+- **Critical**: Backend monolith (server.py is 2900+ lines) should be split into modular routers
 - **High**: N+1 query issues in data aggregation endpoints should use MongoDB $lookup
 
 ## Test Credentials
 - **Super Admin**: admin@vyapaarnetwork.com / admin123
-- **Selling Partner**: partner1@test.com / test123
 
 ## Key API Endpoints
 
+### Email Templates
+- `GET /api/email-templates` - List all 6 templates
+- `GET /api/email-templates/{event_type}` - Get specific template
+- `PUT /api/email-templates/{event_type}` - Update template (subject, body, is_enabled)
+- `POST /api/email-templates/{event_type}/preview` - Preview with sample data
+- `POST /api/email-templates/{event_type}/reset` - Reset to default
+- `GET /api/email-templates/variables/{event_type}` - Get available variables
+
 ### Document Tags Master Data
-- `GET /api/master/document-tags` - List all tags (optional: ?entity_type=lead|company)
+- `GET /api/master/document-tags` - List all tags
 - `POST /api/master/document-tags` - Create new tag
 - `PUT /api/master/document-tags/{id}` - Update tag
 - `DELETE /api/master/document-tags/{id}` - Delete tag
 
 ### Document Upload
-- `POST /api/documents/upload` - Upload document (form data: file, entity_type, entity_id, tag, description)
-- `GET /api/documents/entity/{entity_type}/{entity_id}` - Get documents for entity
+- `POST /api/documents/upload` - Upload document
+- `GET /api/documents/entity/{entity_type}/{entity_id}` - Get documents
 - `GET /api/documents/{id}/download` - Download document
-- `DELETE /api/documents/{id}` - Delete document (admin only)
-
-### Lead Referral
-- `POST /api/leads/referral` - Create referral (both partners and associates)
-- `GET /api/leads/my-referrals` - List user's referrals
+- `DELETE /api/documents/{id}` - Delete document
 
 ### Notifications
 - `GET /api/notifications` - Get user's notifications
-- `GET /api/notifications/unread-count` - Get unread count
 - `PUT /api/notifications/{id}/read` - Mark as read
 - `PUT /api/notifications/mark-all-read` - Mark all as read
-
-### Grid Report
-- `GET /api/reports/grid-performance` - Get performance data with filters
 
 ## Environment Variables Required
 
@@ -153,14 +120,14 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 MONGO_URL=mongodb://...
 DB_NAME=vyapaar_crm
 
-# Twilio SMS (Optional - for SMS notifications)
+# SendGrid (Required for email notifications)
+SENDGRID_API_KEY=your_api_key
+SENDER_EMAIL=noreply@vyapaarnetwork.com
+
+# Twilio SMS (Optional)
 TWILIO_ACCOUNT_SID=your_account_sid
 TWILIO_AUTH_TOKEN=your_auth_token
 TWILIO_PHONE_NUMBER=+1234567890
-
-# SendGrid (Optional - for email reminders)
-SENDGRID_API_KEY=your_api_key
-SENDER_EMAIL=noreply@vyapaarnetwork.com
 ```
 
 ## Architecture
@@ -168,9 +135,9 @@ SENDER_EMAIL=noreply@vyapaarnetwork.com
 - **Backend**: FastAPI with MongoDB (Motor async driver)
 - **Authentication**: JWT tokens
 - **File Storage**: Local uploads directory (/app/backend/uploads)
+- **Email**: SendGrid (configured, awaiting API key)
 - **SMS**: Twilio (configured, awaiting credentials)
-- **Email**: SendGrid (configured, awaiting credentials)
 
 ## Test Reports
-- `/app/test_reports/iteration_4.json` - Notifications, Grid Report, Lead Referral tests
 - `/app/test_reports/iteration_5.json` - Document Management tests
+- `/app/test_reports/iteration_6.json` - Email Templates tests (25 tests, 100% pass)
