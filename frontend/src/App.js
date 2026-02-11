@@ -145,6 +145,12 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
+      <Route path="/email-templates" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <EmailTemplates />
+        </ProtectedRoute>
+      } />
+
       {/* Reports - Admin, Selling Partner, Sales Associate */}
       <Route path="/reports" element={
         <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
