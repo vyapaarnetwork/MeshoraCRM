@@ -2489,11 +2489,7 @@ async def list_my_referrals(current_user: dict = Depends(get_current_user)):
     
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     
-    result = []
-    for lead in leads:
-        result.append(await enrich_lead(lead))
-    
-    return result
+    return await enrich_leads_bulk(leads)
 
 @api_router.get("/leads", response_model=List[LeadResponse])
 async def list_leads(
