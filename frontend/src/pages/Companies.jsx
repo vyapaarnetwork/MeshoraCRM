@@ -30,9 +30,10 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
-import { Plus, Edit, Building2, Percent, Search, Loader2, Tag, X } from 'lucide-react';
+import { Plus, Edit, Building2, Percent, Search, Loader2, Tag, X, Paperclip, Upload, FileText } from 'lucide-react';
 import api, { formatDate } from '../utils/api';
 import { toast } from 'sonner';
+import { DocumentUploadDialog, DocumentList, COMPANY_DOCUMENT_TAGS } from '../components/DocumentUpload';
 
 const Companies = () => {
   const { isAdmin } = useAuth();
