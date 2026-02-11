@@ -2,18 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../components/ui/table';
 import {
   Select,
   SelectContent,
@@ -27,9 +18,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
+import SortableTable from '../components/SortableTable';
 import { 
   Plus, 
-  Search, 
   Filter, 
   MoreHorizontal, 
   Eye, 
@@ -48,7 +39,6 @@ const Leads = () => {
   const navigate = useNavigate();
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [statuses, setStatuses] = useState([]);
 
@@ -72,7 +62,8 @@ const Leads = () => {
     }
   };
 
-  const handleDelete = async (leadId) => {
+  const handleDelete = async (leadId, e) => {
+    e.stopPropagation();
     if (!window.confirm('Are you sure you want to delete this lead?')) return;
     
     try {
@@ -84,16 +75,116 @@ const Leads = () => {
     }
   };
 
-  const filteredLeads = leads.filter(lead => {
-    const matchesSearch = 
-      lead.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.customer_email.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || lead.status_id === statusFilter;
-    
-    return matchesSearch && matchesStatus;
-  });
+  // Filter by status
+  const filteredLeads = statusFilter === 'all' 
+    ? leads 
+    : leads.filter(lead => lead.status_id === statusFilter);
+
+  // Table columns configuration
+  const columns = [
+    {
+      key: 'title',
+      label: 'Lead',
+      render: (value, row) => (
+        <div>
+          <div className="font-medium">{value}</div>
+          {row.selling_partner_name && (
+            <div className="text-xs text-muted-foreground flex items-center gap-1">
+              <Building2 className="w-3 h-3" />
+              {row.selling_partner_name}
+            </div>
+          )}
+        </div>
+      )
+    },
+    {
+      key: 'customer_name',
+      label: 'Customer',
+      render: (value, row) => (
+        <div>
+          <div>{value}</div>
+          <div className="text-xs text-muted-foreground">{row.customer_email}</div>
+        </div>
+      )
+    },
+    {
+      key: 'primary_category_name',
+      label: 'Category',
+      render: (value) => (
+        <Badge variant="outline">{value || 'Uncategorized'}</Badge>
+      )
+    },
+    {
+      key: 'status_name',
+      label: 'Status',
+      render: (value, row) => (
+        <Badge 
+          style={{ 
+            backgroundColor: `${row.status_color}20`,
+            color: row.status_color,
+            borderColor: row.status_color
+          }}
+        >
+          {value || 'New'}
+        </Badge>
+      )
+    },
+    {
+      key: 'deal_value',
+      label: 'Deal Value',
+      render: (value) => (
+        <span className="font-medium">{formatCurrency(value)}</span>
+      )
+    },
+    {
+      key: 'created_at',
+      label: 'Created',
+      render: (value) => (
+        <div className="flex items-center gap-1 text-muted-foreground text-sm">
+          <Calendar className="w-3 h-3" />
+          {formatDate(value)}
+        </div>
+      )
+    },
+    {
+      key: 'actions',
+      label: '',
+      sortable: false,
+      width: '60px',
+      render: (_, row) => (
+        <div onClick={(e) => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" data-testid={`lead-menu-${row.id}`}>
+                <MoreHorizontal className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => navigate(`/leads/${row.id}`)}>
+                <Eye className="w-4 h-4 mr-2" />
+                View Details
+              </DropdownMenuItem>
+              {!isSalesAssociate && (
+                <DropdownMenuItem onClick={() => navigate(`/leads/${row.id}/edit`)}>
+                  <Edit className="w-4 h-4 mr-2" />
+                  Edit Lead
+                </DropdownMenuItem>
+              )}
+              {isAdmin && (
+                <DropdownMenuItem 
+                  onClick={(e) => handleDelete(row.id, e)}
+                  className="text-destructive"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )
+    }
+  ];
 
   if (loading) {
     return <LeadsSkeleton />;
@@ -131,22 +222,12 @@ const Leads = () => {
         )}
       </div>
 
-      {/* Filters */}
+      {/* Status Filter */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search leads..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-                data-testid="lead-search-input"
-              />
-            </div>
+          <div className="flex items-center gap-4">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full sm:w-[180px]" data-testid="status-filter">
+              <SelectTrigger className="w-[200px]" data-testid="status-filter">
                 <Filter className="w-4 h-4 mr-2" />
                 <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
@@ -165,133 +246,37 @@ const Leads = () => {
                 ))}
               </SelectContent>
             </Select>
+            <span className="text-sm text-muted-foreground">
+              {filteredLeads.length} leads
+            </span>
           </div>
         </CardContent>
       </Card>
 
-      {/* Leads Table */}
+      {/* Leads Table with Sorting */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5 text-primary" />
-            All Leads ({filteredLeads.length})
+            All Leads
           </CardTitle>
           <CardDescription>
-            Click on a lead to view details and manage follow-ups
+            Click column headers to sort. Click on a lead to view details.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {filteredLeads.length > 0 ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Lead</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Deal Value</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead className="w-[60px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredLeads.map((lead) => (
-                    <TableRow 
-                      key={lead.id} 
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/leads/${lead.id}`)}
-                      data-testid={`lead-row-${lead.id}`}
-                    >
-                      <TableCell>
-                        <div className="font-medium">{lead.title}</div>
-                        {lead.selling_partner_name && (
-                          <div className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Building2 className="w-3 h-3" />
-                            {lead.selling_partner_name}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div>{lead.customer_name}</div>
-                        <div className="text-xs text-muted-foreground">{lead.customer_email}</div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{lead.primary_category_name || 'Uncategorized'}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge 
-                          style={{ 
-                            backgroundColor: `${lead.status_color}20`,
-                            color: lead.status_color,
-                            borderColor: lead.status_color
-                          }}
-                        >
-                          {lead.status_name || 'New'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatCurrency(lead.deal_value)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1 text-muted-foreground text-sm">
-                          <Calendar className="w-3 h-3" />
-                          {formatDate(lead.created_at)}
-                        </div>
-                      </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" data-testid={`lead-menu-${lead.id}`}>
-                              <MoreHorizontal className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => navigate(`/leads/${lead.id}`)}>
-                              <Eye className="w-4 h-4 mr-2" />
-                              View Details
-                            </DropdownMenuItem>
-                            {!isSalesAssociate && (
-                              <DropdownMenuItem onClick={() => navigate(`/leads/${lead.id}/edit`)}>
-                                <Edit className="w-4 h-4 mr-2" />
-                                Edit Lead
-                              </DropdownMenuItem>
-                            )}
-                            {isAdmin && (
-                              <DropdownMenuItem 
-                                onClick={() => handleDelete(lead.id)}
-                                className="text-destructive"
-                              >
-                                <Trash2 className="w-4 h-4 mr-2" />
-                                Delete
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <FileText className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-              <h3 className="font-semibold mb-1">No leads found</h3>
-              <p className="text-muted-foreground text-sm mb-4">
-                {searchTerm || statusFilter !== 'all' 
-                  ? 'Try adjusting your filters'
-                  : 'Get started by creating your first lead'
-                }
-              </p>
-              {!isSalesAssociate && !searchTerm && statusFilter === 'all' && (
-                <Button onClick={() => navigate('/leads/new')} data-testid="empty-create-lead-btn">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create Lead
-                </Button>
-              )}
-            </div>
-          )}
+          <SortableTable
+            columns={columns}
+            data={filteredLeads}
+            rowKey="id"
+            pageSize={15}
+            onRowClick={(row) => navigate(`/leads/${row.id}`)}
+            emptyMessage={
+              statusFilter !== 'all' 
+                ? 'No leads found with this status. Try adjusting your filter.'
+                : 'No leads found. Create your first lead to get started.'
+            }
+          />
         </CardContent>
       </Card>
     </div>
@@ -310,10 +295,7 @@ const LeadsSkeleton = () => (
     </div>
     <Card>
       <CardContent className="pt-6">
-        <div className="flex gap-4">
-          <Skeleton className="h-10 flex-1" />
-          <Skeleton className="h-10 w-[180px]" />
-        </div>
+        <Skeleton className="h-10 w-[200px]" />
       </CardContent>
     </Card>
     <Card>
