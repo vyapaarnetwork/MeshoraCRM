@@ -1384,6 +1384,142 @@ async def delete_commission_template(template_id: str, current_user: dict = Depe
     
     return {"message": "Commission template deleted"}
 
+# ==================== DOCUMENT UPLOAD ROUTES ====================
+
+@api_router.post("/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    entity_type: str = Form(...),  # "lead" or "company"
+    entity_id: str = Form(...),
+    tag: str = Form(...),
+    description: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user)
+):
+    """Upload a document for a lead or company"""
+    # Validate entity type
+    if entity_type not in ["lead", "company"]:
+        raise HTTPException(status_code=400, detail="entity_type must be 'lead' or 'company'")
+    
+    # Validate entity exists
+    if entity_type == "lead":
+        entity = await db.leads.find_one({"id": entity_id}, {"_id": 0})
+        if not entity:
+            raise HTTPException(status_code=404, detail="Lead not found")
+    else:
+        entity = await db.companies.find_one({"id": entity_id}, {"_id": 0})
+        if not entity:
+            raise HTTPException(status_code=404, detail="Company not found")
+    
+    # Validate file size (max 10MB)
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Max 10MB allowed.")
+    
+    # Generate unique filename
+    doc_id = str(uuid.uuid4())
+    ext = Path(file.filename).suffix if file.filename else ''
+    filename = f"{doc_id}{ext}"
+    filepath = UPLOAD_DIR / filename
+    
+    # Save file
+    async with aiofiles.open(filepath, 'wb') as f:
+        await f.write(content)
+    
+    # Save document metadata
+    doc_record = {
+        "id": doc_id,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "filename": filename,
+        "original_filename": file.filename or "unknown",
+        "file_size": len(content),
+        "content_type": file.content_type or "application/octet-stream",
+        "tag": tag,
+        "description": description,
+        "uploaded_by": current_user['id'],
+        "uploaded_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.documents.insert_one(doc_record)
+    
+    uploader = await db.users.find_one({"id": current_user['id']}, {"_id": 0})
+    
+    return DocumentResponse(
+        id=doc_id,
+        filename=filename,
+        original_filename=doc_record['original_filename'],
+        file_size=doc_record['file_size'],
+        content_type=doc_record['content_type'],
+        tag=tag,
+        description=description,
+        uploaded_by=current_user['id'],
+        uploaded_by_name=uploader['name'] if uploader else None,
+        uploaded_at=doc_record['uploaded_at']
+    )
+
+@api_router.get("/documents/{doc_id}/download")
+async def download_document(doc_id: str, current_user: dict = Depends(get_current_user)):
+    """Download a document"""
+    doc = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    filepath = UPLOAD_DIR / doc['filename']
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    return FileResponse(
+        path=str(filepath),
+        filename=doc['original_filename'],
+        media_type=doc['content_type']
+    )
+
+@api_router.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a document (admin only)"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can delete documents")
+    
+    doc = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Delete file
+    filepath = UPLOAD_DIR / doc['filename']
+    if filepath.exists():
+        filepath.unlink()
+    
+    # Delete record
+    await db.documents.delete_one({"id": doc_id})
+    
+    return {"message": "Document deleted successfully"}
+
+@api_router.get("/documents/entity/{entity_type}/{entity_id}", response_model=List[DocumentResponse])
+async def get_entity_documents(entity_type: str, entity_id: str, current_user: dict = Depends(get_current_user)):
+    """Get all documents for an entity"""
+    if entity_type not in ["lead", "company"]:
+        raise HTTPException(status_code=400, detail="entity_type must be 'lead' or 'company'")
+    
+    documents = await db.documents.find({"entity_type": entity_type, "entity_id": entity_id}, {"_id": 0}).to_list(100)
+    
+    result = []
+    for doc in documents:
+        uploader = await db.users.find_one({"id": doc['uploaded_by']}, {"_id": 0})
+        result.append(DocumentResponse(
+            id=doc['id'],
+            filename=doc['filename'],
+            original_filename=doc['original_filename'],
+            file_size=doc['file_size'],
+            content_type=doc['content_type'],
+            tag=doc['tag'],
+            description=doc.get('description'),
+            uploaded_by=doc['uploaded_by'],
+            uploaded_by_name=uploader['name'] if uploader else None,
+            uploaded_at=doc['uploaded_at']
+        ))
+    
+    return result
+
 # ==================== LEAD ROUTES ====================
 
 async def enrich_lead(lead: dict) -> LeadResponse:
