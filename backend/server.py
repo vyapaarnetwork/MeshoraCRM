@@ -385,6 +385,7 @@ class LeadResponse(BaseModel):
     status_color: Optional[str] = None
     follow_ups: List[FollowUpResponse] = []
     comments: List[CommentResponse] = []
+    documents: List[DocumentResponse] = []
     created_by: str
     created_by_name: Optional[str] = None
     created_at: str
