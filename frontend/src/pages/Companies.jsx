@@ -591,6 +591,57 @@ const Companies = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Documents View Dialog */}
+      <Dialog open={documentsDialogOpen} onOpenChange={setDocumentsDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Paperclip className="w-5 h-5" />
+              Documents - {selectedCompanyName}
+            </DialogTitle>
+            <DialogDescription>
+              Corporate profiles, brochures, and other company documents
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="flex justify-end mb-4">
+              <Button 
+                size="sm" 
+                onClick={() => {
+                  setDocumentsDialogOpen(false);
+                  setUploadDialogOpen(true);
+                }}
+                data-testid="upload-company-doc-btn"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Document
+              </Button>
+            </div>
+            <DocumentList 
+              documents={documents} 
+              canDelete={true}
+              onDelete={handleDeleteDocument}
+              emptyMessage="No documents uploaded for this company"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDocumentsDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Upload Dialog */}
+      <DocumentUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        entityType="company"
+        entityId={selectedCompanyId}
+        tags={documentTags}
+        onUploadComplete={handleDocumentUploaded}
+      />
     </div>
   );
 };
