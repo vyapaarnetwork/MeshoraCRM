@@ -2194,12 +2194,16 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
         if lead.get('status_id'):
             status_ids.add(lead['status_id'])
     
+    # Helper to return empty list as async
+    async def empty_list():
+        return []
+    
     # Bulk fetch all related data in parallel
     users_list, categories_list, secondary_categories_list, statuses_list, documents_list = await asyncio.gather(
-        db.users.find({"id": {"$in": list(user_ids)}}, {"_id": 0}).to_list(1000) if user_ids else asyncio.coroutine(lambda: [])(),
-        db.primary_categories.find({"id": {"$in": list(category_ids)}}, {"_id": 0}).to_list(100) if category_ids else asyncio.coroutine(lambda: [])(),
-        db.secondary_categories.find({"id": {"$in": list(secondary_category_ids)}}, {"_id": 0}).to_list(100) if secondary_category_ids else asyncio.coroutine(lambda: [])(),
-        db.lead_statuses.find({"id": {"$in": list(status_ids)}}, {"_id": 0}).to_list(100) if status_ids else asyncio.coroutine(lambda: [])(),
+        db.users.find({"id": {"$in": list(user_ids)}}, {"_id": 0}).to_list(1000) if user_ids else empty_list(),
+        db.primary_categories.find({"id": {"$in": list(category_ids)}}, {"_id": 0}).to_list(100) if category_ids else empty_list(),
+        db.secondary_categories.find({"id": {"$in": list(secondary_category_ids)}}, {"_id": 0}).to_list(100) if secondary_category_ids else empty_list(),
+        db.lead_statuses.find({"id": {"$in": list(status_ids)}}, {"_id": 0}).to_list(100) if status_ids else empty_list(),
         db.documents.find({"entity_type": "lead", "entity_id": {"$in": list(lead_ids)}}, {"_id": 0}).to_list(1000)
     )
     
