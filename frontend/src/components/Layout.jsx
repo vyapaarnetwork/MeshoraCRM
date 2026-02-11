@@ -163,6 +163,7 @@ const Layout = ({ children }) => {
         { label: 'Companies', icon: Building2, path: '/companies', roles: ['super_admin'] },
         { label: 'Categories', icon: Tag, path: '/categories', roles: ['super_admin'] },
         { label: 'Commission', icon: Percent, path: '/commission', roles: ['super_admin'] },
+        { label: 'Document Tags', icon: Paperclip, path: '/document-tags', roles: ['super_admin'] },
         { label: 'Grid Report', icon: Grid3X3, path: '/grid-report', roles: ['super_admin'] },
       );
     }
