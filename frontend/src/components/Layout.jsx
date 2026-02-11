@@ -349,7 +349,7 @@ const Layout = ({ children }) => {
                 <Menu className="w-5 h-5" />
               </Button>
               <div className="lg:hidden">
-                <img src={LOGO_URL} alt="Vyapaar Network" className="h-8 w-auto" />
+                <img src={LOGO_LONG_URL} alt="Vyapaar Network" className="h-8 w-auto" />
               </div>
             </div>
 
