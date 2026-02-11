@@ -138,6 +138,12 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
+      <Route path="/document-tags" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <DocumentTags />
+        </ProtectedRoute>
+      } />
+
       {/* Reports - Admin, Selling Partner, Sales Associate */}
       <Route path="/reports" element={
         <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
