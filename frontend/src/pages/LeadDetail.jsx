@@ -70,7 +70,10 @@ const LeadDetail = () => {
     fetchLead();
     fetchDocuments();
     fetchDocumentTags();
-  }, [id]);
+    if (isAdmin) {
+      fetchPartners();
+    }
+  }, [id, isAdmin]);
 
   const fetchLead = async () => {
     try {
@@ -106,6 +109,15 @@ const LeadDetail = () => {
     }
   };
 
+  const fetchPartners = async () => {
+    try {
+      const response = await api.get('/users?role=selling_partner');
+      setPartners(response.data.filter(p => p.is_active));
+    } catch (error) {
+      console.error('Failed to fetch partners:', error);
+    }
+  };
+
   const handleDocumentUploaded = () => {
     fetchDocuments();
   };
@@ -118,6 +130,44 @@ const LeadDetail = () => {
       fetchDocuments();
     } catch (error) {
       toast.error('Failed to delete document');
+    }
+  };
+
+  const handleAssignPartner = async () => {
+    if (!selectedPartnerId) {
+      toast.error('Please select a partner');
+      return;
+    }
+    try {
+      await api.post(`/leads/${id}/assign-partner`, { partner_id: selectedPartnerId });
+      toast.success('Partner assigned successfully');
+      setShowAssignPartnerDialog(false);
+      setSelectedPartnerId('');
+      fetchLead();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to assign partner');
+    }
+  };
+
+  const handleMarkPartnerWon = async (partnerId) => {
+    if (!confirm('Mark this partner as the winner? Other active partners will be marked as lost.')) return;
+    try {
+      await api.post(`/leads/${id}/mark-partner-won`, { partner_id: partnerId });
+      toast.success('Partner marked as winner');
+      fetchLead();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to mark partner as won');
+    }
+  };
+
+  const handleRemovePartner = async (partnerId) => {
+    if (!confirm('Remove this partner from the lead?')) return;
+    try {
+      await api.post(`/leads/${id}/remove-partner`, { partner_id: partnerId });
+      toast.success('Partner removed from lead');
+      fetchLead();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to remove partner');
     }
   };
 
