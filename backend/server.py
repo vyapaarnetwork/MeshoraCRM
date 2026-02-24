@@ -2591,11 +2591,40 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     
     update_data = lead_data.model_dump(exclude_unset=True, exclude_none=True)
     update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     
     # Check if selling partner is being assigned to a Draft lead
     old_partner_id = lead.get('selling_partner_id')
     new_partner_id = update_data.get('selling_partner_id')
     status_changed = False
+    
+    # Track partner history when partner changes
+    if 'selling_partner_id' in update_data and new_partner_id != old_partner_id:
+        partner_history = lead.get('partner_history', [])
+        
+        # If there was an old partner, mark them as removed in history
+        if old_partner_id:
+            # Find the current assignment in history and mark it as removed
+            for assignment in partner_history:
+                if assignment.get('partner_id') == old_partner_id and not assignment.get('removed_at'):
+                    assignment['removed_at'] = now
+                    assignment['removed_by'] = current_user['id']
+        
+        # Add new partner to history
+        if new_partner_id:
+            new_partner = await db.users.find_one({"id": new_partner_id}, {"_id": 0})
+            partner_history.append({
+                "partner_id": new_partner_id,
+                "partner_name": new_partner['name'] if new_partner else None,
+                "assigned_at": now,
+                "assigned_by": current_user['id'],
+                "assigned_by_name": current_user['name'],
+                "removed_at": None,
+                "removed_by": None,
+                "notes": f"Assigned by {current_user['name']}"
+            })
+        
+        update_data['partner_history'] = partner_history
     
     if 'selling_partner_id' in update_data and update_data['selling_partner_id']:
         current_status = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0})
