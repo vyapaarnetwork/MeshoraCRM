@@ -2186,6 +2186,7 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         follow_ups=[FollowUpResponse(**f) for f in lead.get('follow_ups', [])],
         comments=[CommentResponse(**c) for c in lead.get('comments', [])],
         documents=doc_responses,
+        partner_history=[PartnerAssignment(**p) for p in lead.get('partner_history', [])],
         created_by=lead['created_by'],
         created_by_name=created_by_user['name'] if created_by_user else None,
         created_at=lead['created_at'],
