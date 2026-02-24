@@ -406,48 +406,112 @@ const LeadDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Partner Assignment History - Admin Only */}
-          {isAdmin && lead.partner_history && lead.partner_history.length > 0 && (
-            <Card data-testid="partner-history-section">
+          {/* Assigned Partners - Admin Only */}
+          {isAdmin && (
+            <Card data-testid="assigned-partners-section">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <History className="w-5 h-5 text-primary" />
-                  Partner Assignment History ({lead.partner_history.length})
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="w-5 h-5 text-primary" />
+                    Assigned Partners ({lead.active_partners_count || 0} active)
+                  </CardTitle>
+                  <Button 
+                    size="sm" 
+                    onClick={() => setShowAssignPartnerDialog(true)}
+                    data-testid="assign-partner-btn"
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Assign Partner
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {lead.partner_history.map((assignment, index) => (
-                    <div key={index} className="flex items-start gap-3 p-3 bg-muted rounded-lg">
-                      <div className={`p-2 rounded-full ${assignment.removed_at ? 'bg-red-100' : 'bg-green-100'}`}>
-                        {assignment.removed_at ? (
-                          <UserMinus className="w-4 h-4 text-red-600" />
-                        ) : (
-                          <UserCheck className="w-4 h-4 text-green-600" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{assignment.partner_name || 'Unknown Partner'}</span>
-                          {!assignment.removed_at && (
-                            <Badge variant="default" className="text-xs">Current</Badge>
+                {lead.assigned_partners && lead.assigned_partners.length > 0 ? (
+                  <div className="space-y-3">
+                    {lead.assigned_partners.map((assignment, index) => (
+                      <div key={index} className="flex items-start gap-3 p-3 bg-muted rounded-lg">
+                        <div className={`p-2 rounded-full ${
+                          assignment.status === 'won' ? 'bg-green-100' : 
+                          assignment.status === 'lost' ? 'bg-red-100' : 'bg-blue-100'
+                        }`}>
+                          {assignment.status === 'won' ? (
+                            <Trophy className="w-4 h-4 text-green-600" />
+                          ) : assignment.status === 'lost' ? (
+                            <UserMinus className="w-4 h-4 text-red-600" />
+                          ) : (
+                            <UserCheck className="w-4 h-4 text-blue-600" />
                           )}
                         </div>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          Assigned by {assignment.assigned_by_name} on {formatDate(assignment.assigned_at)}
-                        </p>
-                        {assignment.removed_at && (
-                          <p className="text-sm text-red-600 mt-1">
-                            Removed on {formatDate(assignment.removed_at)}
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{assignment.partner_name || 'Unknown Partner'}</span>
+                            <Badge 
+                              variant={assignment.status === 'won' ? 'default' : assignment.status === 'lost' ? 'secondary' : 'outline'}
+                              className={`text-xs ${
+                                assignment.status === 'won' ? 'bg-green-100 text-green-700' : 
+                                assignment.status === 'lost' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                              }`}
+                            >
+                              {assignment.status === 'won' ? 'Winner' : assignment.status === 'lost' ? 'Lost' : 'Active'}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Assigned by {assignment.assigned_by_name} on {formatDate(assignment.assigned_at)}
                           </p>
-                        )}
-                        {assignment.notes && (
-                          <p className="text-xs text-muted-foreground mt-1 italic">{assignment.notes}</p>
-                        )}
+                          {assignment.won_at && (
+                            <p className="text-sm text-green-600 mt-1">
+                              Won on {formatDate(assignment.won_at)}
+                            </p>
+                          )}
+                          {assignment.lost_at && (
+                            <p className="text-sm text-red-600 mt-1">
+                              Lost on {formatDate(assignment.lost_at)}
+                            </p>
+                          )}
+                          {assignment.notes && (
+                            <p className="text-xs text-muted-foreground mt-1 italic">{assignment.notes}</p>
+                          )}
+                          {/* Action buttons for active partners */}
+                          {assignment.status === 'active' && (
+                            <div className="flex gap-2 mt-2">
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                className="text-green-600 hover:text-green-700"
+                                onClick={() => handleMarkPartnerWon(assignment.partner_id)}
+                              >
+                                <Trophy className="w-3 h-3 mr-1" />
+                                Mark Won
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                className="text-red-600 hover:text-red-700"
+                                onClick={() => handleRemovePartner(assignment.partner_id)}
+                              >
+                                <UserMinus className="w-3 h-3 mr-1" />
+                                Remove
+                              </Button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <Users className="w-10 h-10 mx-auto text-muted-foreground/50 mb-2" />
+                    <p className="text-muted-foreground text-sm">No partners assigned yet</p>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="mt-2"
+                      onClick={() => setShowAssignPartnerDialog(true)}
+                    >
+                      Assign First Partner
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
