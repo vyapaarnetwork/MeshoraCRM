@@ -7,7 +7,7 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 1. **Super Admin (Vyapaar Network Team)**: Full system access, manages all masters, users, leads, commissions, reports, email templates, and grid analytics
 2. **Selling Partner**: Company that sells products/services, can refer leads, request internal services, views assigned leads and commission summary
 3. **Sales Associate**: Independent individual who brings leads, earns perpetual commission, can refer leads
-4. **Customer**: Company/individual looking for vendors, can submit and track lead requests
+4. **Customer**: Company/individual looking for vendors, can submit leads and manage their company team members
 
 ## What's Been Implemented
 
@@ -18,52 +18,56 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] Commission calculation with transparent breakdown
 - [x] Role-specific Dashboards
 - [x] Reports & Analytics with CSV export
-- [x] Profile Settings Page
-- [x] Lead Bulk Import with CSV template
-- [x] Customer-Only Self Registration
-- [x] Admin User Creation/Edit/Delete
-- [x] Draft Lead Status with auto-transition
-- [x] Partner Sub-categories
-- [x] Follow-up "Pending With" Assignment
 
 ### Phase 4 - Lead Referral, Notifications & Grid Report (Feb 10, 2025)
 - [x] Lead Referral for Selling Partners and Sales Associates
 - [x] Internal Request Feature (Partner as Customer)
 - [x] In-App Notification System with bell icon
-- [x] SMS Notifications via Twilio (backend ready, awaiting credentials)
+- [x] SMS Notifications via Twilio (backend ready)
 - [x] Grid Report with filterable/sortable performance data
-- [x] Reusable SortableTable component
 
 ### Phase 5 - Document Management (Feb 11, 2025)
-- [x] Document Tags Master Data (admin-configurable tags for leads/companies)
+- [x] Document Tags Master Data (admin-configurable)
 - [x] Lead Document Upload with tags (Proposal, Contract, Invoice, Quotation)
 - [x] Company Document Upload (Corporate Profile, Product Catalog, Brochure)
-- [x] Document view, download, and delete functionality
 
 ### Phase 6 - Email Templates (Feb 11, 2025)
-- [x] **Configurable Email Templates**: Super Admin can edit email templates for 6 events:
-  - New Lead Created
-  - Lead Assigned to Partner
-  - Lead Status Changed
-  - Lead Won (Deal Closed)
-  - Lead Lost
-  - Follow-up Reminder
-- [x] **Template Variables Display**: Shows available placeholders with descriptions
-  - Variables like `{{lead_title}}`, `{{customer_name}}`, `{{partner_name}}`, `{{deal_value}}`
-  - Copy and Insert buttons for each variable
-- [x] **Email Preview**: Preview templates with sample data before saving
-- [x] **Enable/Disable Toggle**: Turn individual email notifications on/off
-- [x] **Reset to Default**: Restore any template to its original content
-- [x] **HTML Support**: Rich formatting in email body
+- [x] Configurable Email Templates for 6 events
+- [x] Template Variables Display with Copy/Insert buttons
+- [x] Email Preview with sample data
+- [x] Enable/Disable Toggle per template
+
+### Phase 7 - Multi-User & Partner History (Feb 24, 2025)
+- [x] **Customer User Management**:
+  - Customers can add, edit, delete team members from their company
+  - New "Team Members" menu in sidebar for customers
+  - All team members get Customer role and same company_id
+  
+- [x] **Company Creation with Default User**:
+  - When creating Customer type company, admin specifies default user details
+  - Default user fields: name, email, phone, password (default: customer123)
+  - User is auto-created with Customer role
+
+- [x] **Internal Requests Separate Menu**:
+  - "Internal Requests" menu item for Selling Partners only
+  - Dedicated page to view and create service requests
+  - Stats: Total Requests, Pending, Completed
+
+- [x] **Lead Multi-Partner Assignment with History**:
+  - `partner_history` array tracks all partner assignments
+  - Each assignment records: partner_id, partner_name, assigned_at, assigned_by, removed_at
+  - Super Admin sees "Partner Assignment History" section on Lead Detail
+  - Current partner marked with "Current" badge
+  - Removed partners show removal timestamp
 
 ## Prioritized Backlog
 
 ### P0 - Critical (Requires User Input)
-- [ ] **SendGrid API Key**: Add `SENDGRID_API_KEY` and `SENDER_EMAIL` to backend/.env for email notifications
+- [ ] **SendGrid API Key**: Add `SENDGRID_API_KEY` and `SENDER_EMAIL` for email notifications
 - [ ] **Twilio Credentials**: Add `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` for SMS
 
 ### P1 - High Priority
-- [ ] Automated follow-up email reminders (cron job to check upcoming follow-ups)
+- [ ] Automated follow-up email reminders (cron job)
 - [ ] Lead auto-routing based on partner sub-categories
 - [ ] Dashboard date range filters
 
@@ -71,73 +75,43 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Dark mode toggle
 - [ ] Lead activity timeline
 - [ ] Real-time notifications (WebSocket)
-- [ ] Advanced search with multiple filters
 
 ### P3 - Nice to Have
 - [ ] API documentation (Swagger)
 - [ ] Audit logs
-- [ ] Mobile-responsive improvements
 - [ ] Custom dashboard widgets
-
-## Refactoring Needed
-- **Critical**: Backend monolith (server.py is 2900+ lines) should be split into modular routers
-- **High**: N+1 query issues in data aggregation endpoints should use MongoDB $lookup
-
-## Test Credentials
-- **Super Admin**: admin@vyapaarnetwork.com / admin123
 
 ## Key API Endpoints
 
+### Customer User Management
+- `GET /api/customers/company-users` - List company users (Customer only)
+- `POST /api/customers/company-users` - Create company user
+- `PUT /api/customers/company-users/{id}` - Update company user
+- `DELETE /api/customers/company-users/{id}` - Deactivate company user
+
+### Internal Requests
+- `GET /api/leads/internal-requests` - List internal service requests (Selling Partner only)
+
+### Company Creation
+- `POST /api/companies` - Create company (with optional default_user_* fields for customer type)
+
 ### Email Templates
-- `GET /api/email-templates` - List all 6 templates
-- `GET /api/email-templates/{event_type}` - Get specific template
-- `PUT /api/email-templates/{event_type}` - Update template (subject, body, is_enabled)
+- `GET /api/email-templates` - List all templates
+- `PUT /api/email-templates/{event_type}` - Update template
 - `POST /api/email-templates/{event_type}/preview` - Preview with sample data
-- `POST /api/email-templates/{event_type}/reset` - Reset to default
-- `GET /api/email-templates/variables/{event_type}` - Get available variables
 
-### Document Tags Master Data
-- `GET /api/master/document-tags` - List all tags
-- `POST /api/master/document-tags` - Create new tag
-- `PUT /api/master/document-tags/{id}` - Update tag
-- `DELETE /api/master/document-tags/{id}` - Delete tag
-
-### Document Upload
-- `POST /api/documents/upload` - Upload document
-- `GET /api/documents/entity/{entity_type}/{entity_id}` - Get documents
-- `GET /api/documents/{id}/download` - Download document
-- `DELETE /api/documents/{id}` - Delete document
-
-### Notifications
-- `GET /api/notifications` - Get user's notifications
-- `PUT /api/notifications/{id}/read` - Mark as read
-- `PUT /api/notifications/mark-all-read` - Mark all as read
-
-## Environment Variables Required
-
-```env
-# Backend (.env)
-MONGO_URL=mongodb://...
-DB_NAME=vyapaar_crm
-
-# SendGrid (Required for email notifications)
-SENDGRID_API_KEY=your_api_key
-SENDER_EMAIL=noreply@vyapaarnetwork.com
-
-# Twilio SMS (Optional)
-TWILIO_ACCOUNT_SID=your_account_sid
-TWILIO_AUTH_TOKEN=your_auth_token
-TWILIO_PHONE_NUMBER=+1234567890
-```
+## Test Credentials
+- **Super Admin**: admin@vyapaarnetwork.com / admin123
+- **Customer**: john@testco.com / test123 (Test Customer Co)
 
 ## Architecture
 - **Frontend**: React 19 with Shadcn/UI, TailwindCSS, Recharts
 - **Backend**: FastAPI with MongoDB (Motor async driver)
 - **Authentication**: JWT tokens
-- **File Storage**: Local uploads directory (/app/backend/uploads)
+- **File Storage**: Local uploads directory
 - **Email**: SendGrid (configured, awaiting API key)
 - **SMS**: Twilio (configured, awaiting credentials)
 
 ## Test Reports
-- `/app/test_reports/iteration_5.json` - Document Management tests
-- `/app/test_reports/iteration_6.json` - Email Templates tests (25 tests, 100% pass)
+- `/app/test_reports/iteration_6.json` - Email Templates tests
+- `/app/test_reports/iteration_7.json` - Multi-User & Partner History tests (20/20 passed)
