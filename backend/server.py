@@ -2890,6 +2890,164 @@ async def delete_lead(lead_id: str, current_user: dict = Depends(get_current_use
     
     return {"message": "Lead deleted"}
 
+# Multi-Partner Assignment Endpoints
+@api_router.post("/leads/{lead_id}/assign-partner", response_model=LeadResponse)
+async def assign_additional_partner(lead_id: str, request: AssignPartnerRequest, current_user: dict = Depends(get_current_user)):
+    """Assign an additional partner to a lead (admin only)"""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can assign partners")
+    
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    # Verify partner exists and is a selling partner
+    partner = await db.users.find_one({"id": request.partner_id, "role": UserRole.SELLING_PARTNER.value}, {"_id": 0})
+    if not partner:
+        raise HTTPException(status_code=404, detail="Selling partner not found")
+    
+    assigned_partners = lead.get('assigned_partners', [])
+    
+    # Check if partner is already assigned
+    existing = next((p for p in assigned_partners if p.get('partner_id') == request.partner_id), None)
+    if existing:
+        if existing.get('status') == 'active':
+            raise HTTPException(status_code=400, detail="Partner is already assigned to this lead")
+        # If partner was previously lost, reactivate them
+        existing['status'] = 'active'
+        existing['lost_at'] = None
+        existing['notes'] = f"Re-assigned by {current_user['name']}"
+    else:
+        now = datetime.now(timezone.utc).isoformat()
+        assigned_partners.append({
+            "partner_id": request.partner_id,
+            "partner_name": partner['name'],
+            "assigned_at": now,
+            "assigned_by": current_user['id'],
+            "assigned_by_name": current_user['name'],
+            "status": "active",
+            "won_at": None,
+            "lost_at": None,
+            "notes": request.notes or f"Assigned by {current_user['name']}"
+        })
+    
+    # Update lead
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$set": {
+            "assigned_partners": assigned_partners,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    # Create notification for the partner
+    await create_notification_for_user(
+        request.partner_id,
+        notification_type="lead_assigned",
+        title="New Lead Assigned",
+        message=f"You have been assigned to lead: {lead['title']}",
+        lead_id=lead_id
+    )
+    
+    # Send SMS
+    await send_lead_assignment_sms(request.partner_id, lead['title'], lead['customer_name'])
+    
+    updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    return await enrich_lead(updated_lead)
+
+@api_router.post("/leads/{lead_id}/mark-partner-won", response_model=LeadResponse)
+async def mark_partner_won(lead_id: str, request: MarkPartnerWonRequest, current_user: dict = Depends(get_current_user)):
+    """Mark a partner as the winner of the deal (admin only). Other partners are marked as lost."""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can mark partner as won")
+    
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    assigned_partners = lead.get('assigned_partners', [])
+    if not assigned_partners:
+        raise HTTPException(status_code=400, detail="No partners assigned to this lead")
+    
+    # Find the winning partner
+    winner = next((p for p in assigned_partners if p.get('partner_id') == request.partner_id), None)
+    if not winner:
+        raise HTTPException(status_code=400, detail="Partner is not assigned to this lead")
+    
+    if winner.get('status') != 'active':
+        raise HTTPException(status_code=400, detail="Partner is not active on this lead")
+    
+    now = datetime.now(timezone.utc).isoformat()
+    
+    # Mark the winner and lose others
+    for partner in assigned_partners:
+        if partner['partner_id'] == request.partner_id:
+            partner['status'] = 'won'
+            partner['won_at'] = now
+            partner['notes'] = request.notes or f"Won the deal"
+        elif partner['status'] == 'active':
+            partner['status'] = 'lost'
+            partner['lost_at'] = now
+            partner['notes'] = f"Lost to another partner"
+    
+    # Update lead with winning partner as the selling_partner_id
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$set": {
+            "selling_partner_id": request.partner_id,
+            "assigned_partners": assigned_partners,
+            "updated_at": now
+        }}
+    )
+    
+    # Notify the winning partner
+    await create_notification_for_user(
+        request.partner_id,
+        notification_type="lead_won",
+        title="Congratulations! You Won the Deal",
+        message=f"You have won the deal for lead: {lead['title']}",
+        lead_id=lead_id
+    )
+    
+    updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    return await enrich_lead(updated_lead)
+
+@api_router.post("/leads/{lead_id}/remove-partner", response_model=LeadResponse)
+async def remove_partner_from_lead(lead_id: str, request: AssignPartnerRequest, current_user: dict = Depends(get_current_user)):
+    """Remove a partner from a lead (mark as lost). Admin only."""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can remove partners")
+    
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    assigned_partners = lead.get('assigned_partners', [])
+    
+    # Find the partner to remove
+    partner_assignment = next((p for p in assigned_partners if p.get('partner_id') == request.partner_id), None)
+    if not partner_assignment:
+        raise HTTPException(status_code=400, detail="Partner is not assigned to this lead")
+    
+    if partner_assignment.get('status') != 'active':
+        raise HTTPException(status_code=400, detail="Partner is not active on this lead")
+    
+    now = datetime.now(timezone.utc).isoformat()
+    partner_assignment['status'] = 'lost'
+    partner_assignment['lost_at'] = now
+    partner_assignment['notes'] = request.notes or f"Removed by {current_user['name']}"
+    
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$set": {
+            "assigned_partners": assigned_partners,
+            "updated_at": now
+        }}
+    )
+    
+    updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    return await enrich_lead(updated_lead)
+
 # Follow-ups
 @api_router.post("/leads/{lead_id}/follow-ups", response_model=LeadResponse)
 async def add_follow_up(lead_id: str, followup_data: FollowUpCreate, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
