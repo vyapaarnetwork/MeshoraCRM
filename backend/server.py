@@ -370,8 +370,19 @@ class PartnerAssignment(BaseModel):
     assigned_at: str
     assigned_by: str
     assigned_by_name: Optional[str] = None
-    removed_at: Optional[str] = None
-    removed_by: Optional[str] = None
+    status: str = "active"  # active, won, lost
+    won_at: Optional[str] = None
+    lost_at: Optional[str] = None
+    notes: Optional[str] = None
+
+# Model for assigning additional partner
+class AssignPartnerRequest(BaseModel):
+    partner_id: str
+    notes: Optional[str] = None
+
+# Model for marking partner as winner
+class MarkPartnerWonRequest(BaseModel):
+    partner_id: str
     notes: Optional[str] = None
 
 class LeadResponse(BaseModel):
