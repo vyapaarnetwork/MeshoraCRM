@@ -405,6 +405,52 @@ const LeadDetail = () => {
               />
             </CardContent>
           </Card>
+
+          {/* Partner Assignment History - Admin Only */}
+          {isAdmin && lead.partner_history && lead.partner_history.length > 0 && (
+            <Card data-testid="partner-history-section">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-primary" />
+                  Partner Assignment History ({lead.partner_history.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {lead.partner_history.map((assignment, index) => (
+                    <div key={index} className="flex items-start gap-3 p-3 bg-muted rounded-lg">
+                      <div className={`p-2 rounded-full ${assignment.removed_at ? 'bg-red-100' : 'bg-green-100'}`}>
+                        {assignment.removed_at ? (
+                          <UserMinus className="w-4 h-4 text-red-600" />
+                        ) : (
+                          <UserCheck className="w-4 h-4 text-green-600" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{assignment.partner_name || 'Unknown Partner'}</span>
+                          {!assignment.removed_at && (
+                            <Badge variant="default" className="text-xs">Current</Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Assigned by {assignment.assigned_by_name} on {formatDate(assignment.assigned_at)}
+                        </p>
+                        {assignment.removed_at && (
+                          <p className="text-sm text-red-600 mt-1">
+                            Removed on {formatDate(assignment.removed_at)}
+                          </p>
+                        )}
+                        {assignment.notes && (
+                          <p className="text-xs text-muted-foreground mt-1 italic">{assignment.notes}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Sidebar */}
