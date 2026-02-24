@@ -116,6 +116,20 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
+      {/* Internal Requests - Selling Partners Only */}
+      <Route path="/internal-requests" element={
+        <ProtectedRoute allowedRoles={['selling_partner']}>
+          <InternalRequests />
+        </ProtectedRoute>
+      } />
+
+      {/* Company Users - Customers Only */}
+      <Route path="/company-users" element={
+        <ProtectedRoute allowedRoles={['customer']}>
+          <CompanyUsers />
+        </ProtectedRoute>
+      } />
+
       {/* Admin Only Routes */}
       <Route path="/users" element={
         <ProtectedRoute allowedRoles={['super_admin']}>
