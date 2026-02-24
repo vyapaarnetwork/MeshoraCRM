@@ -144,6 +144,11 @@ class CompanyCreate(BaseModel):
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
     subcategory_ids: Optional[List[str]] = None  # For selling partners
+    # Default user for customer companies
+    default_user_name: Optional[str] = None
+    default_user_email: Optional[EmailStr] = None
+    default_user_phone: Optional[str] = None
+    default_user_password: Optional[str] = None
 
 class CompanyResponse(BaseModel):
     id: str
