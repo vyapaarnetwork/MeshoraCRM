@@ -358,6 +358,17 @@ class CommissionBreakdown(BaseModel):
     sales_associate_percentage: Optional[float] = None
     sales_associate_share: Optional[float] = None
 
+# Partner Assignment History for leads
+class PartnerAssignment(BaseModel):
+    partner_id: str
+    partner_name: Optional[str] = None
+    assigned_at: str
+    assigned_by: str
+    assigned_by_name: Optional[str] = None
+    removed_at: Optional[str] = None
+    removed_by: Optional[str] = None
+    notes: Optional[str] = None
+
 class LeadResponse(BaseModel):
     id: str
     title: str
@@ -389,10 +400,29 @@ class LeadResponse(BaseModel):
     follow_ups: List[FollowUpResponse] = []
     comments: List[CommentResponse] = []
     documents: List[DocumentResponse] = []
+    partner_history: List[PartnerAssignment] = []
     created_by: str
     created_by_name: Optional[str] = None
     created_at: str
     updated_at: str
+
+# Customer User Management Models
+class CustomerUserCreate(BaseModel):
+    email: EmailStr
+    name: str
+    phone: Optional[str] = None
+    password: str
+
+class CustomerUserResponse(BaseModel):
+    id: str
+    email: str
+    name: str
+    phone: Optional[str] = None
+    role: str
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    is_active: bool
+    created_at: str
 
 # Report Models
 class ReportFilter(BaseModel):
