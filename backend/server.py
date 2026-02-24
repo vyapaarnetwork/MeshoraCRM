@@ -2676,6 +2676,22 @@ async def list_my_referrals(current_user: dict = Depends(get_current_user)):
     
     return await enrich_leads_bulk(leads)
 
+@api_router.get("/leads/internal-requests", response_model=List[LeadResponse])
+async def list_internal_requests(current_user: dict = Depends(get_current_user)):
+    """Selling Partner lists their internal service requests"""
+    if current_user['role'] != UserRole.SELLING_PARTNER.value:
+        raise HTTPException(status_code=403, detail="Only selling partners can view internal requests")
+    
+    # Get internal requests where the current partner is the requester
+    query = {
+        "referred_by_partner_id": current_user['id'],
+        "is_internal_request": True
+    }
+    
+    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    return await enrich_leads_bulk(leads)
+
 @api_router.get("/leads", response_model=List[LeadResponse])
 async def list_leads(
     status_id: Optional[str] = None,
