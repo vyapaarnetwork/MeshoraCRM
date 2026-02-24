@@ -1062,6 +1062,155 @@ async def list_users(role: Optional[str] = None, current_user: dict = Depends(ge
     
     return result
 
+# ==================== CUSTOMER USER MANAGEMENT ====================
+
+@api_router.get("/customers/company-users", response_model=List[CustomerUserResponse])
+async def list_company_users(current_user: dict = Depends(get_current_user)):
+    """Customer lists users from their company"""
+    if current_user['role'] != UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Only customers can access this endpoint")
+    
+    if not current_user.get('company_id'):
+        raise HTTPException(status_code=400, detail="You are not associated with a company")
+    
+    users = await db.users.find(
+        {"company_id": current_user['company_id'], "role": UserRole.CUSTOMER.value},
+        {"_id": 0, "password": 0}
+    ).to_list(100)
+    
+    company = await db.companies.find_one({"id": current_user['company_id']}, {"_id": 0})
+    company_name = company['name'] if company else None
+    
+    result = []
+    for user in users:
+        result.append(CustomerUserResponse(
+            id=user['id'],
+            email=user['email'],
+            name=user['name'],
+            phone=user.get('phone'),
+            role=user['role'],
+            company_id=user.get('company_id'),
+            company_name=company_name,
+            is_active=user.get('is_active', True),
+            created_at=user['created_at']
+        ))
+    
+    return result
+
+@api_router.post("/customers/company-users", response_model=CustomerUserResponse)
+async def create_company_user(user_data: CustomerUserCreate, current_user: dict = Depends(get_current_user)):
+    """Customer creates a new user for their company"""
+    if current_user['role'] != UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Only customers can create company users")
+    
+    if not current_user.get('company_id'):
+        raise HTTPException(status_code=400, detail="You are not associated with a company")
+    
+    # Check if email exists
+    existing = await db.users.find_one({"email": user_data.email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    user_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    
+    user_doc = {
+        "id": user_id,
+        "email": user_data.email,
+        "password": hash_password(user_data.password),
+        "name": user_data.name,
+        "role": UserRole.CUSTOMER.value,
+        "company_id": current_user['company_id'],
+        "phone": user_data.phone,
+        "is_active": True,
+        "created_by": current_user['id'],
+        "created_at": now
+    }
+    
+    await db.users.insert_one(user_doc)
+    
+    company = await db.companies.find_one({"id": current_user['company_id']}, {"_id": 0})
+    company_name = company['name'] if company else None
+    
+    return CustomerUserResponse(
+        id=user_id,
+        email=user_data.email,
+        name=user_data.name,
+        phone=user_data.phone,
+        role=UserRole.CUSTOMER.value,
+        company_id=current_user['company_id'],
+        company_name=company_name,
+        is_active=True,
+        created_at=now
+    )
+
+@api_router.put("/customers/company-users/{user_id}", response_model=CustomerUserResponse)
+async def update_company_user(user_id: str, user_data: CustomerUserCreate, current_user: dict = Depends(get_current_user)):
+    """Customer updates a user from their company"""
+    if current_user['role'] != UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Only customers can update company users")
+    
+    if not current_user.get('company_id'):
+        raise HTTPException(status_code=400, detail="You are not associated with a company")
+    
+    user = await db.users.find_one({"id": user_id, "company_id": current_user['company_id']}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found in your company")
+    
+    # Check email uniqueness if changing
+    if user_data.email != user['email']:
+        existing = await db.users.find_one({"email": user_data.email})
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
+    
+    update_data = {
+        "email": user_data.email,
+        "name": user_data.name,
+        "phone": user_data.phone
+    }
+    
+    if user_data.password:
+        update_data['password'] = hash_password(user_data.password)
+    
+    await db.users.update_one({"id": user_id}, {"$set": update_data})
+    
+    updated_user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    company = await db.companies.find_one({"id": current_user['company_id']}, {"_id": 0})
+    company_name = company['name'] if company else None
+    
+    return CustomerUserResponse(
+        id=updated_user['id'],
+        email=updated_user['email'],
+        name=updated_user['name'],
+        phone=updated_user.get('phone'),
+        role=updated_user['role'],
+        company_id=updated_user.get('company_id'),
+        company_name=company_name,
+        is_active=updated_user.get('is_active', True),
+        created_at=updated_user['created_at']
+    )
+
+@api_router.delete("/customers/company-users/{user_id}")
+async def delete_company_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Customer deactivates a user from their company"""
+    if current_user['role'] != UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Only customers can delete company users")
+    
+    if not current_user.get('company_id'):
+        raise HTTPException(status_code=400, detail="You are not associated with a company")
+    
+    # Prevent self-deletion
+    if user_id == current_user['id']:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    user = await db.users.find_one({"id": user_id, "company_id": current_user['company_id']}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found in your company")
+    
+    await db.users.update_one({"id": user_id}, {"$set": {"is_active": False}})
+    
+    return {"message": "User deactivated successfully"}
+
 # ==================== COMPANY ROUTES ====================
 
 @api_router.post("/companies", response_model=CompanyResponse)
