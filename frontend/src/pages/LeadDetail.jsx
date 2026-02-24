@@ -26,6 +26,7 @@ import {
   Mail, 
   Phone, 
   User,
+  Users,
   Tag,
   DollarSign,
   Percent,
@@ -40,7 +41,8 @@ import {
   Upload,
   History,
   UserMinus,
-  ArrowRight
+  ArrowRight,
+  Trophy
 } from 'lucide-react';
 import { DocumentUploadDialog, DocumentList, LEAD_DOCUMENT_TAGS } from '../components/DocumentUpload';
 import api, { formatCurrency, formatDate, formatDateTime, getRoleLabel, getRoleColor } from '../utils/api';
