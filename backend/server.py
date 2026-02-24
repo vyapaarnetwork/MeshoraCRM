@@ -393,7 +393,7 @@ class LeadResponse(BaseModel):
     customer_email: str
     customer_phone: Optional[str] = None
     customer_company: Optional[str] = None
-    selling_partner_id: Optional[str] = None
+    selling_partner_id: Optional[str] = None  # The winning partner (for backward compatibility)
     selling_partner_name: Optional[str] = None
     sales_associate_id: Optional[str] = None
     sales_associate_name: Optional[str] = None
@@ -416,7 +416,8 @@ class LeadResponse(BaseModel):
     follow_ups: List[FollowUpResponse] = []
     comments: List[CommentResponse] = []
     documents: List[DocumentResponse] = []
-    partner_history: List[PartnerAssignment] = []
+    assigned_partners: List[PartnerAssignment] = []  # All assigned partners (active, won, lost)
+    active_partners_count: int = 0  # Count of currently active partners
     created_by: str
     created_by_name: Optional[str] = None
     created_at: str
