@@ -1224,6 +1224,8 @@ async def create_company(company_data: CompanyCreate, current_user: dict = Depen
         raise HTTPException(status_code=403, detail="Only super admin can create companies")
     
     company_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    
     company_doc = {
         "id": company_id,
         "name": company_data.name,
@@ -1233,11 +1235,32 @@ async def create_company(company_data: CompanyCreate, current_user: dict = Depen
         "contact_email": company_data.contact_email,
         "contact_phone": company_data.contact_phone,
         "subcategory_ids": company_data.subcategory_ids or [],
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": now,
         "is_active": True
     }
     
     await db.companies.insert_one(company_doc)
+    
+    # Create default user for customer companies
+    if company_data.type == "customer" and company_data.default_user_email and company_data.default_user_name:
+        # Check if email already exists
+        existing_user = await db.users.find_one({"email": company_data.default_user_email})
+        if existing_user:
+            raise HTTPException(status_code=400, detail=f"User email {company_data.default_user_email} already exists")
+        
+        user_id = str(uuid.uuid4())
+        user_doc = {
+            "id": user_id,
+            "email": company_data.default_user_email,
+            "password": hash_password(company_data.default_user_password or "customer123"),
+            "name": company_data.default_user_name,
+            "role": UserRole.CUSTOMER.value,
+            "company_id": company_id,
+            "phone": company_data.default_user_phone,
+            "is_active": True,
+            "created_at": now
+        }
+        await db.users.insert_one(user_doc)
     
     # Get subcategory names
     subcategories = []
