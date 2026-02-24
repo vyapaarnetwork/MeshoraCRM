@@ -723,6 +723,50 @@ const LeadDetail = () => {
         tags={documentTags}
         onUploadComplete={handleDocumentUploaded}
       />
+
+      {/* Assign Partner Dialog */}
+      <Dialog open={showAssignPartnerDialog} onOpenChange={setShowAssignPartnerDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5" />
+              Assign Partner to Lead
+            </DialogTitle>
+            <DialogDescription>
+              Select a selling partner to assign to this lead. Multiple partners can work on the same lead concurrently.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Select value={selectedPartnerId} onValueChange={setSelectedPartnerId}>
+              <SelectTrigger data-testid="partner-select">
+                <SelectValue placeholder="Select a partner" />
+              </SelectTrigger>
+              <SelectContent>
+                {partners
+                  .filter(p => !lead?.assigned_partners?.some(ap => ap.partner_id === p.id && ap.status === 'active'))
+                  .map((partner) => (
+                    <SelectItem key={partner.id} value={partner.id}>
+                      {partner.name} - {partner.company_name || 'No Company'}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {lead?.assigned_partners?.filter(p => p.status === 'active').length > 0 && (
+              <p className="text-sm text-muted-foreground mt-3">
+                Currently {lead.assigned_partners.filter(p => p.status === 'active').length} partner(s) actively working on this lead.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAssignPartnerDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAssignPartner} data-testid="confirm-assign-btn">
+              Assign Partner
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
