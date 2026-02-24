@@ -10,6 +10,8 @@ import LeadDetail from './pages/LeadDetail';
 import LeadForm from './pages/LeadForm';
 import LeadImport from './pages/LeadImport';
 import LeadReferral from './pages/LeadReferral';
+import InternalRequests from './pages/InternalRequests';
+import CompanyUsers from './pages/CompanyUsers';
 import Categories from './pages/Categories';
 import Commission from './pages/Commission';
 import Reports from './pages/Reports';
