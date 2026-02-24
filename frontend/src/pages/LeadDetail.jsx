@@ -37,7 +37,10 @@ import {
   Send,
   UserCheck,
   Paperclip,
-  Upload
+  Upload,
+  History,
+  UserMinus,
+  ArrowRight
 } from 'lucide-react';
 import { DocumentUploadDialog, DocumentList, LEAD_DOCUMENT_TAGS } from '../components/DocumentUpload';
 import api, { formatCurrency, formatDate, formatDateTime, getRoleLabel, getRoleColor } from '../utils/api';
