@@ -2805,33 +2805,28 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     new_partner_id = update_data.get('selling_partner_id')
     status_changed = False
     
-    # Track partner history when partner changes
-    if 'selling_partner_id' in update_data and new_partner_id != old_partner_id:
-        partner_history = lead.get('partner_history', [])
+    # Track partner in assigned_partners when selling_partner_id changes
+    if 'selling_partner_id' in update_data and new_partner_id and new_partner_id != old_partner_id:
+        assigned_partners = lead.get('assigned_partners', [])
         
-        # If there was an old partner, mark them as removed in history
-        if old_partner_id:
-            # Find the current assignment in history and mark it as removed
-            for assignment in partner_history:
-                if assignment.get('partner_id') == old_partner_id and not assignment.get('removed_at'):
-                    assignment['removed_at'] = now
-                    assignment['removed_by'] = current_user['id']
+        # Check if this partner is already in assigned_partners
+        existing = next((p for p in assigned_partners if p.get('partner_id') == new_partner_id), None)
         
-        # Add new partner to history
-        if new_partner_id:
+        if not existing:
+            # Add new partner to assigned_partners
             new_partner = await db.users.find_one({"id": new_partner_id}, {"_id": 0})
-            partner_history.append({
+            assigned_partners.append({
                 "partner_id": new_partner_id,
                 "partner_name": new_partner['name'] if new_partner else None,
                 "assigned_at": now,
                 "assigned_by": current_user['id'],
                 "assigned_by_name": current_user['name'],
-                "removed_at": None,
-                "removed_by": None,
+                "status": "active",
+                "won_at": None,
+                "lost_at": None,
                 "notes": f"Assigned by {current_user['name']}"
             })
-        
-        update_data['partner_history'] = partner_history
+            update_data['assigned_partners'] = assigned_partners
     
     if 'selling_partner_id' in update_data and update_data['selling_partner_id']:
         current_status = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0})
