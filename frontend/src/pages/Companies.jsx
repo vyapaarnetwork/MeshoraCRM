@@ -150,7 +150,11 @@ const Companies = () => {
       address: company.address || '',
       contact_email: company.contact_email || '',
       contact_phone: company.contact_phone || '',
-      subcategory_ids: company.subcategory_ids || []
+      subcategory_ids: company.subcategory_ids || [],
+      default_user_name: '',
+      default_user_email: '',
+      default_user_phone: '',
+      default_user_password: ''
     } : {
       name: '',
       type: '',
@@ -158,7 +162,11 @@ const Companies = () => {
       address: '',
       contact_email: '',
       contact_phone: '',
-      subcategory_ids: []
+      subcategory_ids: [],
+      default_user_name: '',
+      default_user_email: '',
+      default_user_phone: '',
+      default_user_password: ''
     });
     setDialogOpen(true);
   };
@@ -169,12 +177,25 @@ const Companies = () => {
       return;
     }
 
+    // Validate default user for new customer companies
+    if (!editingCompany && formData.type === 'customer') {
+      if (!formData.default_user_name || !formData.default_user_email) {
+        toast.error('Please provide default user details for customer company');
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const payload = {
         ...formData,
         vyapaar_commission_percentage: parseFloat(formData.vyapaar_commission_percentage),
-        subcategory_ids: formData.type === 'selling_partner' ? formData.subcategory_ids : []
+        subcategory_ids: formData.type === 'selling_partner' ? formData.subcategory_ids : [],
+        // Include default user fields for customer companies
+        default_user_name: formData.type === 'customer' ? formData.default_user_name : null,
+        default_user_email: formData.type === 'customer' ? formData.default_user_email : null,
+        default_user_phone: formData.type === 'customer' ? formData.default_user_phone : null,
+        default_user_password: formData.type === 'customer' ? (formData.default_user_password || 'customer123') : null
       };
 
       if (editingCompany) {
