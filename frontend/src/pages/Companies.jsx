@@ -52,7 +52,12 @@ const Companies = () => {
     address: '',
     contact_email: '',
     contact_phone: '',
-    subcategory_ids: []
+    subcategory_ids: [],
+    // Default user for customer companies
+    default_user_name: '',
+    default_user_email: '',
+    default_user_phone: '',
+    default_user_password: ''
   });
   const [submitting, setSubmitting] = useState(false);
 
