@@ -161,6 +161,26 @@ const Layout = ({ children }) => {
       });
     }
 
+    // Internal Requests - Selling Partners Only
+    if (isSellingPartner) {
+      items.push({
+        label: 'Internal Requests',
+        icon: ShoppingCart,
+        path: '/internal-requests',
+        roles: ['selling_partner']
+      });
+    }
+
+    // Company Users - Customers Only
+    if (isCustomer) {
+      items.push({
+        label: 'Team Members',
+        icon: UserPlus,
+        path: '/company-users',
+        roles: ['customer']
+      });
+    }
+
     if (isAdmin) {
       items.push(
         { label: 'Users', icon: Users, path: '/users', roles: ['super_admin'] },
