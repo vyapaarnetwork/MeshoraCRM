@@ -62,6 +62,9 @@ const LeadDetail = () => {
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [documentTags, setDocumentTags] = useState(LEAD_DOCUMENT_TAGS);
+  const [showAssignPartnerDialog, setShowAssignPartnerDialog] = useState(false);
+  const [partners, setPartners] = useState([]);
+  const [selectedPartnerId, setSelectedPartnerId] = useState('');
 
   useEffect(() => {
     fetchLead();
