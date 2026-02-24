@@ -34,7 +34,9 @@ import {
   ExternalLink,
   Grid3X3,
   Paperclip,
-  Mail
+  Mail,
+  ShoppingCart,
+  UserPlus
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
