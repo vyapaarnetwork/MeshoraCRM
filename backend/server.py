@@ -1412,6 +1412,72 @@ async def update_company(company_id: str, company_data: CompanyCreate, current_u
         is_active=company.get('is_active', True)
     )
 
+# ==================== PARTNER ↔ SUB-CATEGORY MAPPING ====================
+
+class PartnerSubcategoryToggle(BaseModel):
+    company_id: str
+    subcategory_id: str
+    mapped: bool
+
+@api_router.post("/master/partner-subcategory-toggle")
+async def toggle_partner_subcategory(
+    payload: PartnerSubcategoryToggle,
+    current_user: dict = Depends(get_current_user)
+):
+    """Atomically add or remove a single subcategory_id from a selling-partner
+    company's subcategory_ids list. Admin only."""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can modify partner mappings")
+
+    company = await db.companies.find_one({"id": payload.company_id}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if company.get('type') != 'selling_partner':
+        raise HTTPException(status_code=400, detail="Only selling-partner companies can be mapped to sub-categories")
+
+    subcat = await db.secondary_categories.find_one({"id": payload.subcategory_id}, {"_id": 0})
+    if not subcat:
+        raise HTTPException(status_code=404, detail="Sub-category not found")
+
+    if payload.mapped:
+        await db.companies.update_one(
+            {"id": payload.company_id},
+            {"$addToSet": {"subcategory_ids": payload.subcategory_id}}
+        )
+    else:
+        await db.companies.update_one(
+            {"id": payload.company_id},
+            {"$pull": {"subcategory_ids": payload.subcategory_id}}
+        )
+
+    updated = await db.companies.find_one({"id": payload.company_id}, {"_id": 0})
+    return {
+        "company_id": payload.company_id,
+        "subcategory_id": payload.subcategory_id,
+        "mapped": payload.mapped,
+        "subcategory_ids": updated.get('subcategory_ids', [])
+    }
+
+@api_router.get("/master/partner-mappings")
+async def list_partner_mappings(current_user: dict = Depends(get_current_user)):
+    """Return all selling-partner companies with their current subcategory_ids.
+    Used by the Partner Mappings admin page."""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can view partner mappings")
+
+    companies = await db.companies.find(
+        {"type": "selling_partner", "is_active": True},
+        {"_id": 0, "id": 1, "name": 1, "subcategory_ids": 1}
+    ).to_list(1000)
+    return [
+        {
+            "id": c['id'],
+            "name": c['name'],
+            "subcategory_ids": c.get('subcategory_ids') or []
+        }
+        for c in companies
+    ]
+
 # ==================== MASTER DATA ROUTES ====================
 
 # Lead Status

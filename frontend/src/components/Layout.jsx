@@ -35,6 +35,7 @@ import {
   Grid3X3,
   Paperclip,
   Mail,
+  Network,
   ShoppingCart,
   UserPlus
 } from 'lucide-react';
@@ -186,6 +187,7 @@ const Layout = ({ children }) => {
         { label: 'Users', icon: Users, path: '/users', roles: ['super_admin'] },
         { label: 'Companies', icon: Building2, path: '/companies', roles: ['super_admin'] },
         { label: 'Categories', icon: Tag, path: '/categories', roles: ['super_admin'] },
+        { label: 'Partner Mappings', icon: Network, path: '/partner-mappings', roles: ['super_admin'] },
         { label: 'Commission', icon: Percent, path: '/commission', roles: ['super_admin'] },
         { label: 'Document Tags', icon: Paperclip, path: '/document-tags', roles: ['super_admin'] },
         { label: 'Email Templates', icon: Mail, path: '/email-templates', roles: ['super_admin'] },

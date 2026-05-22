@@ -21,6 +21,7 @@ import Companies from './pages/Companies';
 import Settings from './pages/Settings';
 import DocumentTags from './pages/DocumentTags';
 import EmailTemplates from './pages/EmailTemplates';
+import PartnerMappings from './pages/PartnerMappings';
 import './App.css';
 
 // Protected Route Component
@@ -164,6 +165,12 @@ function AppRoutes() {
       <Route path="/email-templates" element={
         <ProtectedRoute allowedRoles={['super_admin']}>
           <EmailTemplates />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/partner-mappings" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <PartnerMappings />
         </ProtectedRoute>
       } />
 

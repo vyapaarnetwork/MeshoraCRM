@@ -72,7 +72,17 @@ const LeadForm = () => {
         const res = await api.get('/users/selling-partners', {
           params: { subcategory_id: formData.secondary_category_id }
         });
-        setOptions(prev => ({ ...prev, sellingPartners: res.data }));
+        let partners = res.data;
+        // In edit mode, if the current partner isn't in the filtered list
+        // (e.g., the company is no longer mapped to this sub-category),
+        // fetch and append them so the dropdown still shows the selected value.
+        if (formData.selling_partner_id && !partners.some(p => p.id === formData.selling_partner_id)) {
+          try {
+            const userRes = await api.get(`/users/${formData.selling_partner_id}`);
+            partners = [...partners, { ...userRes.data, _unmapped: true }];
+          } catch (_) { /* ignore */ }
+        }
+        setOptions(prev => ({ ...prev, sellingPartners: partners }));
       } catch (e) {
         setOptions(prev => ({ ...prev, sellingPartners: [] }));
       } finally {
@@ -80,6 +90,7 @@ const LeadForm = () => {
       }
     };
     fetchPartnersForSubcategory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.secondary_category_id]);
 
   const fetchOptions = async () => {
@@ -421,6 +432,9 @@ const LeadForm = () => {
                         {options.sellingPartners.map((partner) => (
                           <SelectItem key={partner.id} value={partner.id}>
                             {partner.name} {partner.company_name && `(${partner.company_name})`}
+                            {partner._unmapped && (
+                              <span className="ml-1 text-xs text-amber-600">[not mapped]</span>
+                            )}
                           </SelectItem>
                         ))}
                       </SelectContent>

@@ -68,6 +68,13 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] `GET /api/users/selling-partners?subcategory_id=...` filters by company-to-subcategory mapping
 - [x] `UserResponse.subcategory_ids` now exposed (inherited from selling-partner's company)
 - [x] Auto-clears downstream selections when upstream changes; SP dropdown disabled until sub-category picked
+- [x] Edit Lead: existing partner remains visible even if company is no longer mapped (`[not mapped]` hint)
+
+### Phase 8 - Partner Mappings Admin Utility (Dec 2025)
+- [x] New admin page `/partner-mappings` to bulk-toggle selling-partner companies against sub-categories
+- [x] `GET /api/master/partner-mappings` lists all SP companies + current subcategory_ids
+- [x] `POST /api/master/partner-subcategory-toggle` atomic add/remove ($addToSet / $pull)
+- [x] Sidebar nav entry added (admin only)
 
 ## Key API Endpoints
 
