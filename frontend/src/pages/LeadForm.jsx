@@ -444,7 +444,10 @@ const LeadForm = () => {
                     </Select>
                     {formData.secondary_category_id && !loadingPartners && options.sellingPartners.length === 0 && (
                       <p className="text-xs text-muted-foreground" data-testid="no-partners-msg">
-                        No active selling partners are mapped to this sub-category. Map a partner's company to this sub-category first.
+                        No active selling partners for this sub-category. Either no companies are mapped to it,
+                        or the mapped companies have no active selling-partner users yet. Visit{' '}
+                        <a href="/partner-mappings" className="text-primary underline">Partner Mappings</a> to map
+                        a company, then click "Add User" if that company has no users.
                       </p>
                     )}
                     {!isEditing && !formData.selling_partner_id && (

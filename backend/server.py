@@ -1275,20 +1275,24 @@ async def create_company(company_data: CompanyCreate, current_user: dict = Depen
     
     await db.companies.insert_one(company_doc)
     
-    # Create default user for customer companies
-    if company_data.type == "customer" and company_data.default_user_email and company_data.default_user_name:
+    # Create default user for customer or selling-partner companies
+    if company_data.type in ("customer", "selling_partner") and company_data.default_user_email and company_data.default_user_name:
         # Check if email already exists
         existing_user = await db.users.find_one({"email": company_data.default_user_email})
         if existing_user:
             raise HTTPException(status_code=400, detail=f"User email {company_data.default_user_email} already exists")
         
+        default_role = (UserRole.SELLING_PARTNER if company_data.type == "selling_partner" else UserRole.CUSTOMER).value
+        default_pwd = company_data.default_user_password or (
+            "partner123" if company_data.type == "selling_partner" else "customer123"
+        )
         user_id = str(uuid.uuid4())
         user_doc = {
             "id": user_id,
             "email": company_data.default_user_email,
-            "password": hash_password(company_data.default_user_password or "customer123"),
+            "password": hash_password(default_pwd),
             "name": company_data.default_user_name,
-            "role": UserRole.CUSTOMER.value,
+            "role": default_role,
             "company_id": company_id,
             "phone": company_data.default_user_phone,
             "is_active": True,
@@ -1460,8 +1464,8 @@ async def toggle_partner_subcategory(
 
 @api_router.get("/master/partner-mappings")
 async def list_partner_mappings(current_user: dict = Depends(get_current_user)):
-    """Return all selling-partner companies with their current subcategory_ids.
-    Used by the Partner Mappings admin page."""
+    """Return all selling-partner companies with their current subcategory_ids and
+    the count of active selling-partner users. Used by the Partner Mappings admin page."""
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
         raise HTTPException(status_code=403, detail="Only super admin can view partner mappings")
 
@@ -1469,11 +1473,28 @@ async def list_partner_mappings(current_user: dict = Depends(get_current_user)):
         {"type": "selling_partner", "is_active": True},
         {"_id": 0, "id": 1, "name": 1, "subcategory_ids": 1}
     ).to_list(1000)
+
+    # Bulk count active SP users per company (avoid N+1)
+    company_ids = [c['id'] for c in companies]
+    user_counts = {}
+    if company_ids:
+        pipeline = [
+            {"$match": {
+                "company_id": {"$in": company_ids},
+                "role": UserRole.SELLING_PARTNER.value,
+                "is_active": True
+            }},
+            {"$group": {"_id": "$company_id", "count": {"$sum": 1}}}
+        ]
+        async for row in db.users.aggregate(pipeline):
+            user_counts[row['_id']] = row['count']
+
     return [
         {
             "id": c['id'],
             "name": c['name'],
-            "subcategory_ids": c.get('subcategory_ids') or []
+            "subcategory_ids": c.get('subcategory_ids') or [],
+            "active_user_count": user_counts.get(c['id'], 0)
         }
         for c in companies
     ]

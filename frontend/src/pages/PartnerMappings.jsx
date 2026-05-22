@@ -3,10 +3,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
 import { Checkbox } from '../components/ui/checkbox';
 import { Skeleton } from '../components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '../components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -14,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { Network, Search, Building2, Grid3X3, List } from 'lucide-react';
+import { Network, Search, Building2, Grid3X3, List, UserPlus, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../utils/api';
 import { toast } from 'sonner';
 
@@ -24,6 +28,7 @@ const PartnerMappings = () => {
   const [secondaryCategories, setSecondaryCategories] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [pending, setPending] = useState(new Set());
+  const [userDialogCompany, setUserDialogCompany] = useState(null);
 
   useEffect(() => {
     fetchAll();
@@ -44,6 +49,13 @@ const PartnerMappings = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const refreshCompanies = async () => {
+    try {
+      const res = await api.get('/master/partner-mappings');
+      setCompanies(res.data);
+    } catch (e) { /* ignore */ }
   };
 
   // Shared toggle handler used by both views
@@ -116,6 +128,7 @@ const PartnerMappings = () => {
             companies={companies}
             pending={pending}
             onToggle={toggleMapping}
+            onAddUser={(c) => setUserDialogCompany(c)}
           />
         </TabsContent>
 
@@ -126,15 +139,26 @@ const PartnerMappings = () => {
             companies={companies}
             pending={pending}
             onToggle={toggleMapping}
+            onAddUser={(c) => setUserDialogCompany(c)}
           />
         </TabsContent>
       </Tabs>
+
+      <AddPartnerUserDialog
+        company={userDialogCompany}
+        open={!!userDialogCompany}
+        onClose={() => setUserDialogCompany(null)}
+        onSuccess={async () => {
+          setUserDialogCompany(null);
+          await refreshCompanies();
+        }}
+      />
     </div>
   );
 };
 
 /* -------------------- By Sub-category view -------------------- */
-const BySubcategoryView = ({ primaryCategories, secondaryCategories, companies, pending, onToggle }) => {
+const BySubcategoryView = ({ primaryCategories, secondaryCategories, companies, pending, onToggle, onAddUser }) => {
   const [selectedPrimaryId, setSelectedPrimaryId] = useState('');
   const [selectedSubId, setSelectedSubId] = useState('');
   const [search, setSearch] = useState('');
@@ -246,6 +270,7 @@ const BySubcategoryView = ({ primaryCategories, secondaryCategories, companies, 
                   const mapped = isMapped(c);
                   const key = `${c.id}:${selectedSubId}`;
                   const isPending = pending.has(key);
+                  const noUsers = !c.active_user_count || c.active_user_count === 0;
                   return (
                     <div
                       key={c.id}
@@ -255,13 +280,31 @@ const BySubcategoryView = ({ primaryCategories, secondaryCategories, companies, 
                       <div className="flex items-center gap-3">
                         <Building2 className="w-4 h-4 text-muted-foreground" />
                         <div>
-                          <p className="font-medium">{c.name}</p>
+                          <p className="font-medium flex items-center gap-2">
+                            {c.name}
+                            {noUsers && (
+                              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 text-xs gap-1">
+                                <AlertTriangle className="w-3 h-3" /> No users
+                              </Badge>
+                            )}
+                          </p>
                           <p className="text-xs text-muted-foreground">
-                            Mapped to {(c.subcategory_ids || []).length} sub-categories total
+                            {c.active_user_count || 0} active user{c.active_user_count === 1 ? '' : 's'} · Mapped to {(c.subcategory_ids || []).length} sub-categories
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
+                        {noUsers && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1"
+                            onClick={() => onAddUser(c)}
+                            data-testid={`add-user-btn-${c.id}`}
+                          >
+                            <UserPlus className="w-3.5 h-3.5" /> Add User
+                          </Button>
+                        )}
                         {mapped && <Badge className="bg-green-100 text-green-700 border-green-200">Mapped</Badge>}
                         <Switch
                           checked={mapped}
@@ -289,7 +332,7 @@ const BySubcategoryView = ({ primaryCategories, secondaryCategories, companies, 
 };
 
 /* -------------------- Matrix view -------------------- */
-const MatrixView = ({ primaryCategories, secondaryCategories, companies, pending, onToggle }) => {
+const MatrixView = ({ primaryCategories, secondaryCategories, companies, pending, onToggle, onAddUser }) => {
   const [primaryFilter, setPrimaryFilter] = useState('');
   const [companySearch, setCompanySearch] = useState('');
 
@@ -432,10 +475,27 @@ const MatrixView = ({ primaryCategories, secondaryCategories, companies, pending
                     <td className="sticky left-0 z-10 px-3 py-2 border-r bg-inherit">
                       <div className="flex items-center gap-2">
                         <Building2 className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <div className="min-w-0">
-                          <div className="font-medium truncate">{c.name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {companyMapsCount(c)} mapped
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium truncate flex items-center gap-1.5">
+                            {c.name}
+                            {(!c.active_user_count) && (
+                              <span title="No active users" className="text-amber-600 flex-shrink-0">
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground flex items-center gap-2">
+                            <span>{c.active_user_count || 0} users · {companyMapsCount(c)} mapped</span>
+                            {(!c.active_user_count) && (
+                              <button
+                                type="button"
+                                onClick={() => onAddUser(c)}
+                                className="text-amber-700 underline hover:no-underline"
+                                data-testid={`matrix-add-user-${c.id}`}
+                              >
+                                Add user
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -491,5 +551,102 @@ const PartnerMappingsSkeleton = () => (
     </Card>
   </div>
 );
+
+/* -------------------- Add Partner User Dialog -------------------- */
+const AddPartnerUserDialog = ({ company, open, onClose, onSuccess }) => {
+  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '' });
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) setForm({ name: '', email: '', phone: '', password: '' });
+  }, [open, company]);
+
+  const handleSubmit = async () => {
+    if (!form.name.trim() || !form.email.trim()) {
+      toast.error('Name and email are required');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.post('/users', {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        password: form.password || 'partner123',
+        role: 'selling_partner',
+        company_id: company.id,
+        phone: form.phone || null,
+      });
+      toast.success(`User created for ${company.name}`);
+      onSuccess();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to create user');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!company) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md" data-testid="add-user-dialog">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserPlus className="w-5 h-5 text-primary" />
+            Add Selling Partner User
+          </DialogTitle>
+          <DialogDescription>
+            Create a selling-partner user under <strong>{company.name}</strong>. Once added, the
+            company will appear in lead-assignment dropdowns for its mapped sub-categories.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1.5">
+            <Label>Name *</Label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="Full name"
+              data-testid="dialog-user-name"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Email *</Label>
+            <Input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              placeholder="user@partner.com"
+              data-testid="dialog-user-email"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Phone</Label>
+            <Input
+              value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              placeholder="+91 98765 43210"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Password</Label>
+            <Input
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              placeholder="Default: partner123"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={submitting} data-testid="dialog-submit-user">
+            {submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Creating...</>) : 'Create User'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 export default PartnerMappings;

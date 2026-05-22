@@ -177,25 +177,27 @@ const Companies = () => {
       return;
     }
 
-    // Validate default user for new customer companies
-    if (!editingCompany && formData.type === 'customer') {
+    // Validate default user for new customer or selling-partner companies
+    if (!editingCompany && (formData.type === 'customer' || formData.type === 'selling_partner')) {
       if (!formData.default_user_name || !formData.default_user_email) {
-        toast.error('Please provide default user details for customer company');
+        toast.error(`Please provide default user details for ${formData.type === 'customer' ? 'customer' : 'selling partner'} company`);
         return;
       }
     }
 
     setSubmitting(true);
     try {
+      const includeUser = formData.type === 'customer' || formData.type === 'selling_partner';
+      const defaultPwd = formData.type === 'selling_partner' ? 'partner123' : 'customer123';
       const payload = {
         ...formData,
         vyapaar_commission_percentage: parseFloat(formData.vyapaar_commission_percentage),
         subcategory_ids: formData.type === 'selling_partner' ? formData.subcategory_ids : [],
-        // Include default user fields for customer companies
-        default_user_name: formData.type === 'customer' ? formData.default_user_name : null,
-        default_user_email: formData.type === 'customer' ? formData.default_user_email : null,
-        default_user_phone: formData.type === 'customer' ? formData.default_user_phone : null,
-        default_user_password: formData.type === 'customer' ? (formData.default_user_password || 'customer123') : null
+        // Include default user fields for customer and selling-partner companies
+        default_user_name: includeUser ? formData.default_user_name : null,
+        default_user_email: includeUser ? formData.default_user_email : null,
+        default_user_phone: includeUser ? formData.default_user_phone : null,
+        default_user_password: includeUser ? (formData.default_user_password || defaultPwd) : null
       };
 
       if (editingCompany) {
@@ -599,15 +601,17 @@ const Companies = () => {
               />
             </div>
 
-            {/* Default User Section for Customer Companies */}
-            {formData.type === 'customer' && !editingCompany && (
+            {/* Default User Section for Customer / Selling-Partner Companies */}
+            {(formData.type === 'customer' || formData.type === 'selling_partner') && !editingCompany && (
               <div className="border-t pt-4 mt-4">
                 <p className="text-sm font-medium mb-3 flex items-center gap-2">
                   <UserPlus className="w-4 h-4" />
-                  Default Customer User *
+                  Default {formData.type === 'selling_partner' ? 'Selling Partner' : 'Customer'} User *
                 </p>
                 <p className="text-xs text-muted-foreground mb-3">
-                  This user will be created with Customer role and can add more team members
+                  {formData.type === 'selling_partner'
+                    ? 'This user will be created with Selling Partner role. Without it, the company will not appear in lead assignment dropdowns.'
+                    : 'This user will be created with Customer role and can add more team members'}
                 </p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -643,7 +647,7 @@ const Companies = () => {
                       type="password"
                       value={formData.default_user_password}
                       onChange={(e) => setFormData({ ...formData, default_user_password: e.target.value })}
-                      placeholder="Default: customer123"
+                      placeholder={`Default: ${formData.type === 'selling_partner' ? 'partner123' : 'customer123'}`}
                     />
                   </div>
                 </div>

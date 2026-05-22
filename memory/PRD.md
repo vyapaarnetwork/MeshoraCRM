@@ -74,9 +74,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] New admin page `/partner-mappings` with two views:
   - **By Sub-category** (default): pick a sub-category, toggle each partner company
   - **Matrix**: companies × sub-categories grid, grouped by primary category, sticky headers, per-column bulk map/clear, primary-category & company-search filters
-- [x] `GET /api/master/partner-mappings` lists all SP companies + current subcategory_ids
+- [x] `GET /api/master/partner-mappings` lists all SP companies + current subcategory_ids + `active_user_count`
 - [x] `POST /api/master/partner-subcategory-toggle` atomic add/remove ($addToSet / $pull)
 - [x] Sidebar nav entry added (admin only)
+
+### Phase 9 - SP "No Users" Gap Closure (Dec 2025)
+- [x] **Auto-create default Selling Partner user** when creating a selling-partner company (mirrors customer flow). Companies.jsx now shows "Default Selling Partner User" section + validation; `create_company` backend extended.
+- [x] **"⚠ No users" badge** on Partner Mappings (list + matrix) for SP companies with 0 active SP users — they would never appear in lead dropdowns.
+- [x] **Inline "Add User" dialog** in Partner Mappings rows + matrix cells; creates an SP user under that company via `POST /api/users` and refreshes counts.
+- [x] **LeadForm "No partners" copy clarified** — explicitly mentions either no company mapping OR no active SP user on the mapped companies, with a deep link to `/partner-mappings`.
 
 ## Key API Endpoints
 
