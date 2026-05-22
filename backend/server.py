@@ -99,6 +99,7 @@ class UserResponse(BaseModel):
     phone: Optional[str] = None
     is_active: bool
     created_at: str
+    subcategory_ids: Optional[List[str]] = None  # Inherited from company (selling partners)
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -899,17 +900,37 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
 
 # NOTE: These specific routes must be defined BEFORE /users/{user_id} to avoid route conflicts
 @api_router.get("/users/selling-partners", response_model=List[UserResponse])
-async def list_selling_partners(current_user: dict = Depends(get_current_user)):
-    users = await db.users.find({"role": UserRole.SELLING_PARTNER.value}, {"_id": 0, "password": 0}).to_list(1000)
-    
+async def list_selling_partners(
+    subcategory_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """List selling partners. If subcategory_id is provided, only return partners
+    whose company is mapped to that subcategory."""
+    users = await db.users.find(
+        {"role": UserRole.SELLING_PARTNER.value, "is_active": True},
+        {"_id": 0, "password": 0}
+    ).to_list(1000)
+
+    # Bulk fetch companies for all selling partners (avoid N+1)
+    company_ids = list({u['company_id'] for u in users if u.get('company_id')})
+    companies_map = {}
+    if company_ids:
+        companies = await db.companies.find(
+            {"id": {"$in": company_ids}},
+            {"_id": 0}
+        ).to_list(1000)
+        companies_map = {c['id']: c for c in companies}
+
     result = []
     for user in users:
-        company_name = None
-        if user.get('company_id'):
-            company = await db.companies.find_one({"id": user['company_id']}, {"_id": 0})
-            if company:
-                company_name = company['name']
-        
+        company = companies_map.get(user.get('company_id')) if user.get('company_id') else None
+        company_name = company['name'] if company else None
+        subcategory_ids = company.get('subcategory_ids', []) if company else []
+
+        # Filter by subcategory if requested
+        if subcategory_id and subcategory_id not in (subcategory_ids or []):
+            continue
+
         result.append(UserResponse(
             id=user['id'],
             email=user['email'],
@@ -919,9 +940,10 @@ async def list_selling_partners(current_user: dict = Depends(get_current_user)):
             company_name=company_name,
             phone=user.get('phone'),
             is_active=user.get('is_active', True),
-            created_at=user['created_at']
+            created_at=user['created_at'],
+            subcategory_ids=subcategory_ids or None
         ))
-    
+
     return result
 
 @api_router.get("/users/sales-associates", response_model=List[UserResponse])

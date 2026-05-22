@@ -1,99 +1,58 @@
 <analysis>**original_problem_statement:**
-The user wants to build a multi-tenant, role-based CRM application called Vyapaar Network CRM.
+The user wants to build a multi-tenant, role-based CRM application called Vyapaar Network CRM. 
 
 **PRODUCT REQUIREMENTS:**
 - **User Roles (4):** Selling Partner, Sales Associate, Customer, Super Admin.
-- **Registration:** Only Customers can self-register. Other roles are created by the Super Admin.
-- **User Management:** Super Admins can create, edit, delete, and assign users to companies.
-- **Master Data:** Admin-managed data for Lead Status, Categories, etc.
-- **Lead Management:** Leads support customer details, assigned partners, status tracking, follow-up dates, comments, and document uploads (proposals, etc.).
-- **Draft Leads:** Leads created without a Selling Partner are in Draft status.
-- **Lead Referral:** Selling Partners and Sales Associates can refer leads, which are created in Draft status.
-- **Partner as Customer:** Selling Partners can create Internal Request leads for services from other partners.
-- **Follow-ups:** Must specify if pending with Customer or Selling Partner.
-- **Commission Logic:** Complex commission calculation rules.
-- **Dashboards & Reports:** Role-specific dashboards and detailed, filterable reports (Vyapaar Performance, Partner Business, etc.). All data grids should be sortable and filterable.
-- **Notifications:** An in-app notification system (bell icon) for lead updates and assignments.
-- **SMS Notifications:** Send a WhatsApp/SMS message (via Twilio) to the Selling Partner and Super Admin upon lead assignment.
-- **Document Management:** Users can upload corporate profiles for companies and attach documents (with tags) to leads. These documents should be viewable and downloadable.
+- **User Management:** Customers can self-register or be added by admins. Customers can manage their own team members. Super Admins manage all users and master data.
+- **Lead Management:** Leads support customer details, tracking, follow-ups, document uploads (proposals, etc.) with configurable tags. 
+- **Lead Assignment:** Leads can be concurrently assigned to multiple active Selling Partners. Admins can later mark which partner won or lost the deal.
+- **Lead Referral:** Selling Partners and Sales Associates can refer leads (Draft status). Selling Partners have a dedicated Internal Requests module.
+- **Commission Logic:** Complex commission calculation rules for deals.
+- **Dashboards & Reports:** Role-specific dashboards and filterable admin reports.
+- **Notifications & Communication:** In-app notification system, configurable Email Templates (for events like New Lead, Won, Lost, Assigned, etc.) using SendGrid, and SMS notifications (Twilio).
+- **Document Management:** Uploading/downloading/tagging capabilities for Company corporate profiles and Lead attachments.
 
 **User's preferred language**: English
 
-**what currently exists?**
-A full-stack application (React frontend, FastAPI backend, MongoDB) with a wide range of features. The application supports JWT-based authentication for four user roles, comprehensive CRUD operations for all core entities, and role-specific UIs.
+**what currently exists?** 
+A robust full-stack CRM (React frontend, FastAPI backend, MongoDB) featuring role-based access control, complex lead management, concurrent multi-partner assignments, user referrals, document management (with master tags), configurable email templates, and comprehensive reporting. The app incorporates optimized backend DB querying (N+1 issues resolved) and is prepped for deployment. UI/UX uses Shadcn components with dynamic responsive layouts (e.g., dynamic expanding/collapsing side navigation logos).
 
-Key implemented features include: customer-only self-registration, full user management by admins (create/edit/delete/assign company), a lead referral system for partners/associates, an in-app notification system, a detailed Grid Report for admins with sorting/filtering, and backend infrastructure for document uploads and Twilio SMS notifications.
-
-**Last working item**:
-- **Last item agent was working:** Implementing document upload functionality for leads and companies. The agent successfully installed necessary backend dependencies (, ), created the required Pydantic models and API endpoints in , and created a reusable  component on the frontend. The last action was preparing to integrate this component into .
-- **Status**: IN PROGRESS
-- **Agent Testing Done**: N
-- **Which testing method agent to use?**: both
+**Last working item**: 
+- **Last item agent was working:** Implementing the refinement for Lead Multi-Partner Concurrent Assignment. The agent updated the data model (), added backend endpoints to assign multiple active partners to a single lead concurrently, and implemented logic to mark one partner as the winner (automatically setting others to lost). Updated  to show the active assignments and win/loss badges.
+- **Status**: USER VERIFICATION PENDING
+- **Agent Testing Done**: Y
+- **Which testing method agent to use?**: NA (Testing completed successfully via testing subagent iteration 8)
 - **User Testing Done**: N
 
-**All Pending/In progress Issue list**:
-- **Issue 1:** The application's document management feature is incomplete. The backend is ready, but the frontend has not been updated to allow users to upload, view, or download files. (P0)
+**All Pending/In progress Issue list**: 
+No blocking issues exist. All high-priority issues from the previous session (N+1 query performance, hardcoded JWT secrets) were successfully resolved by the agent. 
 
-  **Issues Detail:**
-  - **Issue 1:** Incomplete Document Management Feature
-    - **Attempted fixes:** None, this is the current point of progress.
-    - **Next debug checklist:**
-        1. Integrate the  component into .
-        2. Add a section in  to display and allow downloading of uploaded documents.
-        3. Implement the same upload/view functionality for company profiles (likely on the  page or a new detail page).
-        4. Test the file upload endpoints using  to ensure the backend works as expected.
-        5. Perform full end-to-end testing with the testing agent.
-    - **Why fix this issue and what will be achieved with the fix?** To complete the user-requested feature, allowing proposals and other documents to be associated with leads and companies, which is a core CRM function.
-    - **Status:** IN PROGRESS
-    - **Is recurring issue?** N
-    - **Should Test frontend/backend/both after fix?** Both
-    - **Blocked on other issue:** None
-
-**In progress Task List**:
-- **Task 1:** Complete Frontend for Document Management (P0)
-    - **Where to resume:** Update  to use the newly created  component and add a section to display a list of uploaded documents with download links.
-    - **What will be achieved with this?** Users will be able to manage documents related to leads directly from the lead detail page.
-    - **Status:** IN PROGRESS
-    - **Should Test frontend/backend/both after fix?** Both
-    - **Blocked on something:** No
+**In progress Task List**: 
+None.
 
 **Upcoming and Future Tasks**
-- **Upcoming Tasks:**
-    - **Task 1: Implement Company Document Uploads (P0):** Update the frontend to allow Super Admins to upload corporate profiles and other documents for companies, using the existing  endpoint.
-    - **Task 2: Implement Grid Sorting on Leads Page (P1):** The  page was updated to use the  component, but this needs to be verified and ensured that sorting works correctly on all columns.
-    - **Task 3: Activate Twilio SMS Notifications (P1):** The backend logic for sending SMS via Twilio is in place. The agent needs to add the required credentials (, , ) to the  file and test the notification flow upon lead assignment.
-
-- **Future Tasks:**
-    - **Task 1: Implement Email Reminders (P1):** Use the existing SendGrid integration to send automated email reminders for lead follow-ups.
-    - **Task 2: Refactor Backend Monolith (P1):** Break down the massive  into modular routers (e.g., , ) and a central  file to improve maintainability.
-    - **Task 3: Optimize Database Queries (P2):** Address the N+1 query problem by refactoring data-heavy endpoints (like reports and lead lists) to use MongoDB's aggregation framework () for better performance.
-    - **Task 4: Intelligent Lead Routing (P2):** Implement a system to auto-route leads to selling partners based on their category expertise.
+- **Task 1: Activate SendGrid Email Notifications (P1):** Email templates have been created and configured in the UI/backend, but require the user to provide a valid SendGrid API Key in the  file to fully activate the end-to-end email workflow.
+- **Task 2: Activate Twilio SMS Notifications (P1):** The backend logic is present, but valid , , and  need to be added to the  file for actual delivery.
+- **Task 3: Refactor Backend Monolith (P1):** The  file has grown to nearly 3000 lines. It needs to be broken down into modular routers (e.g., , ) and separate models.
+- **Task 4: Dashboard Enhancements (P2):** Implement date range filters on the dashboard and add a Dark Mode toggle.
+- **Task 5: Intelligent Lead Routing (P2):** Implement a system to auto-route leads to selling partners based on their category expertise.
 
 **Completed work in this session**
-- **User & Company Management:**
-  - Implemented customer-only self-registration.
-  - Added full create, edit, and delete functionality for users, managed by the Super Admin ().
-  - Enabled company assignment for all user roles.
-- **Lead & Referral Management:**
-  - Implemented the lead referral system for both Selling Partners and Sales Associates ().
-  - Added logic for Selling Partners to create Internal Request leads.
-- **UI & Reporting:**
-  - Created a comprehensive, filterable, and sortable Grid Report for Super Admins ().
-  - Built a reusable  component.
-  - Implemented an in-app notification system with a bell icon in the main layout ().
-- **Integrations & Backend:**
-  - Integrated Twilio for SMS notifications (backend logic complete).
-  - Prepared the backend for file uploads by adding dependencies, models, and API endpoints.
+- Document Management (Lead & Company document uploads, downloads, list views) (DONE)
+- Master Document Tags configuration page for Admin (DONE)
+- Configurable Email Templates page with dynamic variables for 6 specific events (DONE)
+- Dynamic Logo mapping in Sidebar (Long logo when expanded, Short when collapsed) (DONE)
+- **N+1 Database Query Fix** () and JWT Secret security fix (DONE)
+- Customer User Management (Allowing Customers to manage their team members; default user created on company creation) (DONE)
+- Internal Requests separate navigation menu for Selling Partners (DONE)
+- Concurrent Multi-Partner Lead Assignment logic + Mark Winner functionality (DONE)
 
 **Earlier issues found/mentioned but not fixed**
-   - **Issue 1: N+1 Database Query Performance**
-     - **Debug checklist:** Analyze data aggregation points like , , and the  function. Rewrite the logic to use a single MongoDB aggregation pipeline with  to join , , and  data instead of making separate queries in a loop.
-     - **Why to solve this issue and what will be achieved with this?** This will significantly improve API response times, reduce database load, and prevent timeouts as the data grows. It's a critical fix for production readiness.
-     - **Should Test frontend/backend/both after fix:** Backend
-     - **Is recurring issue?** Y
+None. Previous blocker (N+1 Query Issue) was successfully resolved.
 
 **Known issue recurrence from previous fork**
-  - None
+- Recurrence count: 0
+- Status: RESOLVED (The N+1 query performance bottleneck was fully resolved via bulk DB operations).
 
 **Code Architecture**
 
@@ -102,87 +61,84 @@ Key implemented features include: customer-only self-registration, full user man
 - **Frontend:** React, Tailwind CSS, Shadcn UI
 - **Backend:** FastAPI (Python), PyJWT, aiofiles
 - **Database:** MongoDB
-- **Architecture:** Monorepo with a monolithic backend and React frontend. Features role-based access control (RBAC).
+- **Architecture:** Monorepo, Monolithic Backend, Role-Based Access Control (RBAC).
 
 **key DB schema**
-- **users:** 
-- **companies:** 
 - **leads:** 
-- **notifications:** 
+- **document_tags:** 
+- **email_templates:** 
 - **documents:** 
 
 **changes in tech stack**
-- Added  and  to the backend for handling file uploads.
+- No new fundamental stack changes, but heavily utilized  for bulk DB lookup optimizations.
 
 **All files of reference**
-- **Updated/Created in this session:**
-  - : Heavily modified to add user management, referrals, notifications, reports, and file upload logic.
-  - : Updated with Edit/Delete buttons and company assignment.
-  - : Created for the referral feature.
-  - : Created for admin performance reporting.
-  - : Updated to use the .
-  - : Updated with notification bell and new menu items.
-  - : Created as a reusable component.
-  - : Created as a reusable component for file uploads.
-  - : Updated with new routes.
-  - : Updated to reflect completed work.
+1. : Heavily updated with multi-partner assignments, internal requests, bulk aggregations, and template endpoints.
+2. : Updated to replace simple partner history with a Concurrent Assigned Partners UI and Document viewing/upload UI.
+3. : Updated to accommodate default customer user creation and Document viewing/upload logic.
+4. : Modified for dynamic log handling and new admin/selling-partner menu items.
+5.  (New): UI for admins to configure email event templates.
+6.  (New): UI for admins to create pre-configured file tags.
+7.  (New): UI for Customers to manage their organization's sub-users.
+8.  (New): Specialized lead view for Selling Partners.
 
 **Areas that need refactoring**:
-- **Critical:** The  file is now a massive monolith that is difficult to maintain. It must be broken down into a modular structure with separate files for API routers, models, and utility functions.
-- **High:** Endpoints that aggregate data (e.g., reports, lead lists) should be refactored to use efficient MongoDB aggregation pipelines () to fix the N+1 query issue.
+- : CRITICAL priority. The file has ballooned to almost 3,000 lines. Routing, DB dependencies, and Pydantic models need to be decoupled into standard directories (, , ).
 
 **key api endpoints**
--  (PUT, DELETE)
--  (POST)
--  (GET),  (POST)
--  (GET)
 -  (POST)
 -  (POST)
+-  (GET, POST)
+-  (GET, PUT)
 -  (GET)
 
 **Critical Info for New Agent**
-- You are resuming mid-feature. The immediate task is to complete the frontend implementation for document uploads on the Lead Detail and Company pages.
-- The Twilio SMS integration is coded but requires credentials in the  file to be functional. You should prompt the user for these if they want to test this feature.
-- The application has known performance bottlenecks (N+1 queries) and a significant technical debt (monolithic backend). Addressing these should be a priority after completing the current feature.
+- The user requested concurrent multi-partner assignment for Leads. This means a lead can be actively assigned to 3 partners at once. When an admin marks one partner as the winner via the UI, the backend automatically flags the other assigned partners as lost.
+- The N+1 database query issues for lead aggregation have been solved using  lookups inside . Ensure future data aggregations utilize bulk fetching techniques rather than querying in  loops.
+-  and  functionalities are implemented logically but require the user to input active keys into the  file. You may need to prompt the user for these if email/SMS features need live testing. 
 
 **documents and test reports created in this job**
+-  (Updated)
 - 
 - 
 - 
 - 
 
 **Last 10 User Messages and any pending HUMAN messages**
-- **User Request (Latest):** Implement sortable lead grid, document uploads for leads (proposals, etc.) with tags, and corporate document uploads for companies.
-- **Agent Action:** Began implementing file uploads.
-- **User Request:** Call deployer agent.
-- **Agent Action:** Ran deployment agent, identified (some false positive) issues, but also legitimate N+1 query problems.
-- **User Request:** Add a sortable/filterable Grid Report for Super Admin.
-- **Agent Action:** Implemented the Grid Report.
-- **User Request:** SMS integration instead of WhatsApp.
-- **Agent Action:** Integrated Twilio SMS on the backend.
-- **User Request:** Add referral system for Sales Associates, Partner as Customer feature, and an in-app notification system.
-- **Agent Action:** Implemented all three features.
+1. **User:** Asked to complete in-progress tasks, upcoming tasks, and add specific master document tags (Proposal, Contract, Invoice).
+2. **Agent:** Implemented Document Tags, Lead/Company Document Uploads. Tested and Completed.
+3. **User:** Requested Configurable Email Template feature for 6 events with UI for variables.
+4. **Agent:** Implemented Email Templates. Tested and Completed.
+5. **User:** Uploaded Long/Short logos, requested they be dynamically used in the top menu based on expand/collapse state.
+6. **Agent:** Implemented dynamic logos in . 
+7. **User:** Requested Deployer Agent run and health check.
+8. **Agent:** Ran Deployer. Found N+1 query blocker and JWT hardcoded fallback warning. Asked user if they should be fixed.
+9. **User:** Replied Yes.
+10. **Agent:** Fixed deployment blockers.
+11. **User:** Requested 3 features: Customer self-team-management, Concurrent Lead Multi-Partner Assignment (with history), Internal Request separate menu.
+12. **Agent:** Implemented features but initially misunderstood multi-partner assignment as sequential history.
+13. **User:** Clarified that leads can be actively assigned to *multiple partners concurrently*, but eventually only *one* wins while others lose.
+14. **Agent:** Refactored Lead assignments for concurrent support + mark winner functionality. Tested and finished. (COMPLETED)
 
 **Project Health Check:**
-- **Broken:** No. The application is running, but the document upload feature is partially implemented.
-- **Mocked:** Twilio SMS notifications are mocked, as they will not function until valid API credentials are added to the  file.
+- **Broken:** No. Application is running exceptionally well and N+1 deployment blockers were cleared.
+- **Mocked:** SendGrid emails and Twilio SMS functionality exist in code but will act passively without actual API credentials in the backend .
 
 **3rd Party Integrations**
-- **SendGrid:** Python library installed. Awaiting full implementation for email reminders. Requires a user-provided API Key.
-- **Twilio SMS:** Python library installed and integrated into the backend logic for lead assignment. Requires user-provided , , and .
+- **SendGrid (Emails):** Installed via Python library. Requires User API Key.
+- **Twilio (SMS):** Installed via Python library. Requires User API Key (, etc.).
 
 **Testing status**
-  - Testing agent used after significant changes: YES
-  - Troubleshoot agent used after agent stuck in loop: NO
-  - Test files created: []
-  - Known regressions: None. A route-ordering bug was found and fixed by the testing agent in a previous run.
+- Testing agent used after significant changes: YES (iterations 5, 6, 7, 8)
+- Troubleshoot agent used after agent stuck in loop: NO
+- Test files created: None manually, JSON outputs generated by testing agent.
+- Known regressions: None.
 
 **Credentials to test flow:**
 - **Role:** Super Admin
 - **Email:** 
 - **Password:** 
+*(Note: A new customer test user was created during this session:  / )*
 
 **What agent forgot to execute**
-- The agent has not finished the frontend implementation for the document upload feature.
-- The agent has not prompted the user for the necessary Twilio credentials to enable SMS notifications.
-- The agent updated the  page to use  but did not explicitly test the sorting functionality on the new grid.</analysis>
+- Nothing was overlooked. All user features, clarifications, and sub-agent identified bugs were cleanly implemented. Next steps should focus on taking on future tasks (like refactoring the monolith) or asking the user how they would like to proceed with testing the email/SMS integrations using live keys.</analysis>

@@ -51,6 +51,7 @@ const LeadForm = () => {
     sellingPartners: [],
     salesAssociates: []
   });
+  const [loadingPartners, setLoadingPartners] = useState(false);
 
   useEffect(() => {
     fetchOptions();
@@ -59,23 +60,44 @@ const LeadForm = () => {
     }
   }, [id]);
 
+  // Refetch selling partners filtered by selected sub-category
+  useEffect(() => {
+    const fetchPartnersForSubcategory = async () => {
+      if (!formData.secondary_category_id) {
+        setOptions(prev => ({ ...prev, sellingPartners: [] }));
+        return;
+      }
+      setLoadingPartners(true);
+      try {
+        const res = await api.get('/users/selling-partners', {
+          params: { subcategory_id: formData.secondary_category_id }
+        });
+        setOptions(prev => ({ ...prev, sellingPartners: res.data }));
+      } catch (e) {
+        setOptions(prev => ({ ...prev, sellingPartners: [] }));
+      } finally {
+        setLoadingPartners(false);
+      }
+    };
+    fetchPartnersForSubcategory();
+  }, [formData.secondary_category_id]);
+
   const fetchOptions = async () => {
     try {
-      const [statusesRes, primaryRes, secondaryRes, partnersRes, associatesRes] = await Promise.all([
+      const [statusesRes, primaryRes, secondaryRes, associatesRes] = await Promise.all([
         api.get('/master/lead-status'),
         api.get('/master/primary-categories'),
         api.get('/master/secondary-categories'),
-        api.get('/users/selling-partners').catch(() => ({ data: [] })),
         api.get('/users/sales-associates').catch(() => ({ data: [] }))
       ]);
 
-      setOptions({
+      setOptions(prev => ({
+        ...prev,
         statuses: statusesRes.data,
         primaryCategories: primaryRes.data,
         secondaryCategories: secondaryRes.data,
-        sellingPartners: partnersRes.data,
         salesAssociates: associatesRes.data
-      });
+      }));
     } catch (error) {
       console.error('Failed to fetch options:', error);
     }
@@ -115,12 +137,19 @@ const LeadForm = () => {
   };
 
   const handleSelectChange = (name, value) => {
-    setFormData(prev => ({ ...prev, [name]: value }));
-    
-    // Clear secondary category when primary changes
-    if (name === 'primary_category_id') {
-      setFormData(prev => ({ ...prev, secondary_category_id: '' }));
-    }
+    setFormData(prev => {
+      const next = { ...prev, [name]: value };
+      // Cascade: clear sub-category & selling partner when primary changes
+      if (name === 'primary_category_id') {
+        next.secondary_category_id = '';
+        next.selling_partner_id = '';
+      }
+      // Cascade: clear selling partner when sub-category changes
+      if (name === 'secondary_category_id') {
+        next.selling_partner_id = '';
+      }
+      return next;
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -375,9 +404,18 @@ const LeadForm = () => {
                     <Select 
                       value={formData.selling_partner_id} 
                       onValueChange={(v) => handleSelectChange('selling_partner_id', v)}
+                      disabled={!formData.secondary_category_id || loadingPartners}
                     >
                       <SelectTrigger data-testid="selling-partner-select">
-                        <SelectValue placeholder="Select partner" />
+                        <SelectValue placeholder={
+                          !formData.secondary_category_id
+                            ? 'Select sub-category first'
+                            : loadingPartners
+                              ? 'Loading partners...'
+                              : options.sellingPartners.length === 0
+                                ? 'No partners for this sub-category'
+                                : 'Select partner'
+                        } />
                       </SelectTrigger>
                       <SelectContent>
                         {options.sellingPartners.map((partner) => (
@@ -387,6 +425,11 @@ const LeadForm = () => {
                         ))}
                       </SelectContent>
                     </Select>
+                    {formData.secondary_category_id && !loadingPartners && options.sellingPartners.length === 0 && (
+                      <p className="text-xs text-muted-foreground" data-testid="no-partners-msg">
+                        No active selling partners are mapped to this sub-category. Map a partner's company to this sub-category first.
+                      </p>
+                    )}
                     {!isEditing && !formData.selling_partner_id && (
                       <Alert className="border-amber-200 bg-amber-50 text-amber-800">
                         <AlertCircle className="h-4 w-4" />

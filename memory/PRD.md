@@ -57,10 +57,17 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - Removed partners can be re-activated later
   
 - [x] **UI Updates**:
+### Phase 6 - Multi-Partner Concurrent Assignment (Feb 24, 2025)
   - "Assigned Partners (X active)" section on Lead Detail
   - Status badges: Winner (green), Active (blue), Lost (red)
   - "Assign Partner" button to add more partners
   - "Mark Won" and "Remove" buttons for active partners
+
+### Phase 7 - Dependent Dropdowns in Add Lead (Dec 2025)
+- [x] Category → Sub-category → Selling Partner cascading dropdowns on `/leads/new`
+- [x] `GET /api/users/selling-partners?subcategory_id=...` filters by company-to-subcategory mapping
+- [x] `UserResponse.subcategory_ids` now exposed (inherited from selling-partner's company)
+- [x] Auto-clears downstream selections when upstream changes; SP dropdown disabled until sub-category picked
 
 ## Key API Endpoints
 
