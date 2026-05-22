@@ -71,7 +71,9 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] Edit Lead: existing partner remains visible even if company is no longer mapped (`[not mapped]` hint)
 
 ### Phase 8 - Partner Mappings Admin Utility (Dec 2025)
-- [x] New admin page `/partner-mappings` to bulk-toggle selling-partner companies against sub-categories
+- [x] New admin page `/partner-mappings` with two views:
+  - **By Sub-category** (default): pick a sub-category, toggle each partner company
+  - **Matrix**: companies × sub-categories grid, grouped by primary category, sticky headers, per-column bulk map/clear, primary-category & company-search filters
 - [x] `GET /api/master/partner-mappings` lists all SP companies + current subcategory_ids
 - [x] `POST /api/master/partner-subcategory-toggle` atomic add/remove ($addToSet / $pull)
 - [x] Sidebar nav entry added (admin only)
