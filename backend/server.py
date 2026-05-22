@@ -3464,6 +3464,159 @@ async def bulk_import_leads(
 
 # ==================== DASHBOARD & REPORTS ====================
 
+@api_router.get("/dashboard/health-check")
+async def get_dashboard_health_check(current_user: dict = Depends(get_current_user)):
+    """Surface configuration & workflow gaps that would block leads from being assigned
+    or processed. Admin-only."""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can view health check")
+
+    items = []
+
+    # 1. SP companies with no active users -> won't appear in lead-assignment dropdowns
+    sp_companies = await db.companies.find(
+        {"type": "selling_partner", "is_active": True},
+        {"_id": 0, "id": 1, "name": 1, "subcategory_ids": 1}
+    ).to_list(1000)
+
+    sp_company_ids = [c['id'] for c in sp_companies]
+    user_counts = {}
+    if sp_company_ids:
+        pipeline = [
+            {"$match": {
+                "company_id": {"$in": sp_company_ids},
+                "role": UserRole.SELLING_PARTNER.value,
+                "is_active": True
+            }},
+            {"$group": {"_id": "$company_id", "count": {"$sum": 1}}}
+        ]
+        async for row in db.users.aggregate(pipeline):
+            user_counts[row['_id']] = row['count']
+
+    no_user_companies = [c for c in sp_companies if user_counts.get(c['id'], 0) == 0]
+    if no_user_companies:
+        items.append({
+            "key": "sp_companies_no_users",
+            "severity": "warning",
+            "title": "Partner companies without users",
+            "count": len(no_user_companies),
+            "description": "These selling-partner companies have no active users and won't appear in the Add Lead dropdown.",
+            "action_label": "Add users in Partner Mappings",
+            "action_path": "/partner-mappings",
+            "details": [{"id": c['id'], "name": c['name']} for c in no_user_companies[:5]],
+        })
+
+    # 2. SP companies that have users but are not mapped to any sub-category
+    no_subcat_companies = [
+        c for c in sp_companies
+        if user_counts.get(c['id'], 0) > 0 and not (c.get('subcategory_ids') or [])
+    ]
+    if no_subcat_companies:
+        items.append({
+            "key": "sp_companies_no_subcats",
+            "severity": "warning",
+            "title": "Partners not mapped to any sub-category",
+            "count": len(no_subcat_companies),
+            "description": "These selling-partner companies have users but aren't mapped to any sub-category, so leads can't be routed to them.",
+            "action_label": "Map sub-categories",
+            "action_path": "/partner-mappings",
+            "details": [{"id": c['id'], "name": c['name']} for c in no_subcat_companies[:5]],
+        })
+
+    # 3. Sub-categories with no partner company mapped
+    secondary_cats = await db.secondary_categories.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+    mapped_subcat_ids = set()
+    for c in sp_companies:
+        for sid in (c.get('subcategory_ids') or []):
+            mapped_subcat_ids.add(sid)
+    unmapped_subcats = [s for s in secondary_cats if s['id'] not in mapped_subcat_ids]
+    if unmapped_subcats:
+        items.append({
+            "key": "subcategories_no_partners",
+            "severity": "info",
+            "title": "Sub-categories with no partner mapped",
+            "count": len(unmapped_subcats),
+            "description": "No partner company can take leads for these sub-categories. Leads under them will get stuck.",
+            "action_label": "Map partners",
+            "action_path": "/partner-mappings",
+            "details": [{"id": s['id'], "name": s['name']} for s in unmapped_subcats[:5]],
+        })
+
+    # 4. Leads stuck in Draft status for > 7 days
+    statuses = await db.lead_statuses.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
+    draft_status_ids = [s['id'] for s in statuses if s['name'].lower() == 'draft']
+    if draft_status_ids:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        stale_leads = await db.leads.find(
+            {"status_id": {"$in": draft_status_ids}, "created_at": {"$lt": cutoff}},
+            {"_id": 0, "id": 1, "company_name": 1, "created_at": 1}
+        ).sort("created_at", 1).to_list(500)
+        if stale_leads:
+            items.append({
+                "key": "leads_draft_stale",
+                "severity": "critical",
+                "title": "Leads stuck in Draft > 7 days",
+                "count": len(stale_leads),
+                "description": "These referred leads haven't been picked up. Assign a partner or close them.",
+                "action_label": "Review draft leads",
+                "action_path": "/leads?status=draft",
+                "details": [
+                    {"id": l['id'], "name": l.get('company_name') or 'Untitled lead'}
+                    for l in stale_leads[:5]
+                ],
+            })
+
+    # 5. Active leads without any assigned partner (not draft, not won/lost) older than 3 days
+    cutoff_3d = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    terminal_status_ids = [
+        s['id'] for s in statuses
+        if s['name'].lower() in ('draft', 'won', 'lost', 'closed')
+    ]
+    unassigned_query = {
+        "created_at": {"$lt": cutoff_3d},
+        "$and": [
+            {"$or": [
+                {"selling_partner_id": {"$exists": False}},
+                {"selling_partner_id": None},
+                {"selling_partner_id": ""},
+            ]},
+            {"$or": [
+                {"assigned_partners": {"$exists": False}},
+                {"assigned_partners": {"$size": 0}},
+            ]},
+        ],
+    }
+    if terminal_status_ids:
+        unassigned_query["status_id"] = {"$nin": terminal_status_ids}
+    unassigned_leads = await db.leads.find(
+        unassigned_query,
+        {"_id": 0, "id": 1, "company_name": 1}
+    ).to_list(500)
+    if unassigned_leads:
+        items.append({
+            "key": "leads_unassigned",
+            "severity": "warning",
+            "title": "Active leads without any partner",
+            "count": len(unassigned_leads),
+            "description": "Created >3 days ago and no selling partner assigned. Likely needs admin intervention.",
+            "action_label": "Review leads",
+            "action_path": "/leads",
+            "details": [
+                {"id": l['id'], "name": l.get('company_name') or 'Untitled lead'}
+                for l in unassigned_leads[:5]
+            ],
+        })
+
+    severity_rank = {"critical": 0, "warning": 1, "info": 2}
+    items.sort(key=lambda x: (severity_rank.get(x['severity'], 99), -x['count']))
+
+    return {
+        "items": items,
+        "total_issues": sum(i['count'] for i in items),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @api_router.get("/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats(
     start_date: Optional[str] = None,

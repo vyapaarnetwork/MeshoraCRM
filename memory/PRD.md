@@ -84,6 +84,17 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Inline "Add User" dialog** in Partner Mappings rows + matrix cells; creates an SP user under that company via `POST /api/users` and refreshes counts.
 - [x] **LeadForm "No partners" copy clarified** — explicitly mentions either no company mapping OR no active SP user on the mapped companies, with a deep link to `/partner-mappings`.
 
+### Phase 10 - Dashboard Health Check Widget (Dec 2025)
+- [x] **New admin-only Dashboard widget** surfaces configuration & workflow gaps proactively
+- [x] **5 checks** (sorted critical → warning → info):
+  - SP companies with no active users (warning)
+  - SP companies with no sub-category mapping (warning)
+  - Sub-categories with no partner mapped (info)
+  - Leads stuck in Draft > 7 days (critical)
+  - Active leads with no partner for > 3 days (warning)
+- [x] **`GET /api/dashboard/health-check`** endpoint, single bulk aggregation per check, examples list per item, "Fix" deep links to the relevant admin page
+- [x] **"All systems healthy"** empty state when there are zero issues
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
