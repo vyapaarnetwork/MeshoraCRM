@@ -491,8 +491,11 @@ const LeadDetail = () => {
               <CardContent>
                 {lead.assigned_partners && lead.assigned_partners.length > 0 ? (
                   <div className="space-y-3">
-                    {lead.assigned_partners.map((assignment, index) => (
-                      <div key={index} className="flex items-start gap-3 p-3 bg-muted rounded-lg">
+                    {lead.assigned_partners.map((assignment) => (
+                      <div
+                        key={`${assignment.partner_id}-${assignment.assigned_at || ''}`}
+                        className="flex items-start gap-3 p-3 bg-muted rounded-lg"
+                      >
                         <div className={`p-2 rounded-full ${
                           assignment.status === 'won' ? 'bg-green-100' : 
                           assignment.status === 'lost' ? 'bg-red-100' : 'bg-blue-100'

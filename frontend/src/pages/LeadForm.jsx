@@ -80,7 +80,10 @@ const LeadForm = () => {
           try {
             const userRes = await api.get(`/users/${formData.selling_partner_id}`);
             partners = [...partners, { ...userRes.data, _unmapped: true }];
-          } catch (_) { /* ignore */ }
+          } catch (err) {
+            // Partner user not accessible or deleted - keep dropdown without it.
+            console.warn('Could not fetch unmapped partner', formData.selling_partner_id, err);
+          }
         }
         setOptions(prev => ({ ...prev, sellingPartners: partners }));
       } catch (e) {

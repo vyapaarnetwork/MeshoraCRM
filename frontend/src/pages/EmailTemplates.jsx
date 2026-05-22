@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import DOMPurify from 'dompurify';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -456,7 +457,13 @@ const EmailTemplates = () => {
               <div className="border rounded-lg overflow-hidden">
                 <div 
                   className="p-4 bg-white"
-                  dangerouslySetInnerHTML={{ __html: previewContent.body }}
+                  dangerouslySetInnerHTML={{
+                    __html: DOMPurify.sanitize(previewContent.body || '', {
+                      USE_PROFILES: { html: true },
+                      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form'],
+                      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus']
+                    })
+                  }}
                 />
               </div>
             </div>

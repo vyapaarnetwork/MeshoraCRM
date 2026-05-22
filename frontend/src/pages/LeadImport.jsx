@@ -351,13 +351,13 @@ const LeadImport = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {result.errors.map((error, index) => (
-                        <TableRow key={index}>
+                      {result.errors.map((error) => (
+                        <TableRow key={`err-row-${error.row}`}>
                           <TableCell className="font-mono">{error.row}</TableCell>
                           <TableCell>
                             <ul className="list-disc list-inside text-sm text-red-600">
-                              {error.errors.map((e, i) => (
-                                <li key={i}>{e}</li>
+                              {error.errors.map((e) => (
+                                <li key={`err-${error.row}-${e}`}>{e}</li>
                               ))}
                             </ul>
                           </TableCell>
