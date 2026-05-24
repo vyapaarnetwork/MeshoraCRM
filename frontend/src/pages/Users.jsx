@@ -477,14 +477,14 @@ const UsersList = () => {
                 <div className="space-y-2">
                   <Label>Assign to Company {formData.role === 'sales_associate' ? '(Optional)' : ''}</Label>
                   <Select 
-                    value={formData.company_id} 
-                    onValueChange={(v) => setFormData({ ...formData, company_id: v, company_name: '' })}
+                    value={formData.company_id || '__none__'} 
+                    onValueChange={(v) => setFormData({ ...formData, company_id: v === '__none__' ? '' : v, company_name: '' })}
                   >
                     <SelectTrigger data-testid="user-company-select">
                       <SelectValue placeholder="Select company" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">None</SelectItem>
+                      <SelectItem value="__none__">None</SelectItem>
                       {getAllCompanies().map((company) => (
                         <SelectItem key={company.id} value={company.id}>
                           {company.name} ({company.type === 'selling_partner' ? 'Partner' : 'Customer'})
