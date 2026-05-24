@@ -177,7 +177,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Payment-delay risk score** — `GET /api/commercials/{id}/ai/payment-delay-risk` returns avg historical pay-lag + per-invoice risk score, band, factors. Heuristic-based. Frontend card on Overview tab showing top 4 risky invoices.
 - [x] **Kanban view** — `GET /api/commercials/kanban` returns columns grouped by contract_status (active, renewal_due, renewed, on_hold, expired, cancelled) + one_time bucket. RBAC: selling partners see only their own. New page at `/commercials/kanban`, nav link added.
 - [x] **PDF invoice generation** — `GET /api/commercials/{id}/invoices/{inv_id}/pdf` builds a clean A4 PDF with reportlab (brand header, billed-to, project, line items, paid/due amounts, notes). Frontend: Download-PDF icon button next to each invoice row.
-- [x] **Testing** — testing_agent_v3_fork iteration_12: Phase 3 = **20/20 backend (100%)** including real LLM call, **100% frontend on requested flows**, all RBAC checks pass. Two cosmetic items flagged: hydration warning from Emergent's instrumentation wrapper (not app code), and design polish for non-admin direct URL access to kanban (functional 403 already in place).
+- [x] **Testing** — testing_agent_v3_fork iteration_12: Phase 3 = **20/20 backend (100%)** including real LLM call, **100% frontend on requested flows**, all RBAC checks pass.
+
+### Phase 16 - Backend refactor — extracted routers/commercials.py (Feb 24, 2026)
+- [x] **Moved 1559 lines** from `server.py` → `routers/commercials.py`:
+  - server.py: 6337 → **4782 lines** (-24.5%)
+  - routers/commercials.py: **1601 lines** (clean module with its own enums, models, helpers, and `APIRouter()`)
+- [x] **Dependency direction**: `server.py` imports `routers.commercials.router` AT THE BOTTOM (after all top-level globals are defined), so `routers/commercials.py` can safely `from server import db, get_current_user, UserRole, NotificationType, create_notification, UPLOAD_DIR, logger`.
+- [x] **Mount**: `api_router.include_router(commercials_router)` keeps all existing route paths intact (`/api/commercials/...`).
+- [x] **Smoke tested** all commercials endpoints post-extraction (List, Dashboard, Kanban, Analytics, Renewal scan, Reminder scan, AI suggest, PDF download) — all return 200 / valid responses. Lint clean.
 
 ## Key API Endpoints
 
@@ -231,7 +239,7 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Automated follow-up email reminders
 - [ ] Lead auto-routing by partner categories
 - [x] Dashboard date range filters (Feb 24, 2026)
-- [ ] **Refactor `server.py` (6000+ lines) → extract `routers/commercials.py`** (largest contained slice; ~1100 lines)
+- [x] **Refactor `server.py` (6300+ lines) → extract `routers/commercials.py`** (1559 lines moved; server.py now 4782 lines; Feb 24, 2026)
 - [ ] Fix 32 React Hook dependency warnings
 - [x] **Commercials Phase 2** — renewal pipeline auto-creation, analytics page (MRR/ARR/churn/forecast), drag-drop milestone reorder, audit/activity search+filter, is_finance/is_delivery role flags (Feb 24, 2026)
 - [x] **Commercials Phase 2.5 — In-app reminders** (Feb 24, 2026): in-app notifications for milestone-due, billing-due, invoice-overdue, renewal-window with dedup. SendGrid/Twilio hooks scaffolded — pending API keys to activate.
