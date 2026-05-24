@@ -212,6 +212,11 @@ class NotificationType(str, Enum):
     LEAD_STATUS_CHANGE = "lead_status_change"
     NEW_REFERRAL = "new_referral"
     FOLLOW_UP_REMINDER = "follow_up_reminder"
+    # Commercials Phase 2.5
+    COMMERCIAL_MILESTONE_DUE = "commercial_milestone_due"
+    COMMERCIAL_INVOICE_OVERDUE = "commercial_invoice_overdue"
+    COMMERCIAL_RENEWAL_WINDOW = "commercial_renewal_window"
+    COMMERCIAL_BILLING_DUE = "commercial_billing_due"
 
 class NotificationCreate(BaseModel):
     type: NotificationType
@@ -227,6 +232,7 @@ class NotificationResponse(BaseModel):
     title: str
     message: str
     lead_id: Optional[str] = None
+    commercial_id: Optional[str] = None
     is_read: bool
     created_at: str
     data: Optional[Dict[str, Any]] = None
@@ -731,7 +737,7 @@ async def change_password(password_data: PasswordChange, current_user: dict = De
 
 # ==================== NOTIFICATION HELPERS ====================
 
-async def create_notification(user_id: str, notification_type: str, title: str, message: str, lead_id: str = None, data: dict = None):
+async def create_notification(user_id: str, notification_type: str, title: str, message: str, lead_id: str = None, data: dict = None, commercial_id: str = None):
     """Create a notification for a specific user"""
     notification_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -743,6 +749,7 @@ async def create_notification(user_id: str, notification_type: str, title: str, 
         "title": title,
         "message": message,
         "lead_id": lead_id,
+        "commercial_id": commercial_id,
         "data": data or {},
         "is_read": False,
         "created_at": now
@@ -5381,6 +5388,176 @@ async def commercials_analytics(months: int = 12, current_user: dict = Depends(g
             "churn_rate_pct": series[-1]['churn_rate_pct'] if series else 0,
         }
     }
+
+# ---- Phase 2.5: Reminder scan (in-app notifications; email/SMS scaffolded but disabled) ----
+COMMERCIAL_REMINDER_DEDUP_HOURS = 20  # don't re-notify same item more often than this
+
+async def _has_recent_commercial_reminder(user_id: str, ntype: str, commercial_id: str, key: str, hours: int = COMMERCIAL_REMINDER_DEDUP_HOURS) -> bool:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    existing = await db.notifications.find_one({
+        "user_id": user_id,
+        "type": ntype,
+        "commercial_id": commercial_id,
+        "data.dedup_key": key,
+        "created_at": {"$gte": cutoff}
+    }, {"_id": 0})
+    return bool(existing)
+
+async def _emit_commercial_reminder(user_ids: List[str], ntype: str, title: str, message: str, commercial_id: str, lead_id: str, dedup_key: str, extra: dict = None) -> int:
+    """Create in-app notifications (dedup-aware). Also a placeholder for SendGrid/Twilio when keys are configured later."""
+    sent = 0
+    payload = {"dedup_key": dedup_key, **(extra or {})}
+    for uid in set(filter(None, user_ids)):
+        if await _has_recent_commercial_reminder(uid, ntype, commercial_id, dedup_key):
+            continue
+        await create_notification(uid, ntype, title, message, lead_id=lead_id, data=payload, commercial_id=commercial_id)
+        sent += 1
+    # Email/SMS hooks — disabled until keys configured. To enable later, drop in calls here:
+    #   send_email(billing_contact_email, title, message); send_sms(billing_contact_phone, message)
+    return sent
+
+async def _commercial_recipient_ids(commercial: dict) -> List[str]:
+    """Recipients = owners on the commercial + super admins."""
+    ids = [
+        commercial.get('project_owner_id'),
+        commercial.get('delivery_spoc_id'),
+        commercial.get('billing_contact_id'),
+        commercial.get('account_manager_id'),
+        commercial.get('contract_owner_id'),
+        commercial.get('created_by'),
+    ]
+    admins = await db.users.find({"role": "super_admin", "is_active": True}, {"_id": 0, "id": 1}).to_list(100)
+    ids.extend(a['id'] for a in admins)
+    return [i for i in ids if i]
+
+@api_router.post("/commercials/run-reminder-scan")
+async def run_commercial_reminder_scan(milestone_lead_days: int = 3, current_user: dict = Depends(get_current_user)):
+    """Scan commercials and emit in-app notifications for:
+      - Milestones due within `milestone_lead_days` (default 3)
+      - Invoices past their due_date and still unpaid
+      - Recurring billings due within `milestone_lead_days`
+      - Contracts inside their renewal-notice window
+    Idempotent: dedup window of 20h per (user, type, commercial, dedup_key)."""
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+        raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
+
+    today = datetime.now(timezone.utc).date()
+    cutoff = today + timedelta(days=milestone_lead_days)
+    all_comm = await db.commercials.find({}, {"_id": 0}).to_list(2000)
+    invoices = await db.commercial_invoices.find({"status": {"$in": ["raised", "partial", "overdue"]}}, {"_id": 0}).to_list(5000)
+
+    counts = {"milestones_due": 0, "invoices_overdue": 0, "billings_due": 0, "renewals": 0, "notifications": 0}
+
+    def _safe_date(s):
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(str(s).replace('Z', '+00:00')).date()
+        except Exception:
+            try:
+                return datetime.fromisoformat(str(s)[:10]).date()
+            except Exception:
+                return None
+
+    # Build a lookup of commercials by id for invoice scan
+    comm_by_id = {c['id']: c for c in all_comm}
+
+    # 1) Milestones due
+    for c in all_comm:
+        if c.get('type') != 'one_time':
+            continue
+        recipients = await _commercial_recipient_ids(c)
+        for m in c.get('milestones', []):
+            if m.get('status') not in ('pending', 'in_progress'):
+                continue
+            d = _safe_date(m.get('delivery_date'))
+            if not d or not (today <= d <= cutoff):
+                continue
+            days = (d - today).days
+            dedup = f"milestone:{m['id']}:{d.isoformat()}"
+            title = f"Milestone due in {days}d — {c.get('lead_title')}"
+            message = f"\"{m.get('name')}\" is due on {d.isoformat()} ({c.get('currency','INR')} {m.get('amount',0)})."
+            n = await _emit_commercial_reminder(
+                recipients, NotificationType.COMMERCIAL_MILESTONE_DUE.value, title, message,
+                commercial_id=c['id'], lead_id=c.get('lead_id'),
+                dedup_key=dedup, extra={"milestone_id": m['id'], "due_date": d.isoformat(), "days": days}
+            )
+            counts['milestones_due'] += 1
+            counts['notifications'] += n
+
+    # 2) Invoices overdue
+    for inv in invoices:
+        d = _safe_date(inv.get('due_date'))
+        if not d or d >= today:
+            continue
+        c = comm_by_id.get(inv.get('commercial_id'))
+        if not c:
+            continue
+        recipients = await _commercial_recipient_ids(c)
+        days = (today - d).days
+        outstanding = float(inv.get('amount') or 0) - float(inv.get('amount_paid') or 0)
+        if outstanding <= 0:
+            continue
+        dedup = f"invoice:{inv['id']}:{today.isoformat()}"  # day-bucketed so it re-pings once/day
+        title = f"Invoice overdue {days}d — {inv.get('invoice_number')}"
+        message = f"{c.get('currency','INR')} {outstanding:.2f} outstanding on \"{c.get('lead_title')}\" (due {d.isoformat()})."
+        n = await _emit_commercial_reminder(
+            recipients, NotificationType.COMMERCIAL_INVOICE_OVERDUE.value, title, message,
+            commercial_id=c['id'], lead_id=c.get('lead_id'),
+            dedup_key=dedup, extra={"invoice_id": inv['id'], "outstanding": outstanding, "days_overdue": days}
+        )
+        counts['invoices_overdue'] += 1
+        counts['notifications'] += n
+
+    # 3) Recurring billings due soon
+    for c in all_comm:
+        if c.get('type') != 'recurring':
+            continue
+        recipients = await _commercial_recipient_ids(c)
+        for s in (c.get('billing_schedule') or []):
+            if s.get('status') != 'scheduled':
+                continue
+            d = _safe_date(s.get('due_date'))
+            if not d or not (today <= d <= cutoff):
+                continue
+            days = (d - today).days
+            dedup = f"billing:{s['id']}:{d.isoformat()}"
+            title = f"Billing period due in {days}d — {c.get('lead_title')}"
+            message = f"Recurring billing for {s.get('period_start')} → {s.get('period_end')} ({c.get('currency','INR')} {s.get('amount',0)}) due {d.isoformat()}."
+            n = await _emit_commercial_reminder(
+                recipients, NotificationType.COMMERCIAL_BILLING_DUE.value, title, message,
+                commercial_id=c['id'], lead_id=c.get('lead_id'),
+                dedup_key=dedup, extra={"billing_id": s['id'], "due_date": d.isoformat(), "days": days}
+            )
+            counts['billings_due'] += 1
+            counts['notifications'] += n
+
+    # 4) Renewal window (recurring contracts whose end_date - renewal_notice_days <= today)
+    for c in all_comm:
+        if c.get('type') != 'recurring':
+            continue
+        end = _safe_date(c.get('contract_end_date'))
+        if not end:
+            continue
+        notice = int(c.get('renewal_notice_days') or 30)
+        window_start = end - timedelta(days=notice)
+        if today < window_start or today > end:
+            continue
+        recipients = await _commercial_recipient_ids(c)
+        days = (end - today).days
+        dedup = f"renewal:{c['id']}:{end.isoformat()}"
+        auto = "Auto-renews" if c.get('auto_renewal') else "Manual renewal required"
+        title = f"Renewal window — {days}d to expiry"
+        message = f"Contract \"{c.get('lead_title')}\" ends {end.isoformat()}. {auto}."
+        n = await _emit_commercial_reminder(
+            recipients, NotificationType.COMMERCIAL_RENEWAL_WINDOW.value, title, message,
+            commercial_id=c['id'], lead_id=c.get('lead_id'),
+            dedup_key=dedup, extra={"end_date": end.isoformat(), "days_to_expiry": days, "auto_renewal": bool(c.get('auto_renewal'))}
+        )
+        counts['renewals'] += 1
+        counts['notifications'] += n
+
+    return {**counts, "scanned_commercials": len(all_comm), "scanned_invoices": len(invoices)}
 
 @api_router.get("/commercials/by-lead/{lead_id}")
 async def get_commercial_by_lead(lead_id: str, current_user: dict = Depends(get_current_user)):

@@ -9,13 +9,10 @@ const CommercialsWidget = () => {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    // Trigger silent renewal scan first (idempotent), then load dashboard.
+    // Trigger silent renewal + reminder scans first (idempotent), then load dashboard.
     (async () => {
-      try {
-        await api.post('/commercials/run-renewal-scan');
-      } catch (e) {
-        // Non-admin users will 403 — ignore.
-      }
+      try { await api.post('/commercials/run-renewal-scan'); } catch (e) { /* non-admin → ignore */ }
+      try { await api.post('/commercials/run-reminder-scan'); } catch (e) { /* non-admin → ignore */ }
       try {
         const r = await api.get('/commercials/dashboard');
         setData(r.data);

@@ -8,7 +8,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend, AreaChart, Area, PieChart as RechartsPieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, DollarSign, Repeat, Activity as ActivityIcon, RefreshCw } from 'lucide-react';
+import { TrendingUp, DollarSign, Repeat, Activity as ActivityIcon, RefreshCw, Bell } from 'lucide-react';
 import { toast } from 'sonner';
 
 const COLORS = ['#4169E1', '#10B981', '#F59E0B', '#DC143C', '#8B5CF6'];
@@ -18,6 +18,7 @@ const CommercialsAnalytics = () => {
   const [loading, setLoading] = useState(true);
   const [months, setMonths] = useState(12);
   const [scanning, setScanning] = useState(false);
+  const [remindersBusy, setRemindersBusy] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -32,6 +33,23 @@ const CommercialsAnalytics = () => {
   }, [months]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const runReminderScan = async () => {
+    setRemindersBusy(true);
+    try {
+      const res = await api.post('/commercials/run-reminder-scan');
+      const { notifications, milestones_due, invoices_overdue, billings_due, renewals } = res.data;
+      if (notifications > 0) {
+        toast.success(`${notifications} reminder(s) sent — ${milestones_due} milestone, ${invoices_overdue} invoice, ${billings_due} billing, ${renewals} renewal`);
+      } else {
+        toast.info('All reminders are up to date (dedup window: 20h)');
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Reminder scan failed');
+    } finally {
+      setRemindersBusy(false);
+    }
+  };
 
   const runRenewalScan = async () => {
     setScanning(true);
@@ -92,6 +110,10 @@ const CommercialsAnalytics = () => {
               </SelectContent>
             </Select>
           </div>
+          <Button variant="outline" onClick={runReminderScan} disabled={remindersBusy} data-testid="run-reminder-scan-btn">
+            <Bell className={`w-4 h-4 mr-2 ${remindersBusy ? 'animate-pulse' : ''}`} />
+            {remindersBusy ? 'Sending…' : 'Send reminders'}
+          </Button>
           <Button variant="outline" onClick={runRenewalScan} disabled={scanning} data-testid="run-renewal-scan-btn">
             <RefreshCw className={`w-4 h-4 mr-2 ${scanning ? 'animate-spin' : ''}`} />
             {scanning ? 'Scanning…' : 'Run renewal scan'}

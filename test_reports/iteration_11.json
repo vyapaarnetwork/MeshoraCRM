@@ -1,0 +1,52 @@
+{
+  "summary": "Phase 2.5 (Commercials Reminders via in-app notifications) tested. New pytest file (10 tests) covering the run-reminder-scan endpoint shape/RBAC, route ordering, milestone-due/invoice-overdue/renewal-window constructed scenarios, dedup idempotency, NotificationResponse.commercial_id surfacing, NotificationType extension, and a regression check on the existing new_lead notification flow. All 10/10 Phase 2.5 tests PASS. Regression: Phase 1 (29) + Phase 2 (21) + Phase 2.5 (10) = 60 total, 59 PASS, 1 transient network timeout (not a code defect). Frontend: BOTH 'Send reminders' and 'Run renewal scan' buttons render on /commercials/analytics; clicking Send reminders fires POST /commercials/run-reminder-scan and a toast 'All reminders are up to date (dedup window: 20h)' appears as expected (dedup window already saturated). NotificationType deep-link & icon logic in Layout.jsx confirmed by code review (commercial_id-first routing; Briefcase amber/red/blue for the 4 new types).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/notifications", "issue": "Default limit=50 ordered DESC. With heavy commercial reminders, older notification types (e.g., new_lead) can be pushed off the first page. Consider exposing a type filter (?type=new_lead) or increasing default limit for regression visibility. Not a functional bug — clients can pass ?limit=N."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/commercials/analytics", "issues": ["Recharts continues to emit 'width(-1) and height(-1) of chart should be greater than 0' warnings on first mount (~8 spam lines). Same issue flagged in iteration_10 (still unresolved). Add minHeight to ResponsiveContainer parents to silence."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_commercials_phase25.py",
+    "/app/backend/tests/test_commercials_phase2.py",
+    "/app/backend/tests/test_commercials.py",
+    "/app/test_reports/pytest/phase25_results.xml",
+    "/app/test_reports/pytest/commercials_all_results.xml"
+  ],
+  "action_items": [
+    "(Optional, carry-over from iteration_10) Add minHeight to ResponsiveContainer parents in CommercialsAnalytics.jsx to silence Recharts -1/-1 spam.",
+    "(Optional) Allow /api/notifications to accept a type filter (?type=new_lead) so existing-flow regressions don't depend on raising the page size.",
+    "(Optional but recommended) Extract /api/commercials/* routes out of server.py — file is now 5931 lines."
+  ],
+  "critical_code_review_comments": [
+    "Route ordering verified: /commercials/run-reminder-scan declared at line 5433, /commercials/{commercial_id} at line 5570. POST hits the named route, not the dynamic one. Test confirms.",
+    "RBAC on run-reminder-scan correctly checks super_admin OR is_finance OR is_delivery — customer gets 403 (verified).",
+    "Dedup query uses (user_id, type, commercial_id, data.dedup_key, created_at>=cutoff). Mongo will benefit from a compound index on these fields if notifications collection grows; not blocking now but flag for performance.",
+    "Recipient set correctly unions all owners on the commercial AND active super_admins. Set() dedup prevents double-emit when admin is also an owner.",
+    "Dedup keys are well-formed: milestone:{id}:{date}, invoice:{id}:{today} (day-bucketed, re-pings once/day for overdue — good UX), billing:{id}:{date}, renewal:{cid}:{end_date}. Re-running same day -> 0 new notifications (verified).",
+    "NotificationResponse.commercial_id now surfaces on /api/notifications for ALL notifications (None for non-commercial, populated for commercial_*). Verified by test_get_notifications_returns_commercial_id_field.",
+    "create_notification(commercial_id=) keyword propagation through _emit_commercial_reminder is correct.",
+    "Frontend Layout.jsx handleNotificationClick prefers commercial_id over lead_id when type startsWith('commercial_') — correct precedence so commercial_* notifications never dead-end at a lead page.",
+    "getNotificationIcon: Briefcase amber for milestone_due + billing_due, red for invoice_overdue, blue for renewal_window — matches spec.",
+    "CommercialsWidget.jsx silently triggers both run-renewal-scan AND run-reminder-scan on mount, swallowing errors for non-admins — correct.",
+    "Email/SMS not wired (as per Phase 2.5 spec): _emit_commercial_reminder includes a comment pointing at where to drop send_email / send_sms calls when keys are configured. No mocking; in-app only. Confirmed.",
+    "server.py size: 5931 lines (was 5754 in iteration_10) — still grows; modularisation is overdue."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_commercials_phase25.py (new — 10 Phase 2.5 tests)"
+  ],
+  "success_rate": {"backend": "100% (10/10 Phase 2.5; 59/60 combined with phase1+phase2; 1 transient network timeout)", "frontend": "~95% (buttons + toast verified; dropdown auto-click flaky in headless, code path verified by review)"},
+  "test_credentials": "Super Admin: admin@vyapaarnetwork.com / admin123. Customer: john@testco.com / test123. No new credentials created in this iteration.",
+  "seed_data_creation": "Created (prefixed 'TEST P25'): 3 leads + 3 commercials — one one-time with a milestone due in 2 days, one one-time with an invoice 5 days overdue, one recurring with contract_end_date = today+10 days and renewal_notice_days=30. All created via admin token. Notifications collection got commercial_milestone_due / commercial_invoice_overdue / commercial_renewal_window docs from the scan.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2.5 file at /app/backend/tests/test_commercials_phase25.py — 10 tests, all passing. Dedup window is 20h; re-running on the same DB will return notifications=0 for the constructed scenarios for ~20h. To force fresh notifications, either wait, or insert new commercials with different dedup keys (e.g., new milestone IDs). The 'All reminders are up to date (dedup window: 20h)' toast on Send reminders is the EXPECTED state once dedup saturates. UI bell-dropdown selector in playwright was flaky (svg.lucide-bell appears 2x — sidebar toggle + topbar); use the SECOND occurrence (topbar) for click targeting, or add a data-testid='notifications-bell' to the topbar button in Layout.jsx (suggested for future testability).",
+  "rca of the issue": "N/A — no bugs. Phase 2.5 implementation is correct: RBAC, dedup, recipient union, route order, NotificationResponse schema, frontend wiring all verified."
+}

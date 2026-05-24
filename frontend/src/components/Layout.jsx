@@ -110,7 +110,11 @@ const Layout = ({ children }) => {
 
   const handleNotificationClick = (notification) => {
     markAsRead(notification.id);
-    if (notification.lead_id) {
+    // Prefer commercial deep-link for commercials reminders
+    if (notification.commercial_id && (notification.type || '').startsWith('commercial_')) {
+      navigate(`/commercials/${notification.commercial_id}`);
+      setNotificationsOpen(false);
+    } else if (notification.lead_id) {
       navigate(`/leads/${notification.lead_id}`);
       setNotificationsOpen(false);
     }
@@ -123,6 +127,13 @@ const Layout = ({ children }) => {
         return <FileText className="w-4 h-4 text-blue-500" />;
       case 'lead_assigned':
         return <Users className="w-4 h-4 text-green-500" />;
+      case 'commercial_milestone_due':
+      case 'commercial_billing_due':
+        return <Briefcase className="w-4 h-4 text-amber-500" />;
+      case 'commercial_invoice_overdue':
+        return <Briefcase className="w-4 h-4 text-red-500" />;
+      case 'commercial_renewal_window':
+        return <Briefcase className="w-4 h-4 text-blue-500" />;
       case 'lead_status_change':
         return <Tag className="w-4 h-4 text-purple-500" />;
       case 'lead_updated':
