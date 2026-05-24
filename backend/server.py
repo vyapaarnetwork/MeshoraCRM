@@ -100,6 +100,8 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: str
     subcategory_ids: Optional[List[str]] = None  # Inherited from company (selling partners)
+    is_finance: bool = False  # Phase 2 commercials: can raise invoices / record payments
+    is_delivery: bool = False  # Phase 2 commercials: can update milestone delivery status
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -173,6 +175,8 @@ class AdminUserCreate(BaseModel):
     company_id: Optional[str] = None  # For existing company
     company_name: Optional[str] = None  # For new company
     phone: Optional[str] = None
+    is_finance: bool = False
+    is_delivery: bool = False
 
 # Admin User Update Model
 class AdminUserUpdate(BaseModel):
@@ -183,6 +187,8 @@ class AdminUserUpdate(BaseModel):
     company_id: Optional[str] = None
     phone: Optional[str] = None
     is_active: Optional[bool] = None
+    is_finance: Optional[bool] = None
+    is_delivery: Optional[bool] = None
 
 # Lead Referral Model (for Selling Partners)
 class LeadReferralCreate(BaseModel):
@@ -643,6 +649,8 @@ async def login(credentials: UserLogin):
             company_name=company_name,
             phone=user.get('phone'),
             is_active=user.get('is_active', True),
+            is_finance=user.get('is_finance', False),
+            is_delivery=user.get('is_delivery', False),
             created_at=user['created_at']
         )
     )
@@ -664,6 +672,8 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         company_name=company_name,
         phone=current_user.get('phone'),
         is_active=current_user.get('is_active', True),
+        is_finance=current_user.get('is_finance', False),
+        is_delivery=current_user.get('is_delivery', False),
         created_at=current_user['created_at']
     )
 
@@ -694,6 +704,8 @@ async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depen
         company_name=company_name,
         phone=updated_user.get('phone'),
         is_active=updated_user.get('is_active', True),
+        is_finance=updated_user.get('is_finance', False),
+        is_delivery=updated_user.get('is_delivery', False),
         created_at=updated_user['created_at']
     )
 
@@ -884,6 +896,8 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         "company_id": company_id,
         "phone": user_data.phone,
         "is_active": True,
+        "is_finance": user_data.is_finance,
+        "is_delivery": user_data.is_delivery,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
@@ -898,6 +912,8 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         company_name=company_name,
         phone=user_data.phone,
         is_active=True,
+        is_finance=user_data.is_finance,
+        is_delivery=user_data.is_delivery,
         created_at=user_doc['created_at']
     )
 
@@ -994,6 +1010,8 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
         company_name=company_name,
         phone=user.get('phone'),
         is_active=user.get('is_active', True),
+        is_finance=user.get('is_finance', False),
+        is_delivery=user.get('is_delivery', False),
         created_at=user['created_at']
     )
 
@@ -1049,6 +1067,8 @@ async def update_user(user_id: str, user_data: AdminUserUpdate, current_user: di
         company_name=company_name,
         phone=updated_user.get('phone'),
         is_active=updated_user.get('is_active', True),
+        is_finance=updated_user.get('is_finance', False),
+        is_delivery=updated_user.get('is_delivery', False),
         created_at=updated_user['created_at']
     )
 
@@ -1099,6 +1119,8 @@ async def list_users(role: Optional[str] = None, current_user: dict = Depends(ge
             company_name=company_name,
             phone=user.get('phone'),
             is_active=user.get('is_active', True),
+            is_finance=user.get('is_finance', False),
+            is_delivery=user.get('is_delivery', False),
             created_at=user['created_at']
         ))
     
@@ -4853,9 +4875,12 @@ async def _log_commercial_activity(commercial_id: str, current_user: dict, activ
     })
 
 async def _ensure_commercial_access(commercial: dict, current_user: dict, write: bool = False):
-    """Admin = full. Selling Partner = read-only on their own leads' commercials. Others = denied."""
+    """Admin = full. Finance & Delivery users = write. Selling Partner = read-only on their own leads' commercials. Others = denied."""
     role = current_user.get('role')
     if role == UserRole.SUPER_ADMIN.value:
+        return
+    # Finance & Delivery elevated roles (Phase 2)
+    if current_user.get('is_finance') or current_user.get('is_delivery'):
         return
     if role == UserRole.SELLING_PARTNER.value:
         if write:
@@ -4931,8 +4956,8 @@ def _serialise_commercial(c: dict) -> dict:
 # ---- Endpoints ----
 @api_router.post("/commercials")
 async def create_commercial(payload: CommercialCreate, current_user: dict = Depends(get_current_user)):
-    if current_user.get('role') != UserRole.SUPER_ADMIN.value:
-        raise HTTPException(status_code=403, detail="Only super admin can create commercials")
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+        raise HTTPException(status_code=403, detail="Only admin / finance / delivery users can create commercials")
     lead = await db.leads.find_one({"id": payload.lead_id}, {"_id": 0})
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -5003,15 +5028,15 @@ async def list_commercials(
         }, {"_id": 0, "id": 1}).to_list(2000)
         lead_ids = [ld['id'] for ld in leads]
         query['lead_id'] = {"$in": lead_ids}
-    elif current_user.get('role') != UserRole.SUPER_ADMIN.value:
+    elif not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     items = await db.commercials.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     return items
 
 @api_router.get("/commercials/dashboard")
 async def commercials_dashboard(current_user: dict = Depends(get_current_user)):
-    if current_user.get('role') != UserRole.SUPER_ADMIN.value:
-        raise HTTPException(status_code=403, detail="Admin only")
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+        raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
     today = datetime.now(timezone.utc).date()
     all_comm = await db.commercials.find({}, {"_id": 0}).to_list(2000)
     one_time = [c for c in all_comm if c.get('type') == 'one_time']
@@ -5087,6 +5112,274 @@ async def commercials_dashboard(current_user: dict = Depends(get_current_user)):
             "upcoming_renewals": upcoming_renewals[:10],
             "total_contracts": len(recurring),
         },
+    }
+
+# ---- Phase 2: Renewal Pipeline auto-creation ----
+@api_router.post("/commercials/run-renewal-scan")
+async def run_renewal_scan(current_user: dict = Depends(get_current_user)):
+    """Scan active recurring contracts; for any that have entered their renewal-notice window
+    and don't already have a renewal lead, mark contract_status=renewal_due and auto-create a
+    renewal Lead (status Renewal) tagged back to the contract.
+    Idempotent — safe to call repeatedly."""
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+        raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
+
+    today = datetime.now(timezone.utc).date()
+    # Ensure a "Renewal" lead status exists
+    renewal_status = await db.lead_statuses.find_one({"name": "Renewal"}, {"_id": 0})
+    if not renewal_status:
+        rs_id = str(uuid.uuid4())
+        renewal_status = {
+            "id": rs_id, "name": "Renewal", "color": "#0EA5E9", "order": 10,
+            "is_active": True, "is_won": False
+        }
+        await db.lead_statuses.insert_one(renewal_status)
+
+    candidates = await db.commercials.find({
+        "type": "recurring",
+        "contract_status": {"$in": ["active", "renewal_due"]}
+    }, {"_id": 0}).to_list(2000)
+
+    created_count = 0
+    flagged_count = 0
+    skipped_count = 0
+    items: List[dict] = []
+    for c in candidates:
+        end_date = c.get('contract_end_date')
+        if not end_date:
+            continue
+        try:
+            end_d = datetime.fromisoformat(end_date).date()
+        except Exception:
+            continue
+        notice_days = int(c.get('renewal_notice_days') or 30)
+        notice_start = end_d - timedelta(days=notice_days)
+        if today < notice_start:
+            continue  # Not yet in renewal window
+
+        if c.get('renewal_lead_id'):
+            existing = await db.leads.find_one({"id": c['renewal_lead_id']}, {"_id": 0})
+            if existing:
+                if c.get('contract_status') != 'renewal_due':
+                    await db.commercials.update_one({"id": c['id']}, {"$set": {"contract_status": "renewal_due", "updated_at": _now_iso()}})
+                    flagged_count += 1
+                skipped_count += 1
+                continue
+
+        original_lead = await db.leads.find_one({"id": c['lead_id']}, {"_id": 0}) or {}
+        primary_category_id = original_lead.get('primary_category_id')
+        if not primary_category_id:
+            cat = await db.primary_categories.find_one({"is_active": True}, {"_id": 0})
+            if not cat:
+                continue
+            primary_category_id = cat['id']
+
+        new_lead_id = str(uuid.uuid4())
+        days_to_expiry = (end_d - today).days
+        lead_doc = {
+            "id": new_lead_id,
+            "title": f"Renewal — {c.get('lead_title') or original_lead.get('title') or 'contract'}",
+            "description": f"Auto-created renewal opportunity for contract ending {end_date} ({days_to_expiry} days). Auto renewal: {'Yes' if c.get('auto_renewal') else 'No'}. Renewal type: {c.get('renewal_type','manual')}.",
+            "customer_name": c.get('customer_name') or original_lead.get('customer_name') or 'Renewal Customer',
+            "customer_email": original_lead.get('customer_email') or '',
+            "customer_phone": original_lead.get('customer_phone'),
+            "customer_company": original_lead.get('customer_company'),
+            "customer_id": c.get('customer_id') or original_lead.get('customer_id'),
+            "selling_partner_id": original_lead.get('selling_partner_id'),
+            "sales_associate_id": original_lead.get('sales_associate_id'),
+            "primary_category_id": primary_category_id,
+            "secondary_category_id": original_lead.get('secondary_category_id'),
+            "deal_value": c.get('contract_value') or 0,
+            "status_id": renewal_status['id'],
+            "is_internal_request": False,
+            "renewal_for_commercial_id": c['id'],
+            "renewal_for_lead_id": c['lead_id'],
+            "follow_ups": [], "comments": [], "documents": [],
+            "assigned_partners": [],
+            "created_by": current_user['id'],
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        await db.leads.insert_one(lead_doc)
+        await db.commercials.update_one({"id": c['id']}, {"$set": {
+            "contract_status": "renewal_due",
+            "renewal_lead_id": new_lead_id,
+            "updated_at": _now_iso(),
+        }})
+        await _log_commercial_activity(c['id'], current_user, "renewal_lead_created", f"Renewal pipeline auto-created (lead {lead_doc['title']})", {"renewal_lead_id": new_lead_id})
+        created_count += 1
+        items.append({"commercial_id": c['id'], "lead_id": new_lead_id, "title": lead_doc['title'], "days_to_expiry": days_to_expiry})
+
+    return {
+        "created": created_count,
+        "flagged": flagged_count,
+        "skipped": skipped_count,
+        "items": items,
+    }
+
+# ---- Phase 2: Analytics ----
+@api_router.get("/commercials/analytics")
+async def commercials_analytics(months: int = 12, current_user: dict = Depends(get_current_user)):
+    """Returns MRR trend (last N months), churn metrics, revenue forecast (next 90 days),
+    and project-vs-recurring revenue mix."""
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+        raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
+
+    today = datetime.now(timezone.utc).date()
+    months = max(1, min(36, int(months)))
+
+    all_comm = await db.commercials.find({}, {"_id": 0}).to_list(2000)
+    payments = await db.commercial_payments.find({}, {"_id": 0}).to_list(5000)
+    invoices = await db.commercial_invoices.find({}, {"_id": 0}).to_list(5000)
+
+    buckets: List[dict] = []
+    cursor = datetime(today.year, today.month, 1)
+    cursor = _add_months(cursor, -(months - 1))
+    for _ in range(months):
+        next_month = _add_months(cursor, 1)
+        buckets.append({
+            "label": cursor.strftime("%b %Y"),
+            "key": cursor.strftime("%Y-%m"),
+            "start_date": cursor.date(),
+            "end_date": (next_month - timedelta(days=1)).date(),
+            "mrr": 0.0,
+            "active_contracts": 0,
+            "new_contracts": 0,
+            "churned_contracts": 0,
+            "revenue_collected": 0.0,
+            "invoices_raised": 0.0,
+        })
+        cursor = next_month
+
+    def _to_date_safe(s):
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(str(s).replace('Z', '+00:00')).date()
+        except Exception:
+            try:
+                return datetime.fromisoformat(str(s)[:10]).date()
+            except Exception:
+                return None
+
+    for c in all_comm:
+        if c.get('type') != 'recurring':
+            continue
+        start = _to_date_safe(c.get('contract_start_date'))
+        end = _to_date_safe(c.get('contract_end_date'))
+        cstatus = c.get('contract_status') or 'active'
+        v = float(c.get('contract_value') or 0)
+        months_step = FREQ_MONTHS.get(c.get('billing_frequency') or 'monthly', 1)
+        monthly_value = v / months_step if months_step else 0
+
+        churn_date = None
+        if cstatus in ('cancelled', 'expired') and end:
+            churn_date = end
+
+        for b in buckets:
+            if not start:
+                continue
+            active_in_bucket = start <= b['end_date'] and (not end or end >= b['start_date'])
+            if active_in_bucket:
+                if cstatus not in ('cancelled', 'expired') or (end and end >= b['start_date']):
+                    b['active_contracts'] += 1
+                    b['mrr'] += monthly_value
+                if b['start_date'] <= start <= b['end_date']:
+                    b['new_contracts'] += 1
+                if churn_date and b['start_date'] <= churn_date <= b['end_date']:
+                    b['churned_contracts'] += 1
+
+    for p in payments:
+        pd = _to_date_safe(p.get('paid_at'))
+        if not pd:
+            continue
+        for b in buckets:
+            if b['start_date'] <= pd <= b['end_date']:
+                b['revenue_collected'] += float(p.get('amount') or 0)
+                break
+
+    for inv in invoices:
+        rd = _to_date_safe(inv.get('raised_at'))
+        if not rd:
+            continue
+        for b in buckets:
+            if b['start_date'] <= rd <= b['end_date']:
+                b['invoices_raised'] += float(inv.get('amount') or 0)
+                break
+
+    series = []
+    for b in buckets:
+        churn_rate = 0
+        if b['active_contracts'] > 0:
+            churn_rate = round((b['churned_contracts'] / max(b['active_contracts'], 1)) * 100, 2)
+        series.append({
+            "label": b['label'],
+            "key": b['key'],
+            "mrr": round(b['mrr'], 2),
+            "arr": round(b['mrr'] * 12, 2),
+            "active_contracts": b['active_contracts'],
+            "new_contracts": b['new_contracts'],
+            "churned_contracts": b['churned_contracts'],
+            "churn_rate_pct": churn_rate,
+            "revenue_collected": round(b['revenue_collected'], 2),
+            "invoices_raised": round(b['invoices_raised'], 2),
+        })
+
+    in_90 = today + timedelta(days=90)
+    forecast_pending_invoices = 0.0
+    forecast_recurring_billings = 0.0
+    forecast_milestones = 0.0
+    for inv in invoices:
+        if inv.get('status') in ('raised', 'partial', 'overdue'):
+            due = _to_date_safe(inv.get('due_date'))
+            amt_outstanding = float(inv.get('amount') or 0) - float(inv.get('amount_paid') or 0)
+            if due and today <= due <= in_90:
+                forecast_pending_invoices += max(0, amt_outstanding)
+    for c in all_comm:
+        if c.get('type') == 'recurring':
+            for s in (c.get('billing_schedule') or []):
+                if s.get('status') == 'scheduled':
+                    due = _to_date_safe(s.get('due_date'))
+                    if due and today <= due <= in_90:
+                        forecast_recurring_billings += float(s.get('amount') or 0)
+        else:
+            for m in (c.get('milestones') or []):
+                if m.get('status') in ('pending', 'in_progress', 'delivered'):
+                    due = _to_date_safe(m.get('invoice_due_date') or m.get('delivery_date'))
+                    if due and today <= due <= in_90:
+                        forecast_milestones += float(m.get('amount') or 0)
+
+    forecast_total = forecast_pending_invoices + forecast_recurring_billings + forecast_milestones
+
+    one_time_revenue = 0.0
+    recurring_revenue = 0.0
+    for p in payments:
+        comm = next((x for x in all_comm if x['id'] == p.get('commercial_id')), None)
+        if not comm:
+            continue
+        if comm.get('type') == 'recurring':
+            recurring_revenue += float(p.get('amount') or 0)
+        else:
+            one_time_revenue += float(p.get('amount') or 0)
+
+    return {
+        "series": series,
+        "forecast_90d": {
+            "total": round(forecast_total, 2),
+            "pending_invoices": round(forecast_pending_invoices, 2),
+            "recurring_billings": round(forecast_recurring_billings, 2),
+            "project_milestones": round(forecast_milestones, 2),
+        },
+        "revenue_mix": {
+            "one_time": round(one_time_revenue, 2),
+            "recurring": round(recurring_revenue, 2),
+        },
+        "current": {
+            "mrr": series[-1]['mrr'] if series else 0,
+            "arr": series[-1]['arr'] if series else 0,
+            "active_contracts": series[-1]['active_contracts'] if series else 0,
+            "churn_rate_pct": series[-1]['churn_rate_pct'] if series else 0,
+        }
     }
 
 @api_router.get("/commercials/by-lead/{lead_id}")

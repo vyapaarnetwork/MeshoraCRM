@@ -60,6 +60,10 @@ export const AuthProvider = ({ children }) => {
   const isSellingPartner = user?.role === 'selling_partner';
   const isSalesAssociate = user?.role === 'sales_associate';
   const isCustomer = user?.role === 'customer';
+  const isFinance = !!user?.is_finance;
+  const isDelivery = !!user?.is_delivery;
+  const canAccessCommercials = isAdmin || isSellingPartner || isFinance || isDelivery;
+  const canWriteCommercials = isAdmin || isFinance || isDelivery;
 
   return (
     <AuthContext.Provider value={{
@@ -73,6 +77,10 @@ export const AuthProvider = ({ children }) => {
       isSellingPartner,
       isSalesAssociate,
       isCustomer,
+      isFinance,
+      isDelivery,
+      canAccessCommercials,
+      canWriteCommercials,
       isAuthenticated: !!user
     }}>
       {children}

@@ -62,7 +62,9 @@ const UsersList = () => {
     role: '',
     company_id: '',
     company_name: '',
-    phone: ''
+    phone: '',
+    is_finance: false,
+    is_delivery: false
   });
 
   // Delete confirmation state
@@ -99,7 +101,9 @@ const UsersList = () => {
         role: user.role,
         company_id: user.company_id || '',
         company_name: '',
-        phone: user.phone || ''
+        phone: user.phone || '',
+        is_finance: !!user.is_finance,
+        is_delivery: !!user.is_delivery
       });
     } else {
       setFormData({
@@ -109,7 +113,9 @@ const UsersList = () => {
         role: '',
         company_id: '',
         company_name: '',
-        phone: ''
+        phone: '',
+        is_finance: false,
+        is_delivery: false
       });
     }
     setDialogOpen(true);
@@ -148,7 +154,9 @@ const UsersList = () => {
           email: formData.email,
           role: formData.role,
           phone: formData.phone || null,
-          company_id: formData.company_id || null
+          company_id: formData.company_id || null,
+          is_finance: formData.is_finance,
+          is_delivery: formData.is_delivery
         };
         if (formData.password) {
           payload.password = formData.password;
@@ -164,7 +172,9 @@ const UsersList = () => {
           role: formData.role,
           phone: formData.phone || null,
           company_id: formData.company_id || null,
-          company_name: formData.company_id ? null : formData.company_name || null
+          company_name: formData.company_id ? null : formData.company_name || null,
+          is_finance: formData.is_finance,
+          is_delivery: formData.is_delivery
         };
         await api.post('/users', payload);
         toast.success('User created successfully');
@@ -470,6 +480,31 @@ const UsersList = () => {
                 placeholder="+91 98765 43210"
                 data-testid="user-phone-input"
               />
+            </div>
+
+            {/* Phase 2: Commercials role flags */}
+            <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">Commercials Permissions (optional)</Label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.is_finance}
+                  onChange={(e) => setFormData({ ...formData, is_finance: e.target.checked })}
+                  className="w-4 h-4"
+                  data-testid="user-is-finance"
+                />
+                <span><strong>Finance role</strong> — can raise invoices, record payments, see analytics</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.is_delivery}
+                  onChange={(e) => setFormData({ ...formData, is_delivery: e.target.checked })}
+                  className="w-4 h-4"
+                  data-testid="user-is-delivery"
+                />
+                <span><strong>Delivery role</strong> — can update milestone status, manage commercials</span>
+              </label>
             </div>
 
             {needsCompany && (

@@ -9,7 +9,20 @@ const CommercialsWidget = () => {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    api.get('/commercials/dashboard').then((r) => setData(r.data)).catch(() => setData(null));
+    // Trigger silent renewal scan first (idempotent), then load dashboard.
+    (async () => {
+      try {
+        await api.post('/commercials/run-renewal-scan');
+      } catch (e) {
+        // Non-admin users will 403 — ignore.
+      }
+      try {
+        const r = await api.get('/commercials/dashboard');
+        setData(r.data);
+      } catch (e) {
+        setData(null);
+      }
+    })();
   }, []);
 
   if (!data) return null;

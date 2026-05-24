@@ -52,7 +52,7 @@ const LOGO_LIGHT_BG_URL = "https://customer-assets.emergentagent.com/job_20ffed0
 const VYAPAAR_LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
 
 const Layout = ({ children }) => {
-  const { user, logout, isAdmin, isSellingPartner, isSalesAssociate, isCustomer } = useAuth();
+  const { user, logout, isAdmin, isSellingPartner, isSalesAssociate, isCustomer, isFinance, isDelivery, canAccessCommercials } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
@@ -203,13 +203,21 @@ const Layout = ({ children }) => {
     }
 
     // Commercials (Revenue Contracting & Delivery)
-    if (isAdmin || isSellingPartner) {
+    if (canAccessCommercials) {
       items.push({
         label: 'Commercials',
         icon: Briefcase,
         path: '/commercials',
-        roles: ['super_admin', 'selling_partner'],
+        roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer'],
       });
+      if (isAdmin || isFinance || isDelivery) {
+        items.push({
+          label: 'Revenue Analytics',
+          icon: BarChart3,
+          path: '/commercials/analytics',
+          roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer'],
+        });
+      }
     }
 
     items.push({ 

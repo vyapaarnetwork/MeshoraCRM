@@ -1,0 +1,47 @@
+{
+  "summary": "Phase 2 Revenue Contracting (analytics + renewal scan + finance/delivery user flags). Comprehensive backend pytest (21 new + 29 regression = 50 tests, 100% pass) and targeted Playwright UI verification. All Phase 2 features green. No regressions. Phase 1 bug from iteration_9 (GET /api/commercials silently returning [] for non-admin non-SP) is now FIXED — customer correctly gets 403.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Run renewal scan toast", "issue": "When all eligible contracts are already linked to a renewal lead (skipped>0, created=0), toast says 'No contracts in renewal window' which is misleading — actually they ARE in the window but already linked. Suggest: differentiate created vs skipped in toast (e.g., 'X new renewal leads; Y already linked').", "affected_selectors": ["[data-testid=run-renewal-scan-btn]"]}
+    ],
+    "design_issues": [
+      {"screen": "/commercials/analytics", "issues": ["Recharts emits repeated console warnings 'width(-1) and height(-1) of chart should be greater than 0' on first mount because ResponsiveContainer parents lack explicit minHeight before flex layout settles. Charts render fine after layout — but the warning spam is noisy. Add minHeight to chart containers."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_commercials_phase2.py",
+    "/app/backend/tests/test_commercials.py",
+    "/app/test_reports/pytest/phase2_results.xml"
+  ],
+  "action_items": [
+    "Optional: tweak Run renewal scan toast to surface created vs skipped counts ('1 created, 3 already linked')",
+    "Optional: add minHeight to ResponsiveContainer parents in CommercialsAnalytics.jsx to silence Recharts -1/-1 console warnings on initial mount",
+    "Optional but recommended: split server.py (now 5754 lines) — at minimum extract commercials routes into /app/backend/routes/commercials.py (still 700+ line guideline violation flagged in iteration_9)"
+  ],
+  "critical_code_review_comments": [
+    "Route ordering verified: /commercials/run-renewal-scan and /commercials/analytics are declared BEFORE /commercials/{commercial_id}, so the catch-all id route does not eat them. Good.",
+    "_ensure_commercial_access now treats is_finance / is_delivery as full-access; correct per spec. Note: this grants finance/delivery roles equivalent write power to admin — fine for Phase 2 but document this elevation clearly in user-management docs.",
+    "Renewal scan idempotency works correctly: re-running does not duplicate leads; commercial.contract_status flips to 'renewal_due'; activity event 'renewal_lead_created' logged once.",
+    "Renewal status auto-creation is idempotent (find_one then insert) — good.",
+    "Analytics endpoint correctly handles months ∈ [1, 36] clamp; bucket math via _add_months is safe.",
+    "commercials_dashboard 'upcoming_renewals' uses end_date<=today+60 but doesn't honor renewal_notice_days. Consider making it match the run-renewal-scan window for consistency.",
+    "is_finance/is_delivery flags flow correctly through UserResponse, POST /users, PUT /users/{id}, auth/login, auth/me, GET /users — fully wired.",
+    "server.py is now 5754 lines (was 5461 in iteration_9) — guideline violation grows; modularization should be prioritised before Phase 3.",
+    "Phase 1 bug fixed: GET /api/commercials now raises 403 for customer (verified by TestCustomerRBAC::test_customer_blocked_on_list)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_commercials_phase2.py (new — 21 Phase 2 tests)"
+  ],
+  "success_rate": {"backend": "100% (50/50)", "frontend": "~98%"},
+  "test_credentials": "Super Admin: admin@vyapaarnetwork.com / admin123 (used). Customer: john@testco.com / test123 (used for 403 RBAC). Created TEST P2 sales_associate (with is_finance=true), sales_associate (is_delivery=true), and selling_partner test users with password test1234.",
+  "seed_data_creation": "Created TEST P2 Renewal Lead with recurring commercial expiring in 5 days (renewal_notice_days=30) which entered the renewal window and produced an auto-renewal lead. Several TEST P2 leads created for finance-user create-commercial test. All prefixed 'TEST P2' for cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 backend test file at /app/backend/tests/test_commercials_phase2.py (21 tests). Phase 1 tests in /app/backend/tests/test_commercials.py (29 tests). Both files now 100% passing — total 50 tests. Renewal scan creates real test data in DB (renewal leads); seed data prefixed 'TEST P2'. Existing renewal-scanned commercial has renewal_lead_id set; subsequent scan calls will return created=0 skipped>=1, so UI toast may appear as 'No contracts in renewal window' even though renewal scan did execute. To re-trigger creation, patch a different recurring commercial's contract_end_date to (today+5d) via /api/commercials/{id}.",
+  "rca of the issue": "N/A — no critical bugs found in Phase 2. Toast wording for renewal-scan when only skipped>0 is the only minor UX gap."
+}

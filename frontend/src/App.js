@@ -25,6 +25,7 @@ import EmailTemplates from './pages/EmailTemplates';
 import PartnerMappings from './pages/PartnerMappings';
 import CommercialsList from './pages/CommercialsList';
 import CommercialDetail from './pages/CommercialDetail';
+import CommercialsAnalytics from './pages/CommercialsAnalytics';
 import './App.css';
 
 // Protected Route Component
@@ -179,12 +180,17 @@ function AppRoutes() {
 
       {/* Commercials (Revenue Contracting & Delivery) */}
       <Route path="/commercials" element={
-        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner']}>
+        <ProtectedRoute>
           <CommercialsList />
         </ProtectedRoute>
       } />
+      <Route path="/commercials/analytics" element={
+        <ProtectedRoute>
+          <CommercialsAnalytics />
+        </ProtectedRoute>
+      } />
       <Route path="/commercials/:id" element={
-        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner']}>
+        <ProtectedRoute>
           <CommercialDetail />
         </ProtectedRoute>
       } />

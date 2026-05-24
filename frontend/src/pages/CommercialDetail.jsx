@@ -12,7 +12,7 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
-import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 
 const MILESTONE_STATUS_STYLES = {
@@ -69,6 +69,9 @@ const CommercialDetail = () => {
   const [documents, setDocuments] = useState([]);
   const [activity, setActivity] = useState([]);
   const [milestones, setMilestones] = useState([]);
+  const [dragIndex, setDragIndex] = useState(null);
+  const [activityFilter, setActivityFilter] = useState('all');
+  const [activitySearch, setActivitySearch] = useState('');
   const [invoiceDialog, setInvoiceDialog] = useState({ open: false, milestone_id: null, billing_schedule_id: null, suggestedAmount: 0 });
   const [paymentDialog, setPaymentDialog] = useState({ open: false, invoice: null });
   const [uploadDialog, setUploadDialog] = useState(false);
@@ -145,6 +148,33 @@ const CommercialDetail = () => {
       return next;
     });
   };
+
+  // Drag-and-drop reorder
+  const handleDragStart = (idx) => (e) => {
+    setDragIndex(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    // Required for Firefox
+    try { e.dataTransfer.setData('text/plain', String(idx)); } catch (_) { /* noop */ }
+  };
+  const handleDragOver = (idx) => (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+  const handleDrop = (idx) => (e) => {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === idx) {
+      setDragIndex(null);
+      return;
+    }
+    setMilestones((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(dragIndex, 1);
+      next.splice(idx, 0, moved);
+      return next;
+    });
+    setDragIndex(null);
+  };
+  const handleDragEnd = () => setDragIndex(null);
 
   const updateMilestone = (idx, field, value) => {
     setMilestones((prev) => {
@@ -352,6 +382,14 @@ const CommercialDetail = () => {
           <p className="text-sm text-muted-foreground mt-1">
             Customer: <strong>{commercial.customer_name || '—'}</strong> · Lead{' '}
             <Link to={`/leads/${commercial.lead_id}`} className="text-primary hover:underline">view</Link>
+            {commercial.renewal_lead_id && (
+              <>
+                {' · '}
+                <Link to={`/leads/${commercial.renewal_lead_id}`} className="text-amber-600 hover:underline font-medium inline-flex items-center gap-1" data-testid="renewal-lead-link">
+                  Renewal pipeline <ExternalLink className="w-3 h-3" />
+                </Link>
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -559,12 +597,24 @@ const CommercialDetail = () => {
                     </thead>
                     <tbody>
                       {milestones.map((m, idx) => (
-                        <tr key={m.id} className="border-b last:border-0" data-testid={`milestone-row-${idx}`}>
+                        <tr
+                          key={m.id}
+                          className={`border-b last:border-0 transition-colors ${dragIndex === idx ? 'opacity-40 bg-primary/5' : ''}`}
+                          draggable
+                          onDragStart={handleDragStart(idx)}
+                          onDragOver={handleDragOver(idx)}
+                          onDrop={handleDrop(idx)}
+                          onDragEnd={handleDragEnd}
+                          data-testid={`milestone-row-${idx}`}
+                        >
                           <td className="py-2">
                             <div className="flex flex-col items-center gap-1">
-                              <button type="button" onClick={() => moveMilestone(idx, -1)} className="text-muted-foreground hover:text-foreground"><ChevronUp className="w-3 h-3" /></button>
+                              <GripVertical className="w-3 h-3 text-muted-foreground cursor-grab" title="Drag to reorder" />
                               <span className="text-xs">{idx + 1}</span>
-                              <button type="button" onClick={() => moveMilestone(idx, 1)} className="text-muted-foreground hover:text-foreground"><ChevronDown className="w-3 h-3" /></button>
+                              <div className="flex flex-col">
+                                <button type="button" onClick={() => moveMilestone(idx, -1)} className="text-muted-foreground hover:text-foreground"><ChevronUp className="w-3 h-3" /></button>
+                                <button type="button" onClick={() => moveMilestone(idx, 1)} className="text-muted-foreground hover:text-foreground"><ChevronDown className="w-3 h-3" /></button>
+                              </div>
                             </div>
                           </td>
                           <td className="py-2 pr-2">
@@ -792,24 +842,79 @@ const CommercialDetail = () => {
         <TabsContent value="activity">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Activity className="w-4 h-4 text-primary" /> Activity log</CardTitle>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2"><Activity className="w-4 h-4 text-primary" /> Activity & Audit log</CardTitle>
+                  <CardDescription>Every commercial change with user, timestamp and metadata.</CardDescription>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative">
+                    <SearchIcon className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={activitySearch}
+                      onChange={(e) => setActivitySearch(e.target.value)}
+                      placeholder="Search activity…"
+                      className="pl-7 w-56 h-9"
+                      data-testid="activity-search"
+                    />
+                  </div>
+                  <Select value={activityFilter} onValueChange={setActivityFilter}>
+                    <SelectTrigger className="w-44 h-9" data-testid="activity-filter"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All events</SelectItem>
+                      <SelectItem value="created">Setup / created</SelectItem>
+                      <SelectItem value="updated">Updates</SelectItem>
+                      <SelectItem value="milestones_updated,milestone_status">Milestones</SelectItem>
+                      <SelectItem value="invoice_raised,invoice_updated">Invoices</SelectItem>
+                      <SelectItem value="payment_received">Payments</SelectItem>
+                      <SelectItem value="document_uploaded,document_deleted">Documents</SelectItem>
+                      <SelectItem value="billing_regenerated,renewal_lead_created">Billing & renewals</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              {activity.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No activity yet.</p>
-              ) : (
-                <ul className="space-y-3">
-                  {activity.map((a) => (
-                    <li key={a.id} className="flex gap-3 text-sm">
-                      <div className="w-2 h-2 mt-2 rounded-full bg-primary flex-shrink-0" />
-                      <div>
-                        <div>{a.message}</div>
-                        <div className="text-xs text-muted-foreground">{formatDateTime(a.created_at)} · {a.user_name}</div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {(() => {
+                const filterTypes = activityFilter === 'all' ? null : new Set(activityFilter.split(','));
+                const q = activitySearch.toLowerCase();
+                const filtered = activity.filter((a) => {
+                  if (filterTypes && !filterTypes.has(a.type)) return false;
+                  if (q) {
+                    const hay = `${a.message || ''} ${a.user_name || ''} ${a.type || ''}`.toLowerCase();
+                    if (!hay.includes(q)) return false;
+                  }
+                  return true;
+                });
+                if (activity.length === 0) {
+                  return <p className="text-sm text-muted-foreground">No activity yet.</p>;
+                }
+                if (filtered.length === 0) {
+                  return <p className="text-sm text-muted-foreground">No events match your filter.</p>;
+                }
+                return (
+                  <ul className="space-y-3" data-testid="activity-list">
+                    {filtered.map((a) => (
+                      <li key={a.id} className="flex gap-3 text-sm">
+                        <div className="w-2 h-2 mt-2 rounded-full bg-primary flex-shrink-0" />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span>{a.message}</span>
+                            <Badge variant="outline" className="text-[10px] capitalize">{(a.type || '').replace(/_/g, ' ')}</Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground">{formatDateTime(a.created_at)} · {a.user_name}</div>
+                          {a.meta && Object.keys(a.meta).length > 0 && (
+                            <details className="text-[11px] text-muted-foreground mt-1">
+                              <summary className="cursor-pointer hover:text-foreground">View metadata</summary>
+                              <pre className="mt-1 p-2 rounded bg-muted/50 overflow-x-auto">{JSON.stringify(a.meta, null, 2)}</pre>
+                            </details>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
