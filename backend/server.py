@@ -5004,7 +5004,7 @@ async def list_commercials(
         lead_ids = [ld['id'] for ld in leads]
         query['lead_id'] = {"$in": lead_ids}
     elif current_user.get('role') != UserRole.SUPER_ADMIN.value:
-        return []
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     items = await db.commercials.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     return items
 

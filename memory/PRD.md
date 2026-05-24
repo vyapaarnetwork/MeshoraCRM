@@ -104,6 +104,34 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Dark mode toggle** — new `ThemeContext.jsx` provider, Sun/Moon icon in topbar, persisted to `localStorage`, applies `dark` class to `<html>`; Tailwind dark variants applied to header
 - [x] **Dashboard date filters** — 5 presets (All time, Today, Last 7d, Last 30d, This month) + manual From/To `<Input type="date">` + Clear button; wired to `GET /api/dashboard/stats?start_date=&end_date=` (end_date promoted to `YYYY-MM-DDT23:59:59` for inclusive day)
 
+### Phase 12 - Revenue Contracting & Delivery Management — MVP (Feb 24, 2026)
+- [x] **Closed-Won wizard** (`ClosedWonWizard.jsx`) — opens via "Set Up Commercials" button on Lead Detail (admin only) AND auto-triggers when lead status `is_won=true` and no commercial exists yet. Lets admin pick **One-Time Project** or **Recurring Contract**, creates `commercial` doc and navigates to `/commercials/:id`.
+- [x] **Lead status `is_won` flag** added to `LeadStatus` master (Create/Response models + startup backfill that marks existing "Won" status as `is_won=true`). `LeadResponse.status_is_won` exposed.
+- [x] **Commercial Detail page** (`/commercials/:id`) with tabs:
+  - **Overview** — full setup form (currency, total/contract value, dates, owners, billing contact, renewal options, notes); Save + "Regenerate billing schedule" for recurring
+  - **Milestones** (one-time) — table with add/remove, up/down reorder, auto-percent ↔ amount calc, live validation banner (amounts must equal project value, % must total 100), per-row status select, timeline visualization, "Raise invoice" shortcut
+  - **Billing Schedule** (recurring) — auto-generated periods table with Raise-invoice per row; regenerate button
+  - **Invoices & Payments** — list both sides; record payment dialog auto-updates invoice/milestone/billing status (paid → milestone payment_received, billing → paid)
+  - **Documents** — upload (proposal/SOW/contract/invoice/other), download, delete
+  - **Activity** — chronological log of every commercial event
+- [x] **Commercials List** (`/commercials`) — card grid with type filter + search; admin sees all, selling partner sees only their leads.
+- [x] **Dashboard widget** (`CommercialsWidget.jsx`) — admin-only snapshot: One-time projects count + value + realized + overdue invoices + upcoming milestones; Recurring active subs + MRR + ARR + Renewals(60d) with deep links.
+- [x] **Backend API**:
+  - `POST/GET/PATCH /api/commercials`, `GET /api/commercials/by-lead/{lead_id}`
+  - `PUT /api/commercials/{id}/milestones` with hard validation
+  - `PATCH /api/commercials/{id}/milestones/{mid}` status updates
+  - `POST /api/commercials/{id}/regenerate-billing` (recurring only; rejects one_time)
+  - `POST/GET/PATCH /api/commercials/{id}/invoices` (auto-links to milestone/billing schedule)
+  - `POST/GET /api/commercials/{id}/payments` (full payment → invoice paid + milestone payment_received)
+  - `POST/GET/DELETE /api/commercials/{id}/documents` + `/download`
+  - `GET /api/commercials/{id}/activity`
+  - `GET /api/commercials/dashboard` (MRR, ARR, upcoming renewals, project metrics)
+- [x] **RBAC**: Admin = full. Selling Partner = read-only on own leads' commercials. Sales Associate / Customer = 403.
+- [x] **Billing schedule generator** — monthly / quarterly / half-yearly / annual, clamps to last day of month, capped at 240 periods.
+- [x] **Activity logging** — every state change (create / update / milestone change / invoice raise / payment / document upload+delete) recorded with user + timestamp.
+- [x] **Currency** — single field per contract (INR default, USD/EUR/GBP supported), no FX conversion.
+- [x] **Testing** — 28/29 backend pytest tests passing (96.5%); frontend ~95% via testing_agent_v3_fork (iteration_9.json). One RBAC fix applied post-test (list endpoint now returns 403 for unauthorized roles).
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
@@ -156,14 +184,16 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Automated follow-up email reminders
 - [ ] Lead auto-routing by partner categories
 - [x] Dashboard date range filters (Feb 24, 2026)
-- [ ] Refactor `server.py` (4500+ lines) into modular routers
+- [ ] Refactor `server.py` (5400+ lines → modular routers; commercials is the largest contained slice and a good first extraction)
 - [ ] Fix 32 React Hook dependency warnings
+- [ ] **Commercials Phase 2** — SendGrid/Twilio reminders (milestone due, invoice overdue, renewal), Renewal pipeline auto-creation, revenue forecast charts, MRR/ARR/churn trend chart, drag-drop milestone reorder, audit log UI, finance/delivery role flags
 
 ### P2 - Medium Priority
 - [x] Dark mode toggle (Feb 24, 2026)
 - [ ] Real-time notifications (WebSocket)
 - [ ] Refactor large React components (Companies.jsx 687 lines, LeadDetail.jsx 713 lines)
 - [ ] Move JWT from localStorage to HttpOnly cookies
+- [ ] **Commercials Phase 3** — AI suggestions (suggested milestone structures from past deals, renewal probability, payment delay risk), PDF invoice generation, kanban view
 
 ## Test Reports
 - `/app/test_reports/iteration_7.json` - Customer User Management tests
