@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Skeleton } from '../components/ui/skeleton';
 import { Badge } from '../components/ui/badge';
 import { Progress } from '../components/ui/progress';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -14,7 +17,9 @@ import {
   BarChart3,
   PieChart,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  CalendarRange,
+  X as XIcon
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -40,23 +45,72 @@ const Dashboard = () => {
   const { user, isAdmin, isSellingPartner, isSalesAssociate, isCustomer } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [activePreset, setActivePreset] = useState('all');
 
-  useEffect(() => {
-    fetchDashboardData();
-  }, []);
-
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async (sd, ed) => {
+    setLoading(true);
     try {
-      const response = await api.get('/dashboard/stats');
+      const params = {};
+      if (sd) params.start_date = sd;
+      if (ed) {
+        // Make end_date inclusive of the entire day
+        params.end_date = ed.length === 10 ? `${ed}T23:59:59` : ed;
+      }
+      const response = await api.get('/dashboard/stats', { params });
       setStats(response.data);
     } catch (error) {
       console.error('Failed to fetch dashboard stats:', error);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardData(startDate, endDate);
+  }, [fetchDashboardData, startDate, endDate]);
+
+  const toIsoDate = (date) => date.toISOString().slice(0, 10);
+
+  const applyPreset = (preset) => {
+    setActivePreset(preset);
+    const today = new Date();
+    const todayStr = toIsoDate(today);
+    if (preset === 'all') {
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'today') {
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === '7d') {
+      const past = new Date();
+      past.setDate(past.getDate() - 6);
+      setStartDate(toIsoDate(past));
+      setEndDate(todayStr);
+    } else if (preset === '30d') {
+      const past = new Date();
+      past.setDate(past.getDate() - 29);
+      setStartDate(toIsoDate(past));
+      setEndDate(todayStr);
+    } else if (preset === 'month') {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      setStartDate(toIsoDate(first));
+      setEndDate(todayStr);
+    }
   };
 
-  if (loading) {
+  const handleManualChange = (field, value) => {
+    setActivePreset('custom');
+    if (field === 'start') setStartDate(value);
+    else setEndDate(value);
+  };
+
+  const clearFilters = () => applyPreset('all');
+
+  const hasActiveFilter = startDate || endDate;
+
+  if (loading && !stats) {
     return <DashboardSkeleton />;
   }
 
@@ -76,6 +130,77 @@ const Dashboard = () => {
           {getRoleLabel(user?.role)}
         </Badge>
       </div>
+
+      {/* Date Filter */}
+      <Card data-testid="dashboard-date-filter">
+        <CardContent className="py-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <CalendarRange className="w-4 h-4 text-primary" />
+              <span>Filter by date range</span>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              {[
+                { key: 'all', label: 'All time' },
+                { key: 'today', label: 'Today' },
+                { key: '7d', label: 'Last 7d' },
+                { key: '30d', label: 'Last 30d' },
+                { key: 'month', label: 'This month' },
+              ].map((preset) => (
+                <Button
+                  key={preset.key}
+                  type="button"
+                  size="sm"
+                  variant={activePreset === preset.key ? 'default' : 'outline'}
+                  onClick={() => applyPreset(preset.key)}
+                  data-testid={`date-preset-${preset.key}`}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+              <div className="flex items-center gap-2">
+                <div className="flex flex-col">
+                  <Label htmlFor="dash-start-date" className="text-[10px] uppercase tracking-wider text-muted-foreground">From</Label>
+                  <Input
+                    id="dash-start-date"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => handleManualChange('start', e.target.value)}
+                    className="h-9 w-[150px]"
+                    data-testid="date-start-input"
+                    max={endDate || undefined}
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <Label htmlFor="dash-end-date" className="text-[10px] uppercase tracking-wider text-muted-foreground">To</Label>
+                  <Input
+                    id="dash-end-date"
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => handleManualChange('end', e.target.value)}
+                    className="h-9 w-[150px]"
+                    data-testid="date-end-input"
+                    min={startDate || undefined}
+                  />
+                </div>
+                {hasActiveFilter && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearFilters}
+                    className="h-9"
+                    data-testid="date-clear-btn"
+                  >
+                    <XIcon className="w-4 h-4 mr-1" />
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 stagger-children">

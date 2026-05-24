@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { Button } from './ui/button';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { Badge } from './ui/badge';
@@ -37,16 +38,21 @@ import {
   Mail,
   Network,
   ShoppingCart,
-  UserPlus
+  UserPlus,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
 
-const LOGO_LONG_URL = "https://customer-assets.emergentagent.com/job_vyapaar-crm/artifacts/b8fhtq1b_Vyapaar%20Network%20Logo%20White%20Long.jpg";
-const LOGO_SHORT_URL = "https://customer-assets.emergentagent.com/job_vyapaar-crm/artifacts/dabvz2ii_Vyapaar%20Network%20Logo%20White%20Short.jpg";
+// Meshora brand artifacts
+const LOGO_DARK_BG_URL = "https://customer-assets.emergentagent.com/job_20ffed07-8ce6-4561-b298-187eb855e18a/artifacts/anlsylap_ChatGPT%20Image%20May%2024%2C%202026%2C%2001_51_27%20PM.png"; // white text on black bg → use on dark sidebar
+const LOGO_LIGHT_BG_URL = "https://customer-assets.emergentagent.com/job_20ffed07-8ce6-4561-b298-187eb855e18a/artifacts/yj2uta2t_ChatGPT%20Image%20May%2024%2C%202026%2C%2001_50_32%20PM.png"; // dark text on white bg → use on light headers
+const VYAPAAR_LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
 
 const Layout = ({ children }) => {
   const { user, logout, isAdmin, isSellingPartner, isSalesAssociate, isCustomer } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -250,13 +256,14 @@ const Layout = ({ children }) => {
               onClick={() => setSidebarCollapsed(false)}
               className="flex items-center mx-auto"
               title="Expand sidebar"
+              data-testid="sidebar-expand-btn"
             >
-              <img src={LOGO_SHORT_URL} alt="Vyapaar Network" className="h-10 w-auto" />
+              <img src={LOGO_DARK_BG_URL} alt="Meshora" className="h-9 w-9 object-contain rounded" style={{ objectPosition: 'center top' }} />
             </button>
           ) : (
             <>
-              <Link to="/dashboard" className="flex items-center">
-                <img src={LOGO_LONG_URL} alt="Vyapaar Network" className="h-10 w-auto" />
+              <Link to="/dashboard" className="flex items-center" data-testid="sidebar-logo-link">
+                <img src={LOGO_DARK_BG_URL} alt="Meshora" className="h-10 w-auto object-contain" />
               </Link>
               <Button
                 variant="ghost"
@@ -302,6 +309,22 @@ const Layout = ({ children }) => {
             </Avatar>
           )}
         </div>
+
+        {/* Powered by Vyapaar Network footer */}
+        <div
+          className={`px-3 py-2 border-t border-slate-800 bg-slate-900/40 ${sidebarCollapsed ? 'flex justify-center' : ''}`}
+          data-testid="powered-by-footer"
+        >
+          {!sidebarCollapsed ? (
+            <div className="flex items-center gap-2 text-[10px] text-slate-400 leading-tight">
+              <span className="uppercase tracking-wider">Powered by</span>
+              <img src={VYAPAAR_LOGO_URL} alt="Vyapaar Network" className="h-4 w-auto" />
+              <span className="font-medium text-slate-300">Vyapaar Network</span>
+            </div>
+          ) : (
+            <img src={VYAPAAR_LOGO_URL} alt="Vyapaar Network" title="Powered by Vyapaar Network" className="h-5 w-auto" />
+          )}
+        </div>
       </aside>
 
       {/* Mobile Sidebar Overlay */}
@@ -322,7 +345,7 @@ const Layout = ({ children }) => {
       >
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800">
           <Link to="/dashboard" className="flex items-center gap-2" onClick={() => setMobileMenuOpen(false)}>
-            <img src={LOGO_LONG_URL} alt="Vyapaar Network" className="h-10 w-auto" />
+            <img src={LOGO_DARK_BG_URL} alt="Meshora" className="h-10 w-auto object-contain" />
           </Link>
           <Button
             variant="ghost"
@@ -355,12 +378,21 @@ const Layout = ({ children }) => {
             </div>
           </div>
         </div>
+
+        {/* Powered by Vyapaar Network footer (mobile) */}
+        <div className="px-3 py-2 border-t border-slate-800 bg-slate-900/40">
+          <div className="flex items-center gap-2 text-[10px] text-slate-400">
+            <span className="uppercase tracking-wider">Powered by</span>
+            <img src={VYAPAAR_LOGO_URL} alt="Vyapaar Network" className="h-4 w-auto" />
+            <span className="font-medium text-slate-300">Vyapaar Network</span>
+          </div>
+        </div>
       </aside>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-screen">
         {/* Header */}
-        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-30">
+        <header className="h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30">
           <div className="h-full px-4 lg:px-6 flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Button
@@ -373,11 +405,27 @@ const Layout = ({ children }) => {
                 <Menu className="w-5 h-5" />
               </Button>
               <div className="lg:hidden">
-                <img src={LOGO_LONG_URL} alt="Vyapaar Network" className="h-8 w-auto" />
+                <img
+                  src={theme === 'dark' ? LOGO_DARK_BG_URL : LOGO_LIGHT_BG_URL}
+                  alt="Meshora"
+                  className="h-8 w-auto object-contain"
+                />
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Theme Toggle */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleTheme}
+                className="text-slate-600 dark:text-slate-300"
+                data-testid="theme-toggle-btn"
+                title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                aria-label="Toggle theme"
+              >
+                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </Button>
               {/* Notifications Dropdown */}
               <DropdownMenu open={notificationsOpen} onOpenChange={setNotificationsOpen}>
                 <DropdownMenuTrigger asChild>

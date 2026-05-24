@@ -95,6 +95,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **`GET /api/dashboard/health-check`** endpoint, single bulk aggregation per check, examples list per item, "Fix" deep links to the relevant admin page
 - [x] **"All systems healthy"** empty state when there are zero issues
 
+### Phase 11 - Meshora Rebranding, Dark Mode & Dashboard Date Filters (Feb 24, 2026)
+- [x] **Meshora rebranding** — replaced Vyapaar logos with new Meshora artifacts:
+  - `LOGO_DARK_BG_URL` (white text on black) → sidebar (always dark) & dark-mode mobile header
+  - `LOGO_LIGHT_BG_URL` (dark text on white) → light-mode mobile header
+  - Page title updated to "Meshora — Collaboration That Converts"
+- [x] **"Powered by Vyapaar Network" footer** — visible at the bottom of both desktop sidebar (expanded + collapsed) and mobile drawer, with small Vyapaar logo
+- [x] **Dark mode toggle** — new `ThemeContext.jsx` provider, Sun/Moon icon in topbar, persisted to `localStorage`, applies `dark` class to `<html>`; Tailwind dark variants applied to header
+- [x] **Dashboard date filters** — 5 presets (All time, Today, Last 7d, Last 30d, This month) + manual From/To `<Input type="date">` + Clear button; wired to `GET /api/dashboard/stats?start_date=&end_date=` (end_date promoted to `YYYY-MM-DDT23:59:59` for inclusive day)
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
@@ -146,11 +155,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 ### P1 - High Priority
 - [ ] Automated follow-up email reminders
 - [ ] Lead auto-routing by partner categories
-- [ ] Dashboard date range filters
+- [x] Dashboard date range filters (Feb 24, 2026)
+- [ ] Refactor `server.py` (4500+ lines) into modular routers
+- [ ] Fix 32 React Hook dependency warnings
 
 ### P2 - Medium Priority
-- [ ] Dark mode toggle
+- [x] Dark mode toggle (Feb 24, 2026)
 - [ ] Real-time notifications (WebSocket)
+- [ ] Refactor large React components (Companies.jsx 687 lines, LeadDetail.jsx 713 lines)
+- [ ] Move JWT from localStorage to HttpOnly cookies
 
 ## Test Reports
 - `/app/test_reports/iteration_7.json` - Customer User Management tests
