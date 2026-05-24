@@ -171,6 +171,14 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Email + SMS placeholders** — `_emit_commercial_reminder` has clearly commented hooks to drop in `send_email(...)` / `send_sms(...)` calls when keys are configured later. No mocking; in-app only by design.
 - [x] **Testing** — testing_agent_v3_fork iteration_11: Phase 2.5 = 10/10 (100%); combined Phase 1+2+2.5 = 59/60 (98.3%, 1 transient timeout). Frontend ~95%, all flows green.
 
+### Phase 15 - Revenue Contracting Phase 3 — AI suggestions, PDF invoices, Kanban (Feb 24, 2026)
+- [x] **AI milestone templates** — `POST /api/commercials/ai/suggest-milestones` uses **Gemini 3 Pro** via the Emergent LLM key + sample of recent past one-time deals as in-context examples. Returns 3-5 milestones with name, description, percentage, amount (auto-computed), delivery_date (offset from project start), delivery_offset_days. Sum-to-100 normalisation + last-row rounding correction. Frontend: "AI suggest" button on Milestones tab with confirm dialog before replacing existing milestones.
+- [x] **Renewal probability score** — `GET /api/commercials/{id}/ai/renewal-probability` returns probability (0-1) + band + factor list. Heuristic-based (no LLM): auto_renewal, renewal_type, payment-history strength, overdue count, contract tenure. Frontend card on Overview tab with progress bar + factor list.
+- [x] **Payment-delay risk score** — `GET /api/commercials/{id}/ai/payment-delay-risk` returns avg historical pay-lag + per-invoice risk score, band, factors. Heuristic-based. Frontend card on Overview tab showing top 4 risky invoices.
+- [x] **Kanban view** — `GET /api/commercials/kanban` returns columns grouped by contract_status (active, renewal_due, renewed, on_hold, expired, cancelled) + one_time bucket. RBAC: selling partners see only their own. New page at `/commercials/kanban`, nav link added.
+- [x] **PDF invoice generation** — `GET /api/commercials/{id}/invoices/{inv_id}/pdf` builds a clean A4 PDF with reportlab (brand header, billed-to, project, line items, paid/due amounts, notes). Frontend: Download-PDF icon button next to each invoice row.
+- [x] **Testing** — testing_agent_v3_fork iteration_12: Phase 3 = **20/20 backend (100%)** including real LLM call, **100% frontend on requested flows**, all RBAC checks pass. Two cosmetic items flagged: hydration warning from Emergent's instrumentation wrapper (not app code), and design polish for non-admin direct URL access to kanban (functional 403 already in place).
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
@@ -223,18 +231,18 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Automated follow-up email reminders
 - [ ] Lead auto-routing by partner categories
 - [x] Dashboard date range filters (Feb 24, 2026)
-- [ ] Refactor `server.py` (5750+ lines → modular routers; commercials slice is largest contained candidate)
+- [ ] **Refactor `server.py` (6000+ lines) → extract `routers/commercials.py`** (largest contained slice; ~1100 lines)
 - [ ] Fix 32 React Hook dependency warnings
 - [x] **Commercials Phase 2** — renewal pipeline auto-creation, analytics page (MRR/ARR/churn/forecast), drag-drop milestone reorder, audit/activity search+filter, is_finance/is_delivery role flags (Feb 24, 2026)
 - [x] **Commercials Phase 2.5 — In-app reminders** (Feb 24, 2026): in-app notifications for milestone-due, billing-due, invoice-overdue, renewal-window with dedup. SendGrid/Twilio hooks scaffolded — pending API keys to activate.
+- [x] **Commercials Phase 3** — AI milestone templates (Gemini 3 Pro), renewal probability, payment-delay risk, Kanban view, PDF invoice generation (Feb 24, 2026)
 - [ ] **Commercials Phase 2.6 — Email + SMS activation**: drop SendGrid + Twilio keys into `.env` and uncomment the hooks in `_emit_commercial_reminder` to enable real email/SMS sending.
 
 ### P2 - Medium Priority
 - [x] Dark mode toggle (Feb 24, 2026)
 - [ ] Real-time notifications (WebSocket)
-- [ ] Refactor large React components (Companies.jsx 687 lines, LeadDetail.jsx 713 lines)
-- [ ] Move JWT from localStorage to HttpOnly cookies
-- [ ] **Commercials Phase 3** — AI suggestions (suggested milestone structures from past deals, renewal probability, payment delay risk), PDF invoice generation, kanban view
+- [ ] **Refactor `Companies.jsx` (687 lines) and `LeadDetail.jsx` (843 lines)** into smaller sub-components
+- [ ] **Move JWT from localStorage → HttpOnly cookies** (security-critical; full migration touches every API call + CORS + CSRF)
 
 ## Test Reports
 - `/app/test_reports/iteration_7.json` - Customer User Management tests
