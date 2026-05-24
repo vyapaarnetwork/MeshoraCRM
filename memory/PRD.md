@@ -130,7 +130,30 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Billing schedule generator** — monthly / quarterly / half-yearly / annual, clamps to last day of month, capped at 240 periods.
 - [x] **Activity logging** — every state change (create / update / milestone change / invoice raise / payment / document upload+delete) recorded with user + timestamp.
 - [x] **Currency** — single field per contract (INR default, USD/EUR/GBP supported), no FX conversion.
-- [x] **Testing** — 28/29 backend pytest tests passing (96.5%); frontend ~95% via testing_agent_v3_fork (iteration_9.json). One RBAC fix applied post-test (list endpoint now returns 403 for unauthorized roles).
+
+### Phase 13 - Revenue Contracting Phase 2 (Feb 24, 2026)
+- [x] **Renewal pipeline auto-creation** — `POST /api/commercials/run-renewal-scan` scans every recurring contract whose `contract_end_date - renewal_notice_days ≤ today`. For each match without an existing renewal lead, it:
+  - ensures a `Renewal` lead status exists (auto-seeded)
+  - auto-creates a Lead with `status=Renewal`, copying customer + partners + categories from the original
+  - sets `commercial.contract_status='renewal_due'` and `commercial.renewal_lead_id=<new_lead_id>`
+  - logs `renewal_lead_created` activity event
+  - **Idempotent** — re-runs do not duplicate
+  - Auto-triggered silently on Dashboard widget mount, plus a manual button on the Analytics page
+  - "Renewal pipeline" link added to commercial detail header when linked
+- [x] **Revenue Analytics page** (`/commercials/analytics`) — admin/finance/delivery:
+  - KPIs: Current MRR, ARR, Active contracts, Churn (this month), 90-day forecast
+  - MRR & ARR area trend (configurable 6/12/24/36 month window)
+  - Contract flow (new vs churned per month)
+  - Revenue mix pie (one-time vs recurring lifetime)
+  - Revenue collected vs invoiced bars
+  - 90-day forecast breakdown (pending invoices + recurring billings + project milestones)
+  - Powered by new `GET /api/commercials/analytics?months=N` endpoint
+- [x] **Drag-drop milestone reorder** — milestone rows are now draggable (`GripVertical` handle + HTML5 drag/drop); arrow buttons retained for fine control
+- [x] **Activity / Audit log enhancement** — search box + event-type filter on the Activity tab; metadata expandable inline (`<details>` block); event-type badge on each entry
+- [x] **`is_finance` / `is_delivery` user role flags** — added to UserBase/Response, AdminUserCreate/Update, Users page admin dialog ("Commercials Permissions" section). Wired through `auth/me`, `auth/login`, `GET /users`, `POST /users`, `PUT /users/{id}`. Both flags grant full commercials write access (parallel to admin); navigation auto-shows "Commercials" + "Revenue Analytics" for finance/delivery users regardless of base role.
+- [x] **AuthContext** exposes `isFinance`, `isDelivery`, `canAccessCommercials`, `canWriteCommercials`.
+- [x] **Testing** — testing_agent_v3_fork iteration_10: backend 100% (50/50 tests), frontend ~98%. No critical issues. Two polish fixes applied post-test (improved renewal-scan toast wording, added `minHeight` to Recharts containers).
+- ⏭ **Deferred to Phase 3** (per user request — keys not yet available): SendGrid milestone-due / invoice-overdue / renewal reminder emails, Twilio SMS reminders, AI suggestions, PDF invoice generation, kanban view.
 
 ## Key API Endpoints
 
@@ -184,9 +207,10 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Automated follow-up email reminders
 - [ ] Lead auto-routing by partner categories
 - [x] Dashboard date range filters (Feb 24, 2026)
-- [ ] Refactor `server.py` (5400+ lines → modular routers; commercials is the largest contained slice and a good first extraction)
+- [ ] Refactor `server.py` (5750+ lines → modular routers; commercials slice is largest contained candidate)
 - [ ] Fix 32 React Hook dependency warnings
-- [ ] **Commercials Phase 2** — SendGrid/Twilio reminders (milestone due, invoice overdue, renewal), Renewal pipeline auto-creation, revenue forecast charts, MRR/ARR/churn trend chart, drag-drop milestone reorder, audit log UI, finance/delivery role flags
+- [x] **Commercials Phase 2** — renewal pipeline auto-creation, analytics page (MRR/ARR/churn/forecast), drag-drop milestone reorder, audit/activity search+filter, is_finance/is_delivery role flags (Feb 24, 2026)
+- [ ] **Commercials Phase 2.5 — Notifications** (deferred): SendGrid milestone-due/invoice-overdue/renewal emails; Twilio SMS reminders. Needs API keys from user.
 
 ### P2 - Medium Priority
 - [x] Dark mode toggle (Feb 24, 2026)

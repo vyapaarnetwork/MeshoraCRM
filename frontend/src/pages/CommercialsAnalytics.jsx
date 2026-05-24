@@ -37,10 +37,16 @@ const CommercialsAnalytics = () => {
     setScanning(true);
     try {
       const res = await api.post('/commercials/run-renewal-scan');
-      const { created, flagged } = res.data;
-      if (created > 0) toast.success(`${created} renewal lead(s) auto-created`);
-      else if (flagged > 0) toast.info(`${flagged} contract(s) flagged for renewal`);
-      else toast.info('No contracts in renewal window');
+      const { created, flagged, skipped } = res.data;
+      if (created > 0) {
+        toast.success(`${created} renewal lead(s) auto-created${skipped ? `; ${skipped} already linked` : ''}`);
+      } else if (skipped > 0) {
+        toast.info(`${skipped} contract(s) already have a renewal lead${flagged ? ` (${flagged} re-flagged)` : ''}`);
+      } else if (flagged > 0) {
+        toast.info(`${flagged} contract(s) re-flagged for renewal`);
+      } else {
+        toast.info('No contracts in renewal window');
+      }
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Renewal scan failed');
     } finally {
@@ -108,8 +114,8 @@ const CommercialsAnalytics = () => {
           <CardDescription>Monthly recurring revenue and annualized run-rate.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="h-72">
-            <ResponsiveContainer>
+          <div className="h-72" style={{ minHeight: 280 }}>
+            <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={series}>
                 <defs>
                   <linearGradient id="mrrFill" x1="0" y1="0" x2="0" y2="1">
@@ -138,8 +144,8 @@ const CommercialsAnalytics = () => {
             <CardDescription>New vs churned contracts per month.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-64">
-              <ResponsiveContainer>
+            <div className="h-64" style={{ minHeight: 240 }}>
+              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={series}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
@@ -164,8 +170,8 @@ const CommercialsAnalytics = () => {
             {mixData.length === 0 ? (
               <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">No payments recorded yet.</div>
             ) : (
-              <div className="h-64">
-                <ResponsiveContainer>
+              <div className="h-64" style={{ minHeight: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
                   <RechartsPieChart>
                     <Pie data={mixData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, value }) => `${name}: ${formatCurrency(value)}`}>
                       {mixData.map((_, idx) => <Cell key={idx} fill={COLORS[idx % COLORS.length]} />)}
@@ -186,8 +192,8 @@ const CommercialsAnalytics = () => {
           <CardDescription>Payments received against invoices raised per month.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="h-64">
-            <ResponsiveContainer>
+          <div className="h-64" style={{ minHeight: 240 }}>
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={series}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
