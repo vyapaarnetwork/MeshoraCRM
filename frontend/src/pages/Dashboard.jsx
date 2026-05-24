@@ -38,6 +38,7 @@ import {
 } from 'recharts';
 import api, { formatCurrency, getRoleLabel } from '../utils/api';
 import HealthCheckWidget from '../components/HealthCheckWidget';
+import CommercialsWidget from '../components/CommercialsWidget';
 
 const COLORS = ['#4169E1', '#DC143C', '#10B981', '#F59E0B', '#8B5CF6', '#64748B'];
 
@@ -266,6 +267,9 @@ const Dashboard = () => {
 
       {/* Health Check Widget (Admin only) */}
       {isAdmin && <HealthCheckWidget />}
+
+      {/* Commercials snapshot (Admin only) */}
+      {isAdmin && <CommercialsWidget />}
 
       {/* Charts Section */}
       <div className="grid gap-6 lg:grid-cols-2">

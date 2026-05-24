@@ -40,7 +40,8 @@ import {
   ShoppingCart,
   UserPlus,
   Sun,
-  Moon
+  Moon,
+  Briefcase
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
@@ -199,6 +200,16 @@ const Layout = ({ children }) => {
         { label: 'Email Templates', icon: Mail, path: '/email-templates', roles: ['super_admin'] },
         { label: 'Grid Report', icon: Grid3X3, path: '/grid-report', roles: ['super_admin'] },
       );
+    }
+
+    // Commercials (Revenue Contracting & Delivery)
+    if (isAdmin || isSellingPartner) {
+      items.push({
+        label: 'Commercials',
+        icon: Briefcase,
+        path: '/commercials',
+        roles: ['super_admin', 'selling_partner'],
+      });
     }
 
     items.push({ 

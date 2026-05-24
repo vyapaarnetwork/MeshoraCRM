@@ -50,9 +50,11 @@ import {
   History,
   UserMinus,
   ArrowRight,
-  Trophy
+  Trophy,
+  Briefcase
 } from 'lucide-react';
 import { DocumentUploadDialog, DocumentList, LEAD_DOCUMENT_TAGS } from '../components/DocumentUpload';
+import ClosedWonWizard from '../components/ClosedWonWizard';
 import api, { formatCurrency, formatDate, formatDateTime, getRoleLabel, getRoleColor } from '../utils/api';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -73,6 +75,10 @@ const LeadDetail = () => {
   const [showAssignPartnerDialog, setShowAssignPartnerDialog] = useState(false);
   const [partners, setPartners] = useState([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState('');
+  // Commercials
+  const [commercial, setCommercial] = useState(null);
+  const [showCommercialsWizard, setShowCommercialsWizard] = useState(false);
+  const [wizardAutoOpenedForLead, setWizardAutoOpenedForLead] = useState(null);
 
   useEffect(() => {
     fetchLead();
@@ -82,6 +88,22 @@ const LeadDetail = () => {
       fetchPartners();
     }
   }, [id, isAdmin]);
+
+  // Fetch commercial whenever lead loads, and auto-open wizard if status flagged won
+  useEffect(() => {
+    if (!lead || !isAdmin) return;
+    let cancelled = false;
+    api.get(`/commercials/by-lead/${lead.id}`).then((r) => {
+      if (cancelled) return;
+      setCommercial(r.data || null);
+      // Auto-open wizard once per visit if won status + no commercial yet
+      if (lead.status_is_won && !r.data && wizardAutoOpenedForLead !== lead.id) {
+        setShowCommercialsWizard(true);
+        setWizardAutoOpenedForLead(lead.id);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [lead, isAdmin, wizardAutoOpenedForLead]);
 
   const fetchLead = async () => {
     try {
@@ -248,6 +270,16 @@ const LeadDetail = () => {
           Back to Leads
         </Button>
         <div className="flex-1" />
+        {isAdmin && (
+          <Button
+            variant={commercial ? 'outline' : 'default'}
+            onClick={() => setShowCommercialsWizard(true)}
+            data-testid="setup-commercials-btn"
+          >
+            <Briefcase className="w-4 h-4 mr-2" />
+            {commercial ? 'Open Commercials' : 'Set Up Commercials'}
+          </Button>
+        )}
         {!isSalesAssociate && (
           <Button 
             onClick={() => navigate(`/leads/${id}/edit`)}
@@ -770,6 +802,14 @@ const LeadDetail = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Closed-Won / Set up Commercials wizard */}
+      <ClosedWonWizard
+        open={showCommercialsWizard}
+        onOpenChange={setShowCommercialsWizard}
+        lead={lead}
+        existingCommercial={commercial}
+      />
     </div>
   );
 };

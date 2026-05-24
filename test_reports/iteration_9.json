@@ -1,0 +1,42 @@
+{
+  "summary": "Phase 1 Revenue Contracting & Delivery Management (Commercials) — comprehensive backend + targeted frontend testing. 28/29 pytest backend tests pass. All core flows verified: lead-status is_won, lead.status_is_won, one-time + recurring commercial creation with duplicate-rejection, list/dashboard/get/by-lead, PATCH with billing-schedule regeneration, milestone PUT total amount + percentage validation, milestone PATCH status, regenerate-billing (recurring only, one_time rejected), quarterly schedule (2026-03-01 to 2027-02-28 = 4 periods), invoice raise → milestone invoice_raised + billing schedule invoiced, full payment → invoice paid + milestone payment_received, list invoices/payments/activity/documents, selling-partner write-blocked, sales-associate denied on dashboard/by-lead/by-id. Frontend list, search, type filter, detail tabs, sidebar nav and dashboard MRR/ARR all render correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/commercials", "issue": "Returns 200 + empty list for sales_associate/customer instead of 403. Spec calls for 403. (Dashboard, by-lead, by-id correctly return 403; only the LIST endpoint silently returns [].) Fix: raise HTTPException(403) at server.py line ~5007 instead of `return []`."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_commercials.py",
+    "/app/test_reports/pytest/commercials_results.xml"
+  ],
+  "action_items": [
+    "Backend: GET /api/commercials should 403 for non-admin/non-selling-partner roles instead of returning empty list (server.py ~line 5006-5007).",
+    "Optional polish: list_commercials and dashboard could share role-check helper to avoid divergence.",
+    "Optional: add an `Upcoming Renewals` label to the CommercialsWidget on dashboard — currently MRR/ARR are visible but the explicit 'Upcoming Renewals' heading was not detected in widget."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 5461 lines — exceeds 700-line guideline. Strongly recommend splitting commercials module into /app/backend/routes/commercials.py (it has its own contained models, helpers, and ~750 lines of endpoints).",
+    "Inconsistent RBAC: dashboard returns 403, but list returns empty list — both should behave the same (403). See server.py line ~5006.",
+    "Selling-partner access check on list (lines 4996-5005) builds lead_ids list with up to 2000 leads then $in query — fine for now but could be slow at scale; consider indexed lookup or moving to aggregation.",
+    "create_commercial returns 400 'Commercials already exists' but error message wording 'Commercials' (plural) is grammatically odd; consider 'Commercial already exists for this lead'.",
+    "_generate_billing_schedule hard-caps at 240 periods (20yr monthly) which is reasonable; good.",
+    "Missing endpoint-level pagination on list_commercials (capped at 500) — fine for MVP but flag for Phase 2.",
+    "Payment endpoint allows over-payment without warning (amount_paid can exceed invoice amount); consider validating new_paid <= amount or at least logging."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_commercials.py (new)"
+  ],
+  "success_rate": {"backend": "96.5%", "frontend": "~95%"},
+  "test_credentials": "Super Admin: admin@vyapaarnetwork.com / admin123 (used). Created TEST_sa_* (sales_associate) and TEST_sp_* (selling_partner) test users with password test1234 during tests.",
+  "seed_data_creation": "Created TEST Commercial Lead and TEST Rec Lead and corresponding one-time + recurring commercials prefixed with TEST_; can be cleaned by searching prefix 'TEST'.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file at /app/backend/tests/test_commercials.py covers full commercials surface (29 tests, 28 pass). Single backend bug: GET /api/commercials returns 200+[] for sales_associate instead of 403 (server.py line ~5006). Frontend wizard could not be triggered from /leads list page automatically because lead cards are not <a> tags — but wizard component and Set Up Commercials button code are in place at /app/frontend/src/pages/LeadDetail.jsx; manual nav to /leads/{id} should show the button for super_admin. CommercialsWidget showed MRR & ARR labels on dashboard. No PDF/email features in scope (Phase 2/3).",
+  "rca of the issue": "GET /api/commercials route at /app/backend/server.py:4984. The branch for non-admin & non-selling-partner returns an empty list instead of raising HTTPException(403). All other commercials endpoints raise 403 correctly via _ensure_commercial_access or explicit role check. Fix: replace `return []` (line 5007) with `raise HTTPException(status_code=403, detail='Insufficient permissions')`."
+}

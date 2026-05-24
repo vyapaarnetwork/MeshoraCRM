@@ -23,6 +23,8 @@ import Settings from './pages/Settings';
 import DocumentTags from './pages/DocumentTags';
 import EmailTemplates from './pages/EmailTemplates';
 import PartnerMappings from './pages/PartnerMappings';
+import CommercialsList from './pages/CommercialsList';
+import CommercialDetail from './pages/CommercialDetail';
 import './App.css';
 
 // Protected Route Component
@@ -172,6 +174,18 @@ function AppRoutes() {
       <Route path="/partner-mappings" element={
         <ProtectedRoute allowedRoles={['super_admin']}>
           <PartnerMappings />
+        </ProtectedRoute>
+      } />
+
+      {/* Commercials (Revenue Contracting & Delivery) */}
+      <Route path="/commercials" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner']}>
+          <CommercialsList />
+        </ProtectedRoute>
+      } />
+      <Route path="/commercials/:id" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner']}>
+          <CommercialDetail />
         </ProtectedRoute>
       } />
 

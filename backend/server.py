@@ -254,6 +254,7 @@ class LeadStatusCreate(BaseModel):
     name: str
     color: str = "#4169E1"
     order: int = 0
+    is_won: bool = False
 
 class LeadStatusResponse(BaseModel):
     id: str
@@ -261,6 +262,7 @@ class LeadStatusResponse(BaseModel):
     color: str
     order: int
     is_active: bool
+    is_won: bool = False
 
 class PrimaryCategoryCreate(BaseModel):
     name: str
@@ -414,6 +416,7 @@ class LeadResponse(BaseModel):
     status_id: Optional[str] = None
     status_name: Optional[str] = None
     status_color: Optional[str] = None
+    status_is_won: bool = False
     follow_ups: List[FollowUpResponse] = []
     comments: List[CommentResponse] = []
     documents: List[DocumentResponse] = []
@@ -1513,7 +1516,8 @@ async def create_lead_status(status_data: LeadStatusCreate, current_user: dict =
         "name": status_data.name,
         "color": status_data.color,
         "order": status_data.order,
-        "is_active": True
+        "is_active": True,
+        "is_won": status_data.is_won
     }
     
     await db.lead_statuses.insert_one(status_doc)
@@ -2481,6 +2485,7 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         status_id=lead.get('status_id'),
         status_name=status['name'] if status else None,
         status_color=status['color'] if status else None,
+        status_is_won=bool(status.get('is_won')) if status else False,
         follow_ups=[FollowUpResponse(**f) for f in lead.get('follow_ups', [])],
         comments=[CommentResponse(**c) for c in lead.get('comments', [])],
         documents=doc_responses,
@@ -2647,6 +2652,7 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             status_id=lead.get('status_id'),
             status_name=status['name'] if status else None,
             status_color=status['color'] if status else None,
+            status_is_won=bool(status.get('is_won')) if status else False,
             follow_ups=[FollowUpResponse(**f) for f in lead.get('follow_ups', [])],
             comments=[CommentResponse(**c) for c in lead.get('comments', [])],
             documents=doc_responses,
@@ -4697,6 +4703,717 @@ async def seed_data():
     
     return {"message": "Seed data created successfully"}
 
+# ==================== REVENUE CONTRACTING & DELIVERY MANAGEMENT ====================
+# Phase 1 MVP: Closed-Won wizard + One-Time projects (milestones) + Recurring contracts
+# (billing schedule) + invoices + payments + documents + activity timeline + dashboard.
+
+class CommercialType(str, Enum):
+    ONE_TIME = "one_time"
+    RECURRING = "recurring"
+
+class BillingFrequency(str, Enum):
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    HALF_YEARLY = "half_yearly"
+    ANNUAL = "annual"
+
+class MilestoneStatus(str, Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    DELIVERED = "delivered"
+    INVOICE_RAISED = "invoice_raised"
+    PAYMENT_RECEIVED = "payment_received"
+    OVERDUE = "overdue"
+
+class ContractStatus(str, Enum):
+    ACTIVE = "active"
+    RENEWAL_DUE = "renewal_due"
+    RENEWED = "renewed"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+    ON_HOLD = "on_hold"
+
+class RenewalType(str, Enum):
+    AUTO = "auto"
+    MANUAL = "manual"
+    APPROVAL_REQUIRED = "approval_required"
+
+class InvoiceStatus(str, Enum):
+    DRAFT = "draft"
+    RAISED = "raised"
+    PARTIAL = "partial"
+    PAID = "paid"
+    OVERDUE = "overdue"
+    CANCELLED = "cancelled"
+
+# ---- Pydantic schemas ----
+class MilestoneInput(BaseModel):
+    id: Optional[str] = None
+    name: str
+    description: Optional[str] = None
+    delivery_date: Optional[str] = None
+    amount: float = 0.0
+    percentage: float = 0.0
+    invoice_due_date: Optional[str] = None
+    status: MilestoneStatus = MilestoneStatus.PENDING
+    order: int = 0
+
+class CommercialCreate(BaseModel):
+    lead_id: str
+    type: CommercialType
+    currency: str = "INR"
+    notes: Optional[str] = None
+    # One-time fields
+    total_value: Optional[float] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    project_owner_id: Optional[str] = None
+    delivery_spoc_id: Optional[str] = None
+    billing_contact_id: Optional[str] = None
+    # Recurring fields
+    contract_value: Optional[float] = None
+    billing_frequency: Optional[BillingFrequency] = None
+    contract_start_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
+    auto_renewal: Optional[bool] = False
+    renewal_type: Optional[RenewalType] = RenewalType.MANUAL
+    renewal_notice_days: Optional[int] = 30
+    account_manager_id: Optional[str] = None
+    contract_owner_id: Optional[str] = None
+
+class CommercialUpdate(BaseModel):
+    notes: Optional[str] = None
+    currency: Optional[str] = None
+    total_value: Optional[float] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    project_owner_id: Optional[str] = None
+    delivery_spoc_id: Optional[str] = None
+    billing_contact_id: Optional[str] = None
+    contract_value: Optional[float] = None
+    billing_frequency: Optional[BillingFrequency] = None
+    contract_start_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
+    auto_renewal: Optional[bool] = None
+    renewal_type: Optional[RenewalType] = None
+    renewal_notice_days: Optional[int] = None
+    account_manager_id: Optional[str] = None
+    contract_owner_id: Optional[str] = None
+    contract_status: Optional[ContractStatus] = None
+
+class MilestonesBulkInput(BaseModel):
+    milestones: List[MilestoneInput]
+
+class InvoiceCreate(BaseModel):
+    milestone_id: Optional[str] = None
+    billing_schedule_id: Optional[str] = None
+    invoice_number: str
+    amount: float
+    due_date: Optional[str] = None
+    raised_at: Optional[str] = None
+    notes: Optional[str] = None
+
+class InvoiceUpdate(BaseModel):
+    invoice_number: Optional[str] = None
+    amount: Optional[float] = None
+    due_date: Optional[str] = None
+    raised_at: Optional[str] = None
+    status: Optional[InvoiceStatus] = None
+    notes: Optional[str] = None
+
+class PaymentCreate(BaseModel):
+    invoice_id: Optional[str] = None
+    milestone_id: Optional[str] = None
+    billing_schedule_id: Optional[str] = None
+    amount: float
+    paid_at: Optional[str] = None
+    method: Optional[str] = None
+    reference: Optional[str] = None
+    notes: Optional[str] = None
+
+class BillingScheduleUpdate(BaseModel):
+    status: Optional[str] = None
+    amount: Optional[float] = None
+    due_date: Optional[str] = None
+
+# ---- Helpers ----
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+async def _log_commercial_activity(commercial_id: str, current_user: dict, activity_type: str, message: str, meta: dict = None):
+    await db.commercial_activity.insert_one({
+        "id": str(uuid.uuid4()),
+        "commercial_id": commercial_id,
+        "user_id": current_user['id'],
+        "user_name": current_user.get('name'),
+        "type": activity_type,
+        "message": message,
+        "meta": meta or {},
+        "created_at": _now_iso()
+    })
+
+async def _ensure_commercial_access(commercial: dict, current_user: dict, write: bool = False):
+    """Admin = full. Selling Partner = read-only on their own leads' commercials. Others = denied."""
+    role = current_user.get('role')
+    if role == UserRole.SUPER_ADMIN.value:
+        return
+    if role == UserRole.SELLING_PARTNER.value:
+        if write:
+            raise HTTPException(status_code=403, detail="Selling partners have read-only access to commercials")
+        lead = await db.leads.find_one({"id": commercial['lead_id']}, {"_id": 0})
+        if not lead:
+            raise HTTPException(status_code=404, detail="Linked lead not found")
+        partner_ids = [p.get('partner_id') for p in lead.get('assigned_partners', [])]
+        if (lead.get('selling_partner_id') == current_user['id']
+                or current_user['id'] in partner_ids
+                or current_user.get('company_id') and current_user['company_id'] in [p.get('partner_id') for p in lead.get('assigned_partners', [])]):
+            return
+        raise HTTPException(status_code=403, detail="You don't have access to this commercial")
+    raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    """Add `months` to dt, clamping the day to the last day of the resulting month."""
+    new_month = dt.month + months
+    year = dt.year + (new_month - 1) // 12
+    month = (new_month - 1) % 12 + 1
+    # last day of new month
+    if month == 12:
+        last_day = 31
+    else:
+        last_day = (datetime(year, month + 1, 1) - timedelta(days=1)).day
+    return dt.replace(year=year, month=month, day=min(dt.day, last_day))
+
+FREQ_MONTHS = {
+    "monthly": 1,
+    "quarterly": 3,
+    "half_yearly": 6,
+    "annual": 12,
+}
+
+def _generate_billing_schedule(commercial: dict) -> List[dict]:
+    freq = commercial.get('billing_frequency')
+    start = commercial.get('contract_start_date')
+    end = commercial.get('contract_end_date')
+    value = commercial.get('contract_value') or 0
+    if not freq or not start or not end:
+        return []
+    months_step = FREQ_MONTHS.get(freq)
+    if not months_step:
+        return []
+    try:
+        start_dt = datetime.fromisoformat(start.replace('Z', '+00:00')) if 'T' in start else datetime.fromisoformat(start + "T00:00:00+00:00")
+        end_dt = datetime.fromisoformat(end.replace('Z', '+00:00')) if 'T' in end else datetime.fromisoformat(end + "T23:59:59+00:00")
+    except Exception:
+        return []
+    schedule: List[dict] = []
+    cursor = start_dt
+    period_idx = 0
+    while cursor <= end_dt and period_idx < 240:  # hard cap to avoid infinite loops
+        next_cursor = _add_months(cursor, months_step)
+        period_end = min(next_cursor - timedelta(seconds=1), end_dt)
+        schedule.append({
+            "id": str(uuid.uuid4()),
+            "period_start": cursor.date().isoformat(),
+            "period_end": period_end.date().isoformat(),
+            "due_date": cursor.date().isoformat(),
+            "amount": value,
+            "status": "scheduled",  # scheduled | invoiced | paid | skipped
+            "invoice_id": None,
+            "order": period_idx,
+        })
+        cursor = next_cursor
+        period_idx += 1
+    return schedule
+
+def _serialise_commercial(c: dict) -> dict:
+    return {k: v for k, v in c.items() if k != '_id'}
+
+# ---- Endpoints ----
+@api_router.post("/commercials")
+async def create_commercial(payload: CommercialCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Only super admin can create commercials")
+    lead = await db.leads.find_one({"id": payload.lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    existing = await db.commercials.find_one({"lead_id": payload.lead_id}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Commercials already exists for this lead", headers={"X-Commercial-Id": existing['id']})
+    now = _now_iso()
+    commercial_id = str(uuid.uuid4())
+    doc = {
+        "id": commercial_id,
+        "lead_id": payload.lead_id,
+        "lead_title": lead.get('title'),
+        "customer_name": lead.get('customer_name'),
+        "customer_id": lead.get('customer_id'),
+        "type": payload.type.value,
+        "currency": payload.currency or "INR",
+        "notes": payload.notes,
+        "created_by": current_user['id'],
+        "created_by_name": current_user.get('name'),
+        "created_at": now,
+        "updated_at": now,
+        # one-time
+        "total_value": payload.total_value,
+        "start_date": payload.start_date,
+        "end_date": payload.end_date,
+        "project_owner_id": payload.project_owner_id,
+        "delivery_spoc_id": payload.delivery_spoc_id,
+        "billing_contact_id": payload.billing_contact_id,
+        # recurring
+        "contract_value": payload.contract_value,
+        "billing_frequency": payload.billing_frequency.value if payload.billing_frequency else None,
+        "contract_start_date": payload.contract_start_date,
+        "contract_end_date": payload.contract_end_date,
+        "auto_renewal": bool(payload.auto_renewal),
+        "renewal_type": payload.renewal_type.value if payload.renewal_type else "manual",
+        "renewal_notice_days": payload.renewal_notice_days or 30,
+        "account_manager_id": payload.account_manager_id,
+        "contract_owner_id": payload.contract_owner_id,
+        "contract_status": ContractStatus.ACTIVE.value if payload.type == CommercialType.RECURRING else None,
+        "milestones": [],
+        "billing_schedule": [],
+    }
+    if payload.type == CommercialType.RECURRING:
+        doc['billing_schedule'] = _generate_billing_schedule(doc)
+    await db.commercials.insert_one(doc)
+    await _log_commercial_activity(commercial_id, current_user, "created", f"{payload.type.value.replace('_', ' ').title()} commercial created")
+    return _serialise_commercial(doc)
+
+@api_router.get("/commercials")
+async def list_commercials(
+    type: Optional[str] = None,
+    contract_status: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    query: Dict[str, Any] = {}
+    if type:
+        query['type'] = type
+    if contract_status:
+        query['contract_status'] = contract_status
+    # Selling partners only see their own
+    if current_user.get('role') == UserRole.SELLING_PARTNER.value:
+        leads = await db.leads.find({
+            "$or": [
+                {"selling_partner_id": current_user['id']},
+                {"assigned_partners.partner_id": current_user['id']},
+                {"assigned_partners.partner_id": current_user.get('company_id')},
+            ]
+        }, {"_id": 0, "id": 1}).to_list(2000)
+        lead_ids = [ld['id'] for ld in leads]
+        query['lead_id'] = {"$in": lead_ids}
+    elif current_user.get('role') != UserRole.SUPER_ADMIN.value:
+        return []
+    items = await db.commercials.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+@api_router.get("/commercials/dashboard")
+async def commercials_dashboard(current_user: dict = Depends(get_current_user)):
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Admin only")
+    today = datetime.now(timezone.utc).date()
+    all_comm = await db.commercials.find({}, {"_id": 0}).to_list(2000)
+    one_time = [c for c in all_comm if c.get('type') == 'one_time']
+    recurring = [c for c in all_comm if c.get('type') == 'recurring']
+    # One-time metrics
+    total_project_value = sum((c.get('total_value') or 0) for c in one_time)
+    revenue_realized = 0.0
+    pending_invoices = 0
+    overdue_invoices = 0
+    upcoming_milestones = 0
+    invoices = await db.commercial_invoices.find({}, {"_id": 0}).to_list(5000)
+    payments = await db.commercial_payments.find({}, {"_id": 0}).to_list(5000)
+    for p in payments:
+        revenue_realized += float(p.get('amount') or 0)
+    for inv in invoices:
+        if inv.get('status') in ('raised', 'partial'):
+            pending_invoices += 1
+            try:
+                if inv.get('due_date') and datetime.fromisoformat(inv['due_date']).date() < today:
+                    overdue_invoices += 1
+            except Exception:
+                pass
+    in_30 = today + timedelta(days=30)
+    for c in one_time:
+        for m in c.get('milestones', []):
+            try:
+                if m.get('delivery_date') and today <= datetime.fromisoformat(m['delivery_date']).date() <= in_30 and m.get('status') in ('pending', 'in_progress'):
+                    upcoming_milestones += 1
+            except Exception:
+                pass
+    # Recurring metrics — MRR (monthly equivalent), ARR
+    mrr = 0.0
+    for c in recurring:
+        if c.get('contract_status') in (None, 'active', 'renewal_due'):
+            v = float(c.get('contract_value') or 0)
+            months = FREQ_MONTHS.get(c.get('billing_frequency') or 'monthly', 1)
+            mrr += v / months
+    arr = mrr * 12
+    # Upcoming renewals (contract end within 60 days)
+    upcoming_renewals = []
+    in_60 = today + timedelta(days=60)
+    for c in recurring:
+        end = c.get('contract_end_date')
+        if not end:
+            continue
+        try:
+            end_d = datetime.fromisoformat(end).date()
+            if today <= end_d <= in_60:
+                upcoming_renewals.append({
+                    "id": c['id'],
+                    "lead_title": c.get('lead_title'),
+                    "customer_name": c.get('customer_name'),
+                    "end_date": end,
+                    "days_to_expiry": (end_d - today).days,
+                    "contract_value": c.get('contract_value'),
+                })
+        except Exception:
+            pass
+    upcoming_renewals.sort(key=lambda x: x['days_to_expiry'])
+    return {
+        "one_time": {
+            "total_project_value": total_project_value,
+            "revenue_realized": revenue_realized,
+            "pending_invoices": pending_invoices,
+            "overdue_invoices": overdue_invoices,
+            "upcoming_milestones": upcoming_milestones,
+            "project_count": len(one_time),
+        },
+        "recurring": {
+            "mrr": mrr,
+            "arr": arr,
+            "active_subscriptions": len([c for c in recurring if c.get('contract_status') == 'active']),
+            "upcoming_renewals": upcoming_renewals[:10],
+            "total_contracts": len(recurring),
+        },
+    }
+
+@api_router.get("/commercials/by-lead/{lead_id}")
+async def get_commercial_by_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"lead_id": lead_id}, {"_id": 0})
+    if not commercial:
+        return None
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    return commercial
+
+@api_router.get("/commercials/{commercial_id}")
+async def get_commercial(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    return commercial
+
+@api_router.patch("/commercials/{commercial_id}")
+async def update_commercial(commercial_id: str, payload: CommercialUpdate, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    updates = {k: (v.value if isinstance(v, Enum) else v) for k, v in payload.model_dump(exclude_unset=True).items()}
+    updates['updated_at'] = _now_iso()
+    # If billing-relevant fields changed for recurring, regenerate schedule
+    regenerate = commercial.get('type') == 'recurring' and any(
+        k in updates for k in ('billing_frequency', 'contract_start_date', 'contract_end_date', 'contract_value')
+    )
+    await db.commercials.update_one({"id": commercial_id}, {"$set": updates})
+    if regenerate:
+        merged = {**commercial, **updates}
+        new_schedule = _generate_billing_schedule(merged)
+        await db.commercials.update_one({"id": commercial_id}, {"$set": {"billing_schedule": new_schedule}})
+    await _log_commercial_activity(commercial_id, current_user, "updated", "Commercial updated", {"fields": list(updates.keys())})
+    updated = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    return updated
+
+@api_router.put("/commercials/{commercial_id}/milestones")
+async def replace_milestones(commercial_id: str, payload: MilestonesBulkInput, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    if commercial.get('type') != 'one_time':
+        raise HTTPException(status_code=400, detail="Milestones are only supported on one-time projects")
+    # Validate totals
+    total_amount = sum(m.amount for m in payload.milestones)
+    total_pct = sum(m.percentage for m in payload.milestones)
+    target_total = float(commercial.get('total_value') or 0)
+    if target_total > 0:
+        if round(total_amount, 2) != round(target_total, 2):
+            raise HTTPException(status_code=400, detail=f"Sum of milestone amounts ({total_amount}) must equal total project value ({target_total})")
+    if payload.milestones and round(total_pct, 2) != 100.0:
+        raise HTTPException(status_code=400, detail=f"Sum of milestone percentages must equal 100 (got {total_pct})")
+    serialised = []
+    for idx, m in enumerate(payload.milestones):
+        serialised.append({
+            "id": m.id or str(uuid.uuid4()),
+            "name": m.name,
+            "description": m.description,
+            "delivery_date": m.delivery_date,
+            "amount": m.amount,
+            "percentage": m.percentage,
+            "invoice_due_date": m.invoice_due_date,
+            "status": m.status.value,
+            "order": idx,
+        })
+    await db.commercials.update_one({"id": commercial_id}, {"$set": {"milestones": serialised, "updated_at": _now_iso()}})
+    await _log_commercial_activity(commercial_id, current_user, "milestones_updated", f"Milestones saved ({len(serialised)} total)")
+    return {"milestones": serialised}
+
+@api_router.patch("/commercials/{commercial_id}/milestones/{milestone_id}")
+async def update_milestone_status(commercial_id: str, milestone_id: str, payload: dict, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    milestones = commercial.get('milestones', [])
+    found = False
+    for m in milestones:
+        if m['id'] == milestone_id:
+            found = True
+            for key in ('status', 'delivery_date', 'invoice_due_date', 'description'):
+                if key in payload:
+                    m[key] = payload[key]
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    await db.commercials.update_one({"id": commercial_id}, {"$set": {"milestones": milestones, "updated_at": _now_iso()}})
+    await _log_commercial_activity(commercial_id, current_user, "milestone_status", "Milestone updated", {"milestone_id": milestone_id, "changes": payload})
+    return {"milestones": milestones}
+
+@api_router.post("/commercials/{commercial_id}/regenerate-billing")
+async def regenerate_billing(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    if commercial.get('type') != 'recurring':
+        raise HTTPException(status_code=400, detail="Billing schedule only applies to recurring contracts")
+    schedule = _generate_billing_schedule(commercial)
+    await db.commercials.update_one({"id": commercial_id}, {"$set": {"billing_schedule": schedule, "updated_at": _now_iso()}})
+    await _log_commercial_activity(commercial_id, current_user, "billing_regenerated", f"Billing schedule regenerated ({len(schedule)} periods)")
+    return {"billing_schedule": schedule}
+
+@api_router.post("/commercials/{commercial_id}/invoices")
+async def create_invoice(commercial_id: str, payload: InvoiceCreate, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    invoice_id = str(uuid.uuid4())
+    doc = {
+        "id": invoice_id,
+        "commercial_id": commercial_id,
+        "milestone_id": payload.milestone_id,
+        "billing_schedule_id": payload.billing_schedule_id,
+        "invoice_number": payload.invoice_number,
+        "amount": payload.amount,
+        "currency": commercial.get('currency', 'INR'),
+        "status": InvoiceStatus.RAISED.value,
+        "due_date": payload.due_date,
+        "raised_at": payload.raised_at or _now_iso(),
+        "paid_at": None,
+        "amount_paid": 0.0,
+        "notes": payload.notes,
+        "created_at": _now_iso(),
+        "created_by": current_user['id'],
+    }
+    await db.commercial_invoices.insert_one(doc)
+    # Link to milestone / billing schedule
+    if payload.milestone_id:
+        milestones = commercial.get('milestones', [])
+        for m in milestones:
+            if m['id'] == payload.milestone_id:
+                m['status'] = MilestoneStatus.INVOICE_RAISED.value
+                m['invoice_id'] = invoice_id
+        await db.commercials.update_one({"id": commercial_id}, {"$set": {"milestones": milestones}})
+    if payload.billing_schedule_id:
+        schedule = commercial.get('billing_schedule', [])
+        for s in schedule:
+            if s['id'] == payload.billing_schedule_id:
+                s['status'] = 'invoiced'
+                s['invoice_id'] = invoice_id
+        await db.commercials.update_one({"id": commercial_id}, {"$set": {"billing_schedule": schedule}})
+    await _log_commercial_activity(commercial_id, current_user, "invoice_raised", f"Invoice {payload.invoice_number} raised ({commercial.get('currency','INR')} {payload.amount})", {"invoice_id": invoice_id})
+    return {k: v for k, v in doc.items() if k != '_id'}
+
+@api_router.get("/commercials/{commercial_id}/invoices")
+async def list_invoices(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    invoices = await db.commercial_invoices.find({"commercial_id": commercial_id}, {"_id": 0}).sort("raised_at", -1).to_list(500)
+    return invoices
+
+@api_router.patch("/commercials/{commercial_id}/invoices/{invoice_id}")
+async def update_invoice(commercial_id: str, invoice_id: str, payload: InvoiceUpdate, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    updates = {k: (v.value if isinstance(v, Enum) else v) for k, v in payload.model_dump(exclude_unset=True).items()}
+    if updates:
+        await db.commercial_invoices.update_one({"id": invoice_id, "commercial_id": commercial_id}, {"$set": updates})
+        await _log_commercial_activity(commercial_id, current_user, "invoice_updated", "Invoice updated", {"invoice_id": invoice_id, "fields": list(updates.keys())})
+    invoice = await db.commercial_invoices.find_one({"id": invoice_id}, {"_id": 0})
+    return invoice
+
+@api_router.post("/commercials/{commercial_id}/payments")
+async def record_payment(commercial_id: str, payload: PaymentCreate, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    payment_id = str(uuid.uuid4())
+    paid_at = payload.paid_at or _now_iso()
+    pdoc = {
+        "id": payment_id,
+        "commercial_id": commercial_id,
+        "invoice_id": payload.invoice_id,
+        "milestone_id": payload.milestone_id,
+        "billing_schedule_id": payload.billing_schedule_id,
+        "amount": payload.amount,
+        "currency": commercial.get('currency', 'INR'),
+        "paid_at": paid_at,
+        "method": payload.method,
+        "reference": payload.reference,
+        "notes": payload.notes,
+        "created_at": _now_iso(),
+        "created_by": current_user['id'],
+    }
+    await db.commercial_payments.insert_one(pdoc)
+    # Update invoice status & amount_paid
+    if payload.invoice_id:
+        invoice = await db.commercial_invoices.find_one({"id": payload.invoice_id}, {"_id": 0})
+        if invoice:
+            new_paid = float(invoice.get('amount_paid') or 0) + float(payload.amount)
+            target = float(invoice.get('amount') or 0)
+            if new_paid >= target - 0.005:
+                new_status = InvoiceStatus.PAID.value
+                paid_full_at = paid_at
+            elif new_paid > 0:
+                new_status = InvoiceStatus.PARTIAL.value
+                paid_full_at = None
+            else:
+                new_status = invoice.get('status')
+                paid_full_at = None
+            await db.commercial_invoices.update_one({"id": payload.invoice_id}, {"$set": {
+                "amount_paid": new_paid, "status": new_status, "paid_at": paid_full_at
+            }})
+            # If full paid → mark milestone payment_received
+            if new_status == InvoiceStatus.PAID.value and invoice.get('milestone_id'):
+                milestones = commercial.get('milestones', [])
+                for m in milestones:
+                    if m['id'] == invoice['milestone_id']:
+                        m['status'] = MilestoneStatus.PAYMENT_RECEIVED.value
+                await db.commercials.update_one({"id": commercial_id}, {"$set": {"milestones": milestones}})
+            # If billing schedule → mark paid
+            if new_status == InvoiceStatus.PAID.value and invoice.get('billing_schedule_id'):
+                schedule = commercial.get('billing_schedule', [])
+                for s in schedule:
+                    if s['id'] == invoice['billing_schedule_id']:
+                        s['status'] = 'paid'
+                await db.commercials.update_one({"id": commercial_id}, {"$set": {"billing_schedule": schedule}})
+    await _log_commercial_activity(commercial_id, current_user, "payment_received", f"Payment of {commercial.get('currency','INR')} {payload.amount} received", {"payment_id": payment_id})
+    return {k: v for k, v in pdoc.items() if k != '_id'}
+
+@api_router.get("/commercials/{commercial_id}/payments")
+async def list_payments(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    payments = await db.commercial_payments.find({"commercial_id": commercial_id}, {"_id": 0}).sort("paid_at", -1).to_list(500)
+    return payments
+
+@api_router.post("/commercials/{commercial_id}/documents")
+async def upload_commercial_document(
+    commercial_id: str,
+    file: UploadFile = File(...),
+    document_type: str = Form("other"),
+    title: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user)
+):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    upload_dir = UPLOAD_DIR / 'commercials' / commercial_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', file.filename or 'upload')
+    doc_id = str(uuid.uuid4())
+    storage_path = upload_dir / f"{doc_id}_{safe_name}"
+    async with aiofiles.open(storage_path, 'wb') as out:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            await out.write(chunk)
+    size = storage_path.stat().st_size
+    doc = {
+        "id": doc_id,
+        "commercial_id": commercial_id,
+        "document_type": document_type,  # proposal | sow | contract | invoice | other
+        "title": title or safe_name,
+        "filename": safe_name,
+        "storage_path": str(storage_path),
+        "size": size,
+        "content_type": file.content_type,
+        "uploaded_by": current_user['id'],
+        "uploaded_by_name": current_user.get('name'),
+        "uploaded_at": _now_iso(),
+    }
+    await db.commercial_documents.insert_one(doc)
+    await _log_commercial_activity(commercial_id, current_user, "document_uploaded", f"{document_type.title()} uploaded: {safe_name}", {"document_id": doc_id})
+    return {k: v for k, v in doc.items() if k not in ('_id', 'storage_path')}
+
+@api_router.get("/commercials/{commercial_id}/documents")
+async def list_commercial_documents(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    docs = await db.commercial_documents.find({"commercial_id": commercial_id}, {"_id": 0, "storage_path": 0}).sort("uploaded_at", -1).to_list(500)
+    return docs
+
+@api_router.get("/commercials/{commercial_id}/documents/{document_id}/download")
+async def download_commercial_document(commercial_id: str, document_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    doc = await db.commercial_documents.find_one({"id": document_id, "commercial_id": commercial_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return FileResponse(doc['storage_path'], filename=doc['filename'], media_type=doc.get('content_type') or 'application/octet-stream')
+
+@api_router.delete("/commercials/{commercial_id}/documents/{document_id}")
+async def delete_commercial_document(commercial_id: str, document_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=True)
+    doc = await db.commercial_documents.find_one({"id": document_id, "commercial_id": commercial_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        Path(doc['storage_path']).unlink(missing_ok=True)
+    except Exception:
+        pass
+    await db.commercial_documents.delete_one({"id": document_id})
+    await _log_commercial_activity(commercial_id, current_user, "document_deleted", f"Document deleted: {doc['filename']}")
+    return {"deleted": True}
+
+@api_router.get("/commercials/{commercial_id}/activity")
+async def list_commercial_activity(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    events = await db.commercial_activity.find({"commercial_id": commercial_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return events
+
 # ==================== ROOT ====================
 
 @api_router.get("/")
@@ -4722,3 +5439,22 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+@app.on_event("startup")
+async def backfill_lead_status_is_won():
+    """Ensure existing 'Won' lead statuses have is_won=True for the Closed-Won wizard."""
+    try:
+        await db.lead_statuses.update_many(
+            {"is_won": {"$exists": False}},
+            {"$set": {"is_won": False}}
+        )
+        await db.lead_statuses.update_many(
+            {"name": {"$regex": "^won$", "$options": "i"}},
+            {"$set": {"is_won": True}}
+        )
+        await db.lead_statuses.update_many(
+            {"name": {"$regex": "closed.?won", "$options": "i"}},
+            {"$set": {"is_won": True}}
+        )
+    except Exception as e:
+        logger.warning(f"Lead status is_won backfill failed: {e}")
