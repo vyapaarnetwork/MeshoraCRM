@@ -12,7 +12,7 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
-import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 const MILESTONE_STATUS_STYLES = {
@@ -70,6 +70,9 @@ const CommercialDetail = () => {
   const [activity, setActivity] = useState([]);
   const [milestones, setMilestones] = useState([]);
   const [dragIndex, setDragIndex] = useState(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [renewalProb, setRenewalProb] = useState(null);
+  const [paymentRisk, setPaymentRisk] = useState(null);
   const [activityFilter, setActivityFilter] = useState('all');
   const [activitySearch, setActivitySearch] = useState('');
   const [invoiceDialog, setInvoiceDialog] = useState({ open: false, milestone_id: null, billing_schedule_id: null, suggestedAmount: 0 });
@@ -346,6 +349,69 @@ const CommercialDetail = () => {
     }
   };
 
+  const downloadInvoicePdf = async (inv) => {
+    try {
+      const res = await api.get(`/commercials/${id}/invoices/${inv.id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `invoice_${inv.invoice_number || inv.id}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('PDF download failed');
+    }
+  };
+
+  const fetchAiInsights = useCallback(async () => {
+    if (!commercial) return;
+    if (commercial.type === 'recurring') {
+      api.get(`/commercials/${id}/ai/renewal-probability`).then((r) => setRenewalProb(r.data)).catch(() => {});
+    }
+    api.get(`/commercials/${id}/ai/payment-delay-risk`).then((r) => setPaymentRisk(r.data)).catch(() => {});
+  }, [commercial, id]);
+
+  useEffect(() => { fetchAiInsights(); }, [fetchAiInsights]);
+
+  const requestAiMilestones = async () => {
+    if (!commercial?.total_value || commercial.total_value <= 0) {
+      toast.error('Set total project value before requesting AI suggestions');
+      return;
+    }
+    setAiBusy(true);
+    try {
+      const res = await api.post('/commercials/ai/suggest-milestones', {
+        project_title: commercial.lead_title,
+        description: commercial.notes,
+        total_value: Number(commercial.total_value),
+        currency: commercial.currency || 'INR',
+        start_date: commercial.start_date,
+        end_date: commercial.end_date,
+      });
+      const suggested = (res.data.milestones || []).map((m, i) => ({
+        id: `tmp_ai_${Date.now()}_${i}`,
+        _new: true,
+        name: m.name,
+        description: m.description,
+        delivery_date: m.delivery_date || '',
+        invoice_due_date: '',
+        amount: m.amount,
+        percentage: m.percentage,
+        status: 'pending',
+      }));
+      if (milestones.length > 0 && !window.confirm(`Replace existing ${milestones.length} milestone(s) with ${suggested.length} AI suggestions?`)) {
+        setAiBusy(false);
+        return;
+      }
+      setMilestones(suggested);
+      toast.success(`${suggested.length} AI milestones loaded — review and save`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'AI suggestion failed');
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   if (loading || !commercial) {
     return (
       <div className="space-y-4">
@@ -554,6 +620,56 @@ const CommercialDetail = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* AI insights panels */}
+          <div className="grid gap-4 lg:grid-cols-2 mt-4">
+            {!isOneTime && renewalProb && (
+              <Card data-testid="renewal-probability-card">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Renewal probability</CardTitle>
+                  <CardDescription>Heuristic score from payment history, tenure, and renewal config.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-baseline gap-3 mb-2">
+                    <span className={`text-3xl font-bold ${renewalProb.band === 'high' ? 'text-green-600' : renewalProb.band === 'medium' ? 'text-amber-600' : 'text-red-600'}`}>
+                      {Math.round(renewalProb.probability * 100)}%
+                    </span>
+                    <Badge variant="outline" className="uppercase">{renewalProb.band}</Badge>
+                  </div>
+                  <Progress value={renewalProb.probability * 100} className="h-2 mb-3" />
+                  <ul className="text-xs text-muted-foreground space-y-1">
+                    {renewalProb.factors.map((f, i) => <li key={i}>• {f}</li>)}
+                    {renewalProb.factors.length === 0 && <li>• No history available — score is baseline.</li>}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+            {paymentRisk && paymentRisk.invoices.length > 0 && (
+              <Card data-testid="payment-risk-card">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500" /> Payment-delay risk</CardTitle>
+                  <CardDescription>
+                    Avg historical pay-lag: {paymentRisk.avg_pay_lag_days ? `${paymentRisk.avg_pay_lag_days}d` : 'no history'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2">
+                    {paymentRisk.invoices.slice(0, 4).map((r) => (
+                      <li key={r.invoice_id} className="flex items-center justify-between text-sm">
+                        <div>
+                          <div className="font-medium">{r.invoice_number}</div>
+                          <div className="text-xs text-muted-foreground">{r.factors.join(' · ') || 'No risk factors'}</div>
+                        </div>
+                        <Badge className={r.band === 'high' ? 'bg-red-100 text-red-700' : r.band === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}>
+                          {Math.round(r.risk_score * 100)}% · {r.band}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </TabsContent>
 
         {/* === MILESTONES === */}
@@ -566,10 +682,16 @@ const CommercialDetail = () => {
                     <CardTitle>Delivery & Payment Milestones</CardTitle>
                     <CardDescription>Total amounts must equal project value; percentages must total 100%.</CardDescription>
                   </div>
-                  <Button onClick={addMilestone} size="sm" data-testid="add-milestone-btn">
-                    <Plus className="w-4 h-4 mr-1" />
-                    Add milestone
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button onClick={requestAiMilestones} size="sm" variant="outline" disabled={aiBusy} data-testid="ai-milestones-btn">
+                      <Sparkles className={`w-4 h-4 mr-1 ${aiBusy ? 'animate-pulse' : ''}`} />
+                      {aiBusy ? 'Thinking…' : 'AI suggest'}
+                    </Button>
+                    <Button onClick={addMilestone} size="sm" data-testid="add-milestone-btn">
+                      <Plus className="w-4 h-4 mr-1" />
+                      Add milestone
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -770,6 +892,9 @@ const CommercialDetail = () => {
                           </div>
                         </div>
                         <Badge className={INVOICE_STATUS_STYLES[inv.status]?.cls}>{INVOICE_STATUS_STYLES[inv.status]?.label}</Badge>
+                        <Button size="icon" variant="ghost" className="ml-1" onClick={() => downloadInvoicePdf(inv)} title="Download PDF" data-testid={`download-pdf-${inv.id}`}>
+                          <Download className="w-4 h-4" />
+                        </Button>
                         {['raised', 'partial', 'overdue'].includes(inv.status) && (
                           <Button size="sm" variant="outline" className="ml-2" onClick={() => setPaymentDialog({ open: true, invoice: inv })} data-testid={`record-payment-${inv.id}`}>
                             <Wallet className="w-3 h-3 mr-1" />Record payment

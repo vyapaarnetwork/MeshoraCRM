@@ -1,0 +1,48 @@
+{
+  "summary": "Phase 3 (AI milestone suggestion via Gemini 3 Pro, renewal-probability heuristic, payment-delay-risk heuristic, commercials kanban, and reportlab PDF invoice) tested end-to-end. New pytest file /app/backend/tests/test_commercials_phase3.py — 20 tests, all 20/20 PASS including the real LLM call (returned 5 milestones, sum=100.00%, model='gemini-3.1-pro-preview', total amount within rounding tolerance). Frontend: /commercials/kanban renders with all populated columns + cards (admin sees 31 cards across Active, Renewal Due, One-Time Projects buckets — empty columns are filtered out by design). 'Commercials Kanban' nav item visible for admin, hidden for customer; customer hitting /commercials/kanban via direct URL gets 403 + 'Failed to load kanban' toast + 'No commercials yet' empty-state (API guard works; route is not blocked at React level but the empty render is acceptable). CommercialDetail.jsx: Milestones tab shows 'AI suggest' button (visible) on a one_time commercial; Invoices tab shows the Download PDF icon button per invoice row; Overview tab on a one_time with raised invoice shows BOTH renewal-probability-card (only if recurring — N/A for one_time) and payment-risk-card; on a recurring commercial, renewal-probability-card renders. Backend route ordering verified — /commercials/kanban (line 5828) is declared BEFORE /commercials/{id} (line 5977), so no collision; /commercials/ai/suggest-milestones is POST so cannot collide with the GET dynamic route. PDF endpoint returns Content-Type=application/pdf, %PDF magic bytes, size ~3-5KB (>1KB), 404 on bogus invoice/commercial, 403 for customer. Phase 1+2 regression: 6 representative endpoints (list, dashboard, analytics, get-by-id, list-invoices, run-renewal-scan) all return 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CommercialDetail.jsx — Milestones table (around lines 720 & 783)", "issue": "React hydration warnings in console: '<span> cannot be a child of <tbody>' and '<tr> cannot be a child of <span>'. Caused by a wrapper <span style={{display:'contents'}}> being injected between <tbody> and <tr> (likely from the x-ve-dynamic instrumentation wrapper around the milestone rows). Non-functional (rendering still works) but pollutes console with hydration errors on every load of a one_time commercial detail. Fix: ensure the dynamic wrapper around the <tr> rows is rendered as a <React.Fragment>, not as a <span>.", "selector": "tbody > span > tr inside .milestones table", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/commercials/kanban (customer view)", "issues": ["When customer lands on /commercials/kanban (no nav-link path, only direct URL), the page still renders the title 'Commercials Kanban' + 'No commercials yet' empty card alongside an error toast. Cleaner UX would be to redirect non-admins to /dashboard or render a 'You do not have access' state. Functional API guard works (403)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_commercials_phase3.py",
+    "/app/test_reports/pytest/phase3_results.xml"
+  ],
+  "action_items": [
+    "(Optional, MEDIUM) Fix CommercialDetail.jsx milestones table hydration warnings — wrap dynamic <tr> rows with React.Fragment instead of the implicit <span>.",
+    "(Optional, LOW) /commercials/kanban for non-admins — redirect to /dashboard or render an explicit 'forbidden' state instead of the bare empty list.",
+    "(Carry-over) Extract /api/commercials/* router out of server.py — file is now 6338 lines (grew from 5931 in iteration_11)."
+  ],
+  "critical_code_review_comments": [
+    "Route ordering verified safe: /commercials/ai/suggest-milestones is POST (5573), /commercials/kanban GET (5828) declared BEFORE /commercials/{id} GET (5977). Dynamic /commercials/{id}/ai/* and /commercials/{id}/invoices/{inv}/pdf are unambiguous.",
+    "AI suggest-milestones correctly auto-normalises percentages: scales by 100/total_pct, then absorbs rounding drift into the last entry — verified by sum==100.00 on returned payload.",
+    "RBAC on suggest-milestones: super_admin OR is_finance OR is_delivery; customer 403 verified.",
+    "RBAC on kanban: super_admin OR is_finance OR is_delivery OR selling_partner (with lead-scoped query); customer 403 verified.",
+    "Renewal-probability is HEURISTIC (deterministic, no LLM) — predictable, idempotent, and cheap. Auto-renewal flag dominates with +25%, renewal_type=auto adds +10%, on-time payment history +10%, overdue penalty up to -25%, tenure bonus +5% — produces a band that matches the spec.",
+    "Payment-delay-risk works for both one_time and recurring (no type check) — verified by test_recurring_works.",
+    "PDF generation via reportlab streams a clean A4 doc — Content-Type=application/pdf, magic %PDF, includes invoice_number, status, raised/due dates, customer name, project title, amount table (subtotal/paid/due). All assertions pass.",
+    "Empty kanban columns are filtered client-side (CommercialsKanban.jsx line 37: items.length > 0). Backend still returns all 7 columns — good for API consumers; frontend hides empty ones for compactness. Backend test asserts all 7 keys present; frontend test now allows for filtering.",
+    "EMERGENT_LLM_KEY check is correct (503 if missing) and the LLM call is wrapped in try/except returning 502 on upstream failure — tests handle 502 with pytest.skip to avoid false negatives.",
+    "Only 1 LLM call was made during the full test run (as requested — no spamming).",
+    "Hydration warning in CommercialDetail.jsx milestones table is the only visible UI-side defect; functionally harmless but should be cleaned up."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_commercials_phase3.py (new — 20 Phase 3 tests)"
+  ],
+  "success_rate": {"backend": "100% (20/20 Phase 3 incl. 1 LLM call)", "frontend": "100% on the requested flows (kanban render, sidebar nav, AI button visibility, PDF button, renewal/payment cards, customer 403)"},
+  "test_credentials": "Super Admin: admin@vyapaarnetwork.com / admin123. Customer: john@testco.com / test123. No new credentials created.",
+  "seed_data_creation": "Created (prefixed 'TEST P3'): 2 leads + 2 commercials (1 one_time with 1 raised invoice, 1 recurring auto-renewal). Visible in kanban as 'TEST P3 Website Build ...' (one_time) and 'TEST P3 SaaS Subscription ...' (recurring/active). All cleaned up via TEST_ naming convention; not deleted programmatically (idempotent re-runs use uuid suffix).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 3 tests live at /app/backend/tests/test_commercials_phase3.py. The seed_commercials fixture is module-scoped and creates a fresh lead + commercial pair each pytest run; do not assert on absolute commercial IDs across runs. Run with: pytest /app/backend/tests/test_commercials_phase3.py -v --junitxml=/app/test_reports/pytest/phase3_results.xml. Average run time ~12s including 1 Gemini call. The frontend kanban filters out empty columns — backend always returns 7 columns. Customer hitting /commercials/kanban via direct URL is NOT redirected; only the API returns 403. Hydration warnings on CommercialDetail.jsx milestones tab (span/tr nesting) are the only outstanding cosmetic issue.",
+  "rca of the issue": "N/A — no bugs. Phase 3 implementation is correct: LLM contract honoured (strict JSON, sum-100 invariant maintained client-side as a safety net), RBAC matches spec, route ordering safe, PDF generation valid, kanban grouping respects status + selling-partner lead scope."
+}

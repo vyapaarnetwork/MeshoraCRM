@@ -26,6 +26,7 @@ import PartnerMappings from './pages/PartnerMappings';
 import CommercialsList from './pages/CommercialsList';
 import CommercialDetail from './pages/CommercialDetail';
 import CommercialsAnalytics from './pages/CommercialsAnalytics';
+import CommercialsKanban from './pages/CommercialsKanban';
 import './App.css';
 
 // Protected Route Component
@@ -187,6 +188,11 @@ function AppRoutes() {
       <Route path="/commercials/analytics" element={
         <ProtectedRoute>
           <CommercialsAnalytics />
+        </ProtectedRoute>
+      } />
+      <Route path="/commercials/kanban" element={
+        <ProtectedRoute>
+          <CommercialsKanban />
         </ProtectedRoute>
       } />
       <Route path="/commercials/:id" element={

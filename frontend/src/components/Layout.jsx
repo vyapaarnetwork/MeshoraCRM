@@ -221,6 +221,12 @@ const Layout = ({ children }) => {
         path: '/commercials',
         roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer'],
       });
+      items.push({
+        label: 'Commercials Kanban',
+        icon: Grid3X3,
+        path: '/commercials/kanban',
+        roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer'],
+      });
       if (isAdmin || isFinance || isDelivery) {
         items.push({
           label: 'Revenue Analytics',

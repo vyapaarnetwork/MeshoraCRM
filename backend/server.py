@@ -5559,6 +5559,413 @@ async def run_commercial_reminder_scan(milestone_lead_days: int = 3, current_use
 
     return {**counts, "scanned_commercials": len(all_comm), "scanned_invoices": len(invoices)}
 
+# ---- Phase 3: AI suggestions, PDF invoices, Kanban ----
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+
+class AIMilestoneSuggestRequest(BaseModel):
+    project_title: Optional[str] = None
+    description: Optional[str] = None
+    total_value: float
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    currency: str = "INR"
+
+@api_router.post("/commercials/ai/suggest-milestones")
+async def ai_suggest_milestones(payload: AIMilestoneSuggestRequest, current_user: dict = Depends(get_current_user)):
+    """Use the configured LLM to suggest a milestone breakdown based on past deals + project brief."""
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+        raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="LLM key not configured. Set EMERGENT_LLM_KEY in backend .env")
+
+    # Gather past one-time projects for context (most recent 20)
+    past = await db.commercials.find({"type": "one_time", "milestones": {"$exists": True, "$ne": []}}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+    past_summaries = []
+    for p in past[:12]:
+        ms = p.get('milestones') or []
+        past_summaries.append({
+            "title": p.get('lead_title'),
+            "value": p.get('total_value'),
+            "milestones": [{"name": m.get('name'), "percentage": m.get('percentage'), "amount": m.get('amount')} for m in ms],
+        })
+
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    import json as _json
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=f"milestone-suggest-{current_user['id']}-{uuid.uuid4()}",
+        system_message=(
+            "You are a delivery-management assistant. Given a project brief and a sample of past "
+            "deals' milestone structures, suggest a clean milestone breakdown. Always respond with "
+            "STRICT JSON. No prose, no markdown. The JSON object MUST have a 'milestones' array of "
+            "{name (string), description (string), percentage (number), delivery_offset_days (integer, "
+            "days from project start)}. The sum of all percentages MUST equal exactly 100."
+        )
+    ).with_model("gemini", "gemini-3.1-pro-preview")
+
+    duration_hint = ""
+    if payload.start_date and payload.end_date:
+        try:
+            sd = datetime.fromisoformat(payload.start_date[:10]).date()
+            ed = datetime.fromisoformat(payload.end_date[:10]).date()
+            duration_hint = f"Total project duration: {(ed - sd).days} days."
+        except Exception:
+            pass
+
+    prompt = (
+        f"Project title: {payload.project_title or 'Untitled'}\n"
+        f"Brief: {payload.description or 'N/A'}\n"
+        f"Total value: {payload.currency} {payload.total_value}\n"
+        f"{duration_hint}\n\n"
+        f"Past deals for reference (truncated):\n{_json.dumps(past_summaries[:6], indent=2)}\n\n"
+        "Suggest 3-5 milestones that match typical project shapes for this kind of work. "
+        "Output STRICT JSON only."
+    )
+
+    try:
+        response = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        logger.exception(f"LLM error: {e}")
+        raise HTTPException(status_code=502, detail=f"LLM request failed: {str(e)[:120]}")
+
+    raw = (response or "").strip()
+    # Strip code fences if present
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    try:
+        parsed = _json.loads(raw)
+        milestones = parsed.get("milestones") or []
+    except Exception:
+        # Last-resort: try to find JSON braces
+        import re as _re
+        m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if not m:
+            raise HTTPException(status_code=502, detail="LLM returned non-JSON output")
+        try:
+            parsed = _json.loads(m.group(0))
+            milestones = parsed.get("milestones") or []
+        except Exception:
+            raise HTTPException(status_code=502, detail="LLM returned malformed JSON")
+
+    # Normalise: clamp percentages, compute amounts, compute delivery_date
+    start_dt = None
+    if payload.start_date:
+        try:
+            start_dt = datetime.fromisoformat(payload.start_date[:10]).date()
+        except Exception:
+            pass
+
+    total_pct = sum((m.get('percentage') or 0) for m in milestones)
+    if not milestones or total_pct <= 0:
+        raise HTTPException(status_code=502, detail="LLM suggestions had invalid percentages")
+    factor = 100.0 / total_pct
+    cleaned = []
+    pct_sum = 0
+    for idx, m in enumerate(milestones):
+        pct = round(float(m.get('percentage') or 0) * factor, 2)
+        pct_sum += pct
+        offset = int(m.get('delivery_offset_days') or 0)
+        delivery_date = (start_dt + timedelta(days=offset)).isoformat() if start_dt else None
+        amount = round(payload.total_value * (pct / 100.0), 2)
+        cleaned.append({
+            "name": str(m.get('name') or f"Milestone {idx+1}")[:120],
+            "description": str(m.get('description') or '')[:500],
+            "percentage": pct,
+            "amount": amount,
+            "delivery_date": delivery_date,
+            "delivery_offset_days": offset,
+        })
+    # Correct rounding drift on last entry
+    if cleaned and abs(pct_sum - 100) > 0.01:
+        diff = round(100 - pct_sum + cleaned[-1]['percentage'], 2)
+        cleaned[-1]['percentage'] = diff
+        cleaned[-1]['amount'] = round(payload.total_value * (diff / 100.0), 2)
+
+    return {"milestones": cleaned, "model": "gemini-3.1-pro-preview"}
+
+@api_router.get("/commercials/{commercial_id}/ai/renewal-probability")
+async def ai_renewal_probability(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    """Heuristic-based renewal probability with optional LLM-generated reasoning."""
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    if commercial.get('type') != 'recurring':
+        raise HTTPException(status_code=400, detail="Renewal probability only applies to recurring contracts")
+
+    # --- Heuristic scoring (deterministic; works without LLM) ---
+    score = 0.50
+    factors: List[str] = []
+
+    if commercial.get('auto_renewal'):
+        score += 0.25
+        factors.append("Auto-renewal enabled (+25%)")
+    if commercial.get('renewal_type') == 'auto':
+        score += 0.10
+        factors.append("Renewal type: auto (+10%)")
+    elif commercial.get('renewal_type') == 'approval_required':
+        score -= 0.05
+        factors.append("Approval required (-5%)")
+
+    # Payment history strength
+    payments = await db.commercial_payments.find({"commercial_id": commercial_id}, {"_id": 0}).to_list(500)
+    invoices = await db.commercial_invoices.find({"commercial_id": commercial_id}, {"_id": 0}).to_list(500)
+    total_invoiced = sum(float(i.get('amount') or 0) for i in invoices)
+    total_paid = sum(float(p.get('amount') or 0) for p in payments)
+    on_time_pmt = total_paid >= total_invoiced * 0.95
+    overdue_count = 0
+    today = datetime.now(timezone.utc).date()
+    for inv in invoices:
+        if inv.get('status') in ('raised', 'partial'):
+            try:
+                if inv.get('due_date') and datetime.fromisoformat(inv['due_date'][:10]).date() < today:
+                    overdue_count += 1
+            except Exception:
+                pass
+
+    if on_time_pmt and len(invoices) >= 2:
+        score += 0.10
+        factors.append("Strong payment history (+10%)")
+    if overdue_count > 0:
+        penalty = min(0.25, 0.05 * overdue_count)
+        score -= penalty
+        factors.append(f"{overdue_count} overdue invoice(s) (-{int(penalty*100)}%)")
+
+    # Contract tenure: longer active contracts renew more
+    if commercial.get('contract_start_date') and commercial.get('contract_end_date'):
+        try:
+            s = datetime.fromisoformat(commercial['contract_start_date'][:10]).date()
+            e = datetime.fromisoformat(commercial['contract_end_date'][:10]).date()
+            tenure_months = max(0, (e - s).days // 30)
+            if tenure_months >= 12:
+                score += 0.05
+                factors.append(f"{tenure_months}m tenure (+5%)")
+        except Exception:
+            pass
+
+    if commercial.get('contract_status') in ('cancelled', 'expired'):
+        score = max(0.10, score - 0.40)
+        factors.append("Contract not active (-40%)")
+
+    score = max(0.0, min(1.0, score))
+    band = 'high' if score >= 0.7 else ('medium' if score >= 0.4 else 'low')
+
+    return {
+        "commercial_id": commercial_id,
+        "probability": round(score, 2),
+        "band": band,
+        "factors": factors,
+        "total_invoiced": round(total_invoiced, 2),
+        "total_paid": round(total_paid, 2),
+        "overdue_count": overdue_count,
+    }
+
+@api_router.get("/commercials/{commercial_id}/ai/payment-delay-risk")
+async def ai_payment_delay_risk(commercial_id: str, current_user: dict = Depends(get_current_user)):
+    """Heuristic payment-delay risk per outstanding invoice."""
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+
+    invoices = await db.commercial_invoices.find({"commercial_id": commercial_id}, {"_id": 0}).to_list(500)
+
+    # Historical average pay-lag (days between raised_at and paid_at on PAID invoices)
+    pay_lags = []
+    for inv in invoices:
+        if inv.get('status') == 'paid' and inv.get('paid_at') and inv.get('raised_at'):
+            try:
+                r = datetime.fromisoformat(inv['raised_at'].replace('Z', '+00:00'))
+                p = datetime.fromisoformat(inv['paid_at'].replace('Z', '+00:00'))
+                pay_lags.append((p - r).days)
+            except Exception:
+                pass
+    avg_lag = round(sum(pay_lags) / len(pay_lags), 1) if pay_lags else None
+
+    today = datetime.now(timezone.utc).date()
+    items = []
+    for inv in invoices:
+        if inv.get('status') not in ('raised', 'partial', 'overdue'):
+            continue
+        risk_score = 0.30
+        risk_factors = []
+        if inv.get('due_date'):
+            try:
+                d = datetime.fromisoformat(inv['due_date'][:10]).date()
+                days_to_due = (d - today).days
+                if days_to_due < 0:
+                    risk_score += min(0.50, 0.05 * abs(days_to_due))
+                    risk_factors.append(f"{abs(days_to_due)}d overdue")
+                elif days_to_due <= 3:
+                    risk_score += 0.20
+                    risk_factors.append(f"Due in {days_to_due}d")
+            except Exception:
+                pass
+        if avg_lag is not None and avg_lag > 14:
+            risk_score += 0.15
+            risk_factors.append(f"Avg pay-lag {avg_lag}d")
+        outstanding = float(inv.get('amount') or 0) - float(inv.get('amount_paid') or 0)
+        if outstanding > 100000:  # large invoices skew risk
+            risk_score += 0.10
+            risk_factors.append("Large outstanding")
+
+        risk_score = min(1.0, max(0.0, risk_score))
+        items.append({
+            "invoice_id": inv['id'],
+            "invoice_number": inv.get('invoice_number'),
+            "outstanding": round(outstanding, 2),
+            "due_date": inv.get('due_date'),
+            "risk_score": round(risk_score, 2),
+            "band": 'high' if risk_score >= 0.7 else ('medium' if risk_score >= 0.4 else 'low'),
+            "factors": risk_factors,
+        })
+    items.sort(key=lambda x: -x['risk_score'])
+    return {"avg_pay_lag_days": avg_lag, "invoices": items}
+
+@api_router.get("/commercials/kanban")
+async def commercials_kanban(current_user: dict = Depends(get_current_user)):
+    """Group all commercials into kanban columns by status."""
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('role') == UserRole.SELLING_PARTNER.value):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    query: Dict[str, Any] = {}
+    if current_user.get('role') == UserRole.SELLING_PARTNER.value:
+        leads = await db.leads.find({
+            "$or": [
+                {"selling_partner_id": current_user['id']},
+                {"assigned_partners.partner_id": current_user['id']},
+                {"assigned_partners.partner_id": current_user.get('company_id')},
+            ]
+        }, {"_id": 0, "id": 1}).to_list(2000)
+        query['lead_id'] = {"$in": [ld['id'] for ld in leads]}
+    items = await db.commercials.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+    columns: Dict[str, dict] = {
+        "active": {"key": "active", "label": "Active", "color": "#10B981", "items": []},
+        "renewal_due": {"key": "renewal_due", "label": "Renewal Due", "color": "#F59E0B", "items": []},
+        "renewed": {"key": "renewed", "label": "Renewed", "color": "#4169E1", "items": []},
+        "on_hold": {"key": "on_hold", "label": "On Hold", "color": "#6B7280", "items": []},
+        "expired": {"key": "expired", "label": "Expired", "color": "#DC143C", "items": []},
+        "cancelled": {"key": "cancelled", "label": "Cancelled", "color": "#9CA3AF", "items": []},
+        "one_time": {"key": "one_time", "label": "One-Time Projects", "color": "#8B5CF6", "items": []},
+    }
+    for c in items:
+        if c.get('type') == 'one_time':
+            columns['one_time']['items'].append(c)
+        else:
+            col = c.get('contract_status') or 'active'
+            if col in columns:
+                columns[col]['items'].append(c)
+            else:
+                columns['active']['items'].append(c)
+    return {"columns": list(columns.values())}
+
+@api_router.get("/commercials/{commercial_id}/invoices/{invoice_id}/pdf")
+async def download_invoice_pdf(commercial_id: str, invoice_id: str, current_user: dict = Depends(get_current_user)):
+    """Generate a PDF for an invoice on the fly."""
+    commercial = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
+    if not commercial:
+        raise HTTPException(status_code=404, detail="Commercial not found")
+    await _ensure_commercial_access(commercial, current_user, write=False)
+    invoice = await db.commercial_invoices.find_one({"id": invoice_id, "commercial_id": commercial_id}, {"_id": 0})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    # Pull seller info from first super-admin's company (or fall back)
+    customer = None
+    if commercial.get('customer_id'):
+        customer = await db.customers.find_one({"id": commercial['customer_id']}, {"_id": 0})
+
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18*mm, rightMargin=18*mm, topMargin=18*mm, bottomMargin=18*mm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle('h1', parent=styles['Heading1'], textColor=colors.HexColor('#0F172A'), spaceAfter=6)
+    h2 = ParagraphStyle('h2', parent=styles['Heading3'], textColor=colors.HexColor('#0F172A'), spaceAfter=4)
+    body = ParagraphStyle('body', parent=styles['BodyText'], textColor=colors.HexColor('#0F172A'))
+    muted = ParagraphStyle('muted', parent=styles['BodyText'], textColor=colors.HexColor('#64748B'), fontSize=9)
+    story = []
+    story.append(Paragraph("INVOICE", h1))
+    story.append(Paragraph("<b>Meshora — Powered by Vyapaar Network</b>", muted))
+    story.append(Spacer(1, 8))
+    meta_rows = [
+        ["Invoice Number", invoice.get('invoice_number') or '-'],
+        ["Status", (invoice.get('status') or '').upper()],
+        ["Raised", (invoice.get('raised_at') or '')[:10]],
+        ["Due", (invoice.get('due_date') or '-')[:10]],
+    ]
+    t = Table(meta_rows, colWidths=[40*mm, 80*mm])
+    t.setStyle(TableStyle([
+        ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 10),
+        ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor('#0F172A')),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 10))
+
+    # Bill-to / Project
+    story.append(Paragraph("Billed to", h2))
+    bill_to = customer.get('name') if customer else (commercial.get('customer_name') or '-')
+    bill_email = customer.get('email') if customer else ''
+    story.append(Paragraph(f"{bill_to}", body))
+    if bill_email:
+        story.append(Paragraph(bill_email, muted))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("Project / Contract", h2))
+    story.append(Paragraph(commercial.get('lead_title') or '-', body))
+    story.append(Spacer(1, 10))
+
+    # Amount block
+    currency = invoice.get('currency') or commercial.get('currency') or 'INR'
+    amt = float(invoice.get('amount') or 0)
+    paid = float(invoice.get('amount_paid') or 0)
+    due = amt - paid
+    amt_rows = [
+        ["Item", "Amount"],
+        [Paragraph(f"Invoice for {commercial.get('lead_title')}", body), f"{currency} {amt:,.2f}"],
+        ["Total", f"{currency} {amt:,.2f}"],
+        ["Amount paid", f"{currency} {paid:,.2f}"],
+        ["Amount due", f"{currency} {due:,.2f}"],
+    ]
+    at = Table(amt_rows, colWidths=[120*mm, 50*mm])
+    at.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0F172A')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTNAME', (-1,-1), (-1,-1), 'Helvetica-Bold'),
+        ('FONTNAME', (0,-1), (0,-1), 'Helvetica-Bold'),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#FEF3C7')),
+        ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#E2E8F0')),
+        ('ALIGN', (-1,0), (-1,-1), 'RIGHT'),
+        ('FONTSIZE', (0,0), (-1,-1), 10),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(at)
+    story.append(Spacer(1, 12))
+    if invoice.get('notes'):
+        story.append(Paragraph("Notes", h2))
+        story.append(Paragraph(invoice['notes'], body))
+
+    story.append(Spacer(1, 20))
+    story.append(Paragraph(f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", muted))
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+
+    from fastapi.responses import StreamingResponse
+    headers = {"Content-Disposition": f"attachment; filename=invoice_{invoice.get('invoice_number','inv')}.pdf"}
+    return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
+
 @api_router.get("/commercials/by-lead/{lead_id}")
 async def get_commercial_by_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
     commercial = await db.commercials.find_one({"lead_id": lead_id}, {"_id": 0})
