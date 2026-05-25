@@ -4600,6 +4600,186 @@ async def run_smart_notification_rules(current_user: dict = Depends(get_current_
 
     return {"fired_count": len(fired), "events": fired[:50]}
 
+# ==================== PHASE 3: AI DEAL RISK + AI FOLLOW-UP ASSISTANT ====================
+
+def _build_lead_ai_context(lead: dict, status_map: dict) -> str:
+    """Compose a rich text context block for the LLM from a lead document."""
+    st = status_map.get(lead.get('status_id') or '') or {}
+    status_name = st.get('name', 'Unstaged')
+    deal_value = float(lead.get('deal_value') or 0)
+    lead_for_h = {**lead, 'active_partners_count': len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active']), 'status_is_won': bool(st.get('is_won'))}
+    h = compute_lead_health(lead_for_h)
+
+    follow_ups = lead.get('follow_ups') or []
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    overdue = [f for f in follow_ups if not f.get('is_completed') and (f.get('scheduled_date') or '') < today_iso]
+    pending = [f for f in follow_ups if not f.get('is_completed') and not ((f.get('scheduled_date') or '') < today_iso)]
+    completed = [f for f in follow_ups if f.get('is_completed')]
+
+    last_comments = (lead.get('comments') or [])[-5:]
+    summaries = (lead.get('meeting_summaries') or [])[-2:]
+    stakeholders = lead.get('stakeholders') or []
+    partners = [p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active']
+
+    blocks = []
+    blocks.append(f"Lead: {lead.get('title','')}  |  Status: {status_name}  |  Deal: ₹{deal_value:,.0f}")
+    blocks.append(f"Customer: {lead.get('customer_name','')} @ {lead.get('customer_company','')}")
+    blocks.append(f"Health: {h['band']} ({h['score']}/100). Days inactive: {h.get('days_inactive')}")
+    blocks.append(f"Follow-ups: {len(overdue)} overdue, {len(pending)} pending, {len(completed)} completed")
+    if partners:
+        blocks.append(f"Active partners: " + ", ".join(p.get('partner_name', '') for p in partners))
+
+    if stakeholders:
+        blocks.append("\nStakeholders:")
+        for s in stakeholders[:8]:
+            blocks.append(f"  - {s.get('name','')} ({s.get('role_type','')}, engagement={s.get('engagement','neutral')}){' — '+s.get('notes') if s.get('notes') else ''}")
+    else:
+        blocks.append("\nStakeholders: NONE MAPPED (this is a risk signal — buyer-side relationships are not understood)")
+
+    if summaries:
+        blocks.append("\nRecent meeting summaries:")
+        for s in summaries:
+            blocks.append(f"  - [{s.get('meeting_date','?')}] sentiment={s.get('sentiment','?')}: {s.get('summary','')[:240]}")
+            if s.get('risks'):
+                blocks.append(f"      risks: {' · '.join(s['risks'][:3])}")
+
+    if last_comments:
+        blocks.append("\nRecent comments:")
+        for c in last_comments:
+            blocks.append(f"  - [{c.get('created_at','')[:10]}] {c.get('user_name','')}: {c.get('content','')[:200]}")
+
+    return "\n".join(blocks)
+
+async def _ai_lead_chat(lead_id: str, system_msg: str, user_prompt: str) -> dict:
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage  # noqa: WPS433
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=f"ai-lead-{lead_id}-{uuid.uuid4()}",
+        system_message=system_msg,
+    ).with_model("gemini", "gemini-3.1-pro-preview")
+    try:
+        raw = await chat.send_message(UserMessage(text=user_prompt))
+    except Exception as e:
+        logger.exception(f"LLM error: {e}")
+        raise HTTPException(status_code=502, detail=f"AI request failed: {str(e)[:120]}")
+    text = (raw or '').strip()
+    if text.startswith('```'):
+        text = text.strip('`')
+        if text.lower().startswith('json'):
+            text = text[4:]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if not m:
+            raise HTTPException(status_code=502, detail="AI returned non-JSON output")
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            raise HTTPException(status_code=502, detail="AI returned malformed JSON")
+
+@api_router.post("/leads/{lead_id}/ai/risk-analysis")
+async def ai_deal_risk(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """AI-driven deal risk analysis. Considers inactivity, sentiment from meeting summaries,
+    stakeholder gaps, follow-up health, and deal-value tier to compute a risk score + factors
+    + mitigations. Stored on the lead under `ai_risk_analysis`."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+
+    context = _build_lead_ai_context(lead, status_map)
+    system_msg = (
+        "You are a senior B2B sales risk analyst. Analyze the provided lead context and return STRICT JSON only. "
+        "No prose, no markdown, no code fences. Schema:\n"
+        "{\n"
+        '  "risk_score": 0-100 integer (higher = more risk),\n'
+        '  "risk_level": one of [low, medium, high, critical],\n'
+        '  "closure_probability": 0-100 integer (likelihood deal closes won),\n'
+        '  "top_risk_factors": array of {factor: string, severity: low|medium|high, evidence: string},\n'
+        '  "stakeholder_gaps": array of strings (e.g. "No champion identified", "Finance approver missing"),\n'
+        '  "recommended_mitigations": array of strings (1-line specific actions),\n'
+        '  "early_warning_signals": array of strings,\n'
+        '  "confidence": 0-100 integer (how confident is the model given available data)\n'
+        "}\n"
+        "Be specific. Use the actual lead details, NOT generic advice. Penalize stakeholder gaps and inactivity hard. "
+        "If meeting sentiment was negative, raise risk. If a champion is supportive, lower risk."
+    )
+    parsed = await _ai_lead_chat(lead_id, system_msg, f"Lead context:\n{context}\n\nReturn STRICT JSON only.")
+
+    # Normalize and store
+    result = {
+        "risk_score": int(parsed.get('risk_score') or 50),
+        "risk_level": (parsed.get('risk_level') or 'medium').lower(),
+        "closure_probability": int(parsed.get('closure_probability') or 30),
+        "top_risk_factors": (parsed.get('top_risk_factors') or [])[:6],
+        "stakeholder_gaps": [str(x) for x in (parsed.get('stakeholder_gaps') or [])][:6],
+        "recommended_mitigations": [str(x) for x in (parsed.get('recommended_mitigations') or [])][:6],
+        "early_warning_signals": [str(x) for x in (parsed.get('early_warning_signals') or [])][:6],
+        "confidence": int(parsed.get('confidence') or 60),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_by": current_user['name'],
+    }
+    if result['risk_level'] not in ('low', 'medium', 'high', 'critical'):
+        result['risk_level'] = 'medium'
+    for v in ('risk_score', 'closure_probability', 'confidence'):
+        result[v] = max(0, min(100, result[v]))
+
+    await db.leads.update_one({"id": lead_id}, {"$set": {"ai_risk_analysis": result, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return result
+
+@api_router.post("/leads/{lead_id}/ai/follow-up-suggestion")
+async def ai_followup_suggestion(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """AI Follow-up Assistant. Returns the recommended next action, optimal timing,
+    a ready-to-send conversation starter, and (if applicable) a proposal recommendation."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+
+    context = _build_lead_ai_context(lead, status_map)
+    system_msg = (
+        "You are a senior B2B sales playbook strategist. Given the lead context, recommend the single best next move. "
+        "Return STRICT JSON only. Schema:\n"
+        "{\n"
+        '  "recommended_action": string (clear, specific verb-led next step),\n'
+        '  "rationale": string (1-2 sentences explaining WHY based on the lead context),\n'
+        '  "suggested_timing": {when: string e.g. "tomorrow morning"|"next Monday", reason: string},\n'
+        '  "channel": one of [email, call, whatsapp, meeting, slack],\n'
+        '  "conversation_starter": string (a ready-to-send opening line, 2-3 sentences, professional but warm),\n'
+        '  "proposal_recommendation": optional string (only if proposal stage),\n'
+        '  "stakeholders_to_loop_in": array of strings (names from the stakeholder list),\n'
+        '  "questions_to_ask": array of 2-3 questions to learn more,\n'
+        '  "confidence": 0-100 integer\n'
+        "}\n"
+        "Be specific. If you see meeting summaries, reference what was discussed. "
+        "If a stakeholder is resistant, propose how to handle them. If a champion exists, leverage them. "
+        "Do NOT use placeholder names like [Customer Name]; use the actual names from the context."
+    )
+    parsed = await _ai_lead_chat(lead_id, system_msg, f"Lead context:\n{context}\n\nReturn STRICT JSON only.")
+
+    result = {
+        "recommended_action": str(parsed.get('recommended_action') or '').strip()[:300],
+        "rationale": str(parsed.get('rationale') or '').strip()[:600],
+        "suggested_timing": parsed.get('suggested_timing') or {"when": "today", "reason": ""},
+        "channel": (parsed.get('channel') or 'email').lower(),
+        "conversation_starter": str(parsed.get('conversation_starter') or '').strip()[:1500],
+        "proposal_recommendation": str(parsed.get('proposal_recommendation') or '').strip()[:500] or None,
+        "stakeholders_to_loop_in": [str(x) for x in (parsed.get('stakeholders_to_loop_in') or [])][:5],
+        "questions_to_ask": [str(x) for x in (parsed.get('questions_to_ask') or [])][:5],
+        "confidence": max(0, min(100, int(parsed.get('confidence') or 70))),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_by": current_user['name'],
+    }
+    if result['channel'] not in ('email', 'call', 'whatsapp', 'meeting', 'slack'):
+        result['channel'] = 'email'
+    return result
+
 # ==================== BULK IMPORT ====================
 
 @api_router.get("/leads/import/template")

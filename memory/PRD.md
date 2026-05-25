@@ -236,6 +236,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Sidebar nav** — new "Revenue Intelligence" link with `TrendingUp` icon for super_admin / vyapaar_ops / vyapaar_finance / selling_partner.
 - [x] **ProtectedRoute `/revenue-intelligence`** allows admin-like roles + selling_partner.
 
+### Phase 22 — AI Deal Risk Analysis + AI Follow-up Assistant (Feb 25, 2026)
+- [x] **AI Deal Risk Analysis** — `POST /api/leads/{id}/ai/risk-analysis` invokes Gemini 3 Pro with a rich context block (status, deal value, days inactive, follow-up health, stakeholders + engagement, last 5 comments, last 2 meeting summaries with sentiment + risks) and returns STRICT JSON: `risk_score` (0-100), `risk_level` (low/medium/high/critical), `closure_probability`, `top_risk_factors` (with severity + evidence), `stakeholder_gaps`, `recommended_mitigations` (1-line actions), `early_warning_signals`, `confidence`. Result is persisted on `lead.ai_risk_analysis` so it survives page reload.
+- [x] **AI Follow-up Assistant** — `POST /api/leads/{id}/ai/follow-up-suggestion` returns: `recommended_action` (specific verb-led step), `rationale`, `suggested_timing` (`{when, reason}`), `channel` (email/call/whatsapp/meeting/slack), `conversation_starter` (2-3 sentences ready to send, uses actual customer & stakeholder names from context), `proposal_recommendation`, `stakeholders_to_loop_in`, `questions_to_ask`, `confidence`.
+- [x] **Shared `_build_lead_ai_context()` helper** — composes a rich text context block from the lead document (status, health, follow-up counts, partners, stakeholders with notes, meeting summaries with sentiment & risks, recent comments) so any future AI endpoint can reuse it.
+- [x] **Shared `_ai_lead_chat()` helper** — DRY wrapper for calling Gemini with a system prompt + user prompt, with strict-JSON parsing + fallback regex extraction + proper HTTP error mapping.
+- [x] **Frontend `AIInsightsCard.jsx`** — single card on Lead Detail sidebar with two tabs (Risk / Next Move). Risk view: severity-colored header card (bar + closure probability), top risk factors with severity badges, stakeholder gaps, numbered mitigations, "Re-analyze" button. Suggestion view: recommended action card with channel icon (Mail/Phone/MessageCircle/Calendar/Hash), timing badge, conversation starter in a copy-able code-style box (Copy → toast), proposal recommendation, questions to ask, loop-in chips, "Regenerate" button.
+- [x] **Live test with Gemini:** sample lead with the Acme Corp meeting summary returned Risk 45/medium, 80% confidence, 65% closure probability, identified missing technical champion + legal/security reviewer, recommended tiered pricing + Okta SAML timeline. Follow-up suggestion recommended "Send comprehensive expansion proposal", channel=email, timing=tomorrow morning, conversation starter mentioning Priya by name and the pilot-to-250-reps story.
+
+
 
 
 

@@ -24,6 +24,7 @@ import ActivityTimeline from '../components/ActivityTimeline';
 import TasksCard from '../components/TasksCard';
 import AIMeetingSummaryDialog from '../components/AIMeetingSummaryDialog';
 import StakeholderCard from '../components/StakeholderCard';
+import AIInsightsCard from '../components/AIInsightsCard';
 
 const LeadDetail = () => {
   const { id } = useParams();
@@ -360,6 +361,7 @@ const LeadDetail = () => {
 
         <div className="space-y-6">
           <NextActionCard nextAction={nextAction} onAction={handleNextAction} />
+          <AIInsightsCard leadId={id} initialRisk={lead.ai_risk_analysis} />
           <HealthScoreCard health={health} />
           <FollowUpsCard
             followUps={lead.follow_ups || []}
