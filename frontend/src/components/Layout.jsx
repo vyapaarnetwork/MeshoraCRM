@@ -51,7 +51,7 @@ import { MeshoraMark, MeshoraLogoOnDark } from './MeshoraLogo';
 const VYAPAAR_LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
 
 const Layout = ({ children }) => {
-  const { user, logout, isAdmin, isSellingPartner, isSalesAssociate, isCustomer, isFinance, isDelivery, canAccessCommercials } = useAuth();
+  const { user, logout, isAdmin, isSellingPartner, isSalesAssociate, isCustomer, isFinance, isDelivery, isVyapaarOps, isVyapaarFinance, canAccessCommercials } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
@@ -154,18 +154,22 @@ const Layout = ({ children }) => {
   };
 
   const getNavItems = () => {
+    // Phase 18: vyapaar_ops & vyapaar_finance get the admin surface
+    const ADMIN_ROLES = ['super_admin', 'vyapaar_ops', 'vyapaar_finance'];
+    const ALL_ROLES = ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner', 'sales_associate', 'customer'];
+
     const items = [
-      { 
-        label: 'Dashboard', 
-        icon: LayoutDashboard, 
+      {
+        label: 'Dashboard',
+        icon: LayoutDashboard,
         path: '/dashboard',
-        roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer']
+        roles: ALL_ROLES
       },
-      { 
-        label: 'Leads', 
-        icon: FileText, 
+      {
+        label: 'Leads',
+        icon: FileText,
         path: '/leads',
-        roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer']
+        roles: ALL_ROLES
       },
     ];
 
@@ -199,16 +203,16 @@ const Layout = ({ children }) => {
       });
     }
 
-    if (isAdmin) {
+    if (isAdmin || isVyapaarOps || isVyapaarFinance) {
       items.push(
-        { label: 'Users', icon: Users, path: '/users', roles: ['super_admin'] },
-        { label: 'Companies', icon: Building2, path: '/companies', roles: ['super_admin'] },
-        { label: 'Categories', icon: Tag, path: '/categories', roles: ['super_admin'] },
-        { label: 'Partner Mappings', icon: Network, path: '/partner-mappings', roles: ['super_admin'] },
-        { label: 'Commission', icon: Percent, path: '/commission', roles: ['super_admin'] },
-        { label: 'Document Tags', icon: Paperclip, path: '/document-tags', roles: ['super_admin'] },
-        { label: 'Email Templates', icon: Mail, path: '/email-templates', roles: ['super_admin'] },
-        { label: 'Grid Report', icon: Grid3X3, path: '/grid-report', roles: ['super_admin'] },
+        { label: 'Users', icon: Users, path: '/users', roles: ADMIN_ROLES },
+        { label: 'Companies', icon: Building2, path: '/companies', roles: ADMIN_ROLES },
+        { label: 'Categories', icon: Tag, path: '/categories', roles: ADMIN_ROLES },
+        { label: 'Partner Mappings', icon: Network, path: '/partner-mappings', roles: ADMIN_ROLES },
+        { label: 'Commission', icon: Percent, path: '/commission', roles: ADMIN_ROLES },
+        { label: 'Document Tags', icon: Paperclip, path: '/document-tags', roles: ADMIN_ROLES },
+        { label: 'Email Templates', icon: Mail, path: '/email-templates', roles: ADMIN_ROLES },
+        { label: 'Grid Report', icon: Grid3X3, path: '/grid-report', roles: ADMIN_ROLES },
       );
     }
 
@@ -218,29 +222,29 @@ const Layout = ({ children }) => {
         label: 'Commercials',
         icon: Briefcase,
         path: '/commercials',
-        roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer'],
+        roles: ALL_ROLES,
       });
       items.push({
         label: 'Commercials Kanban',
         icon: Grid3X3,
         path: '/commercials/kanban',
-        roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer'],
+        roles: ALL_ROLES,
       });
-      if (isAdmin || isFinance || isDelivery) {
+      if (isAdmin || isFinance || isDelivery || isVyapaarOps || isVyapaarFinance) {
         items.push({
           label: 'Revenue Analytics',
           icon: BarChart3,
           path: '/commercials/analytics',
-          roles: ['super_admin', 'selling_partner', 'sales_associate', 'customer'],
+          roles: ALL_ROLES,
         });
       }
     }
 
-    items.push({ 
-      label: 'Reports', 
-      icon: BarChart3, 
+    items.push({
+      label: 'Reports',
+      icon: BarChart3,
       path: '/reports',
-      roles: ['super_admin', 'selling_partner', 'sales_associate']
+      roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner', 'sales_associate']
     });
 
     return items.filter(item => item.roles.includes(user?.role));

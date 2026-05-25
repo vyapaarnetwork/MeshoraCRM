@@ -3,14 +3,14 @@
  * Inline SVG so it scales perfectly and themes via currentColor for the wordmark.
  */
 
-export const MeshoraMark = ({ size = 40, className = '' }) => (
+export const MeshoraMark = ({ size = 40, className = '', animated = true }) => (
   <svg
     width={size}
     height={size}
     viewBox="0 0 64 64"
     fill="none"
     xmlns="http://www.w3.org/2000/svg"
-    className={className}
+    className={`${animated ? 'meshora-mark-animated' : ''} ${className}`}
     aria-hidden="true"
   >
     <defs>
@@ -21,8 +21,8 @@ export const MeshoraMark = ({ size = 40, className = '' }) => (
       </linearGradient>
     </defs>
     {/* Sparkle dots */}
-    <circle cx="6" cy="10" r="1.4" fill="url(#meshora-grad)" opacity="0.7" />
-    <circle cx="58" cy="54" r="1.2" fill="url(#meshora-grad)" opacity="0.6" />
+    <circle className="meshora-sparkle meshora-sparkle-1" cx="6" cy="10" r="1.4" fill="url(#meshora-grad)" opacity="0.7" />
+    <circle className="meshora-sparkle meshora-sparkle-2" cx="58" cy="54" r="1.2" fill="url(#meshora-grad)" opacity="0.6" />
     {/* Infinity/M loop — two overlapping circles forming the M with a knot */}
     <path
       d="M20 18 C 10 18, 6 28, 12 38 C 18 48, 28 48, 32 38 L 32 38 C 36 48, 46 48, 52 38 C 58 28, 54 18, 44 18 C 38 18, 34 24, 32 30 C 30 24, 26 18, 20 18 Z"
@@ -33,7 +33,36 @@ export const MeshoraMark = ({ size = 40, className = '' }) => (
       fill="none"
     />
     {/* Central knot dot */}
-    <circle cx="32" cy="32" r="2.6" fill="url(#meshora-grad)" />
+    <circle className="meshora-knot" cx="32" cy="32" r="2.6" fill="url(#meshora-grad)" />
+    {/* Inline animation keyframes — scoped via class names */}
+    <style>{`
+      .meshora-mark-animated .meshora-knot {
+        transform-origin: 32px 32px;
+        animation: meshora-knot-pulse 2.8s ease-in-out infinite;
+      }
+      .meshora-mark-animated .meshora-sparkle-1 {
+        animation: meshora-sparkle 3.2s ease-in-out infinite;
+      }
+      .meshora-mark-animated .meshora-sparkle-2 {
+        animation: meshora-sparkle 3.2s ease-in-out infinite;
+        animation-delay: 1.6s;
+      }
+      @keyframes meshora-knot-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50%      { transform: scale(1.45); opacity: 0.85; }
+      }
+      @keyframes meshora-sparkle {
+        0%, 100% { opacity: 0.25; }
+        50%      { opacity: 0.9; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .meshora-mark-animated .meshora-knot,
+        .meshora-mark-animated .meshora-sparkle-1,
+        .meshora-mark-animated .meshora-sparkle-2 {
+          animation: none;
+        }
+      }
+    `}</style>
   </svg>
 );
 

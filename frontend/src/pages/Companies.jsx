@@ -1,67 +1,47 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
-import { Badge } from '../components/ui/badge';
+import { Card, CardContent, CardHeader } from '../components/ui/card';
 import { Skeleton } from '../components/ui/skeleton';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '../components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../components/ui/select';
-import { Checkbox } from '../components/ui/checkbox';
-import { Plus, Edit, Building2, Percent, Search, Loader2, Tag, X, Paperclip, Upload, FileText, UserPlus } from 'lucide-react';
-import api, { formatDate } from '../utils/api';
+import { Plus, Building2, Search } from 'lucide-react';
+import api from '../utils/api';
 import { toast } from 'sonner';
-import { DocumentUploadDialog, DocumentList, COMPANY_DOCUMENT_TAGS } from '../components/DocumentUpload';
+import { DocumentUploadDialog, COMPANY_DOCUMENT_TAGS } from '../components/DocumentUpload';
+import { CompanyTable } from './companies/CompanyTable';
+import { CompanyFormDialog } from './companies/CompanyFormDialog';
+import { CompanyDocumentsDialog } from './companies/CompanyDocumentsDialog';
+
+const EMPTY_FORM = {
+  name: '',
+  type: '',
+  vyapaar_commission_percentage: '15',
+  address: '',
+  contact_email: '',
+  contact_phone: '',
+  subcategory_ids: [],
+  default_user_name: '',
+  default_user_email: '',
+  default_user_phone: '',
+  default_user_password: '',
+};
 
 const Companies = () => {
-  const { isAdmin } = useAuth();
   const [companies, setCompanies] = useState([]);
   const [secondaryCategories, setSecondaryCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  
+
+  // Form / dialogs
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    type: '',
-    vyapaar_commission_percentage: '15',
-    address: '',
-    contact_email: '',
-    contact_phone: '',
-    subcategory_ids: [],
-    // Default user for customer companies
-    default_user_name: '',
-    default_user_email: '',
-    default_user_phone: '',
-    default_user_password: ''
-  });
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
 
-  // Document upload states
+  // Document dialogs
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [documentsDialogOpen, setDocumentsDialogOpen] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState(null);
@@ -78,11 +58,11 @@ const Companies = () => {
     try {
       const [companiesRes, categoriesRes] = await Promise.all([
         api.get('/companies'),
-        api.get('/master/secondary-categories')
+        api.get('/master/secondary-categories'),
       ]);
       setCompanies(companiesRes.data);
       setSecondaryCategories(categoriesRes.data);
-    } catch (error) {
+    } catch (e) {
       toast.error('Failed to load data');
     } finally {
       setLoading(false);
@@ -95,18 +75,15 @@ const Companies = () => {
       if (response.data && response.data.length > 0) {
         setDocumentTags(response.data.map(t => ({ value: t.tag_key, label: t.name })));
       }
-    } catch (error) {
-      // Use default tags
-      console.log('Using default company document tags');
-    }
+    } catch (e) { /* fall back to defaults */ }
   };
 
   const fetchCompanyDocuments = async (companyId) => {
     try {
       const response = await api.get(`/documents/entity/company/${companyId}`);
       setDocuments(response.data);
-    } catch (error) {
-      console.error('Failed to fetch documents:', error);
+    } catch (e) {
+      console.error('Failed to fetch documents:', e);
     }
   };
 
@@ -117,26 +94,16 @@ const Companies = () => {
     setDocumentsDialogOpen(true);
   };
 
-  const openUploadDialog = (company) => {
-    setSelectedCompanyId(company.id);
-    setSelectedCompanyName(company.name);
-    setUploadDialogOpen(true);
-  };
-
   const handleDocumentUploaded = () => {
-    if (selectedCompanyId) {
-      fetchCompanyDocuments(selectedCompanyId);
-    }
+    if (selectedCompanyId) fetchCompanyDocuments(selectedCompanyId);
   };
 
   const handleDeleteDocument = async (docId) => {
     try {
       await api.delete(`/documents/${docId}`);
       toast.success('Document deleted');
-      if (selectedCompanyId) {
-        fetchCompanyDocuments(selectedCompanyId);
-      }
-    } catch (error) {
+      if (selectedCompanyId) fetchCompanyDocuments(selectedCompanyId);
+    } catch (e) {
       toast.error('Failed to delete document');
     }
   };
@@ -154,20 +121,8 @@ const Companies = () => {
       default_user_name: '',
       default_user_email: '',
       default_user_phone: '',
-      default_user_password: ''
-    } : {
-      name: '',
-      type: '',
-      vyapaar_commission_percentage: '15',
-      address: '',
-      contact_email: '',
-      contact_phone: '',
-      subcategory_ids: [],
-      default_user_name: '',
-      default_user_email: '',
-      default_user_phone: '',
-      default_user_password: ''
-    });
+      default_user_password: '',
+    } : EMPTY_FORM);
     setDialogOpen(true);
   };
 
@@ -177,7 +132,6 @@ const Companies = () => {
       return;
     }
 
-    // Validate default user for new customer or selling-partner companies
     if (!editingCompany && (formData.type === 'customer' || formData.type === 'selling_partner')) {
       if (!formData.default_user_name || !formData.default_user_email) {
         toast.error(`Please provide default user details for ${formData.type === 'customer' ? 'customer' : 'selling partner'} company`);
@@ -193,11 +147,10 @@ const Companies = () => {
         ...formData,
         vyapaar_commission_percentage: parseFloat(formData.vyapaar_commission_percentage),
         subcategory_ids: formData.type === 'selling_partner' ? formData.subcategory_ids : [],
-        // Include default user fields for customer and selling-partner companies
         default_user_name: includeUser ? formData.default_user_name : null,
         default_user_email: includeUser ? formData.default_user_email : null,
         default_user_phone: includeUser ? formData.default_user_phone : null,
-        default_user_password: includeUser ? (formData.default_user_password || defaultPwd) : null
+        default_user_password: includeUser ? (formData.default_user_password || defaultPwd) : null,
       };
 
       if (editingCompany) {
@@ -207,7 +160,6 @@ const Companies = () => {
         await api.post('/companies', payload);
         toast.success('Company created successfully');
       }
-
       fetchData();
       setDialogOpen(false);
     } catch (error) {
@@ -217,33 +169,30 @@ const Companies = () => {
     }
   };
 
-  const toggleSubcategory = (categoryId) => {
+  const toggleSubcategory = (id) => {
     setFormData(prev => ({
       ...prev,
-      subcategory_ids: prev.subcategory_ids.includes(categoryId)
-        ? prev.subcategory_ids.filter(id => id !== categoryId)
-        : [...prev.subcategory_ids, categoryId]
+      subcategory_ids: prev.subcategory_ids.includes(id)
+        ? prev.subcategory_ids.filter(x => x !== id)
+        : [...prev.subcategory_ids, id],
     }));
   };
 
-  const filteredCompanies = companies.filter(company => {
-    const matchesSearch = company.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = typeFilter === 'all' || company.type === typeFilter;
+  const filteredCompanies = companies.filter((c) => {
+    const matchesSearch = c.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesType = typeFilter === 'all' || c.type === typeFilter;
     return matchesSearch && matchesType;
   });
 
   const stats = {
     total: companies.length,
     selling_partners: companies.filter(c => c.type === 'selling_partner').length,
-    customers: companies.filter(c => c.type === 'customer').length
+    customers: companies.filter(c => c.type === 'customer').length,
   };
 
-  // Group secondary categories by primary category
   const categoriesByPrimary = secondaryCategories.reduce((acc, cat) => {
     const primaryName = cat.primary_category_name || 'Other';
-    if (!acc[primaryName]) {
-      acc[primaryName] = [];
-    }
+    if (!acc[primaryName]) acc[primaryName] = [];
     acc[primaryName].push(cat);
     return acc;
   }, {});
@@ -255,9 +204,7 @@ const Companies = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Companies</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage partner and customer companies
-          </p>
+          <p className="text-muted-foreground mt-1">Manage partner and customer companies</p>
         </div>
         <Button onClick={() => openDialog()} data-testid="add-company-btn">
           <Plus className="w-4 h-4 mr-2" />
@@ -267,39 +214,9 @@ const Companies = () => {
 
       {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Companies</p>
-                <p className="text-2xl font-bold">{stats.total}</p>
-              </div>
-              <Building2 className="w-8 h-8 text-primary/20" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Selling Partners</p>
-                <p className="text-2xl font-bold text-blue-600">{stats.selling_partners}</p>
-              </div>
-              <Building2 className="w-8 h-8 text-blue-200" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Customers</p>
-                <p className="text-2xl font-bold text-orange-600">{stats.customers}</p>
-              </div>
-              <Building2 className="w-8 h-8 text-orange-200" />
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard label="Total Companies" value={stats.total} color="text-primary" />
+        <StatCard label="Selling Partners" value={stats.selling_partners} color="text-blue-600" iconColor="text-blue-200" />
+        <StatCard label="Customers" value={stats.customers} color="text-orange-600" iconColor="text-orange-200" />
       </div>
 
       {/* Filters */}
@@ -330,391 +247,40 @@ const Companies = () => {
         </CardContent>
       </Card>
 
-      {/* Companies Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="w-5 h-5 text-primary" />
-            All Companies ({filteredCompanies.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {filteredCompanies.length > 0 ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Company</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Commission Rate</TableHead>
-                    <TableHead>Sub-categories</TableHead>
-                    <TableHead>Contact</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead className="w-[120px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredCompanies.map((company) => (
-                    <TableRow key={company.id} data-testid={`company-row-${company.id}`}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <Building2 className="w-4 h-4 text-primary" />
-                          </div>
-                          <div>
-                            <p className="font-medium">{company.name}</p>
-                            {company.address && (
-                              <p className="text-xs text-muted-foreground">{company.address}</p>
-                            )}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={company.type === 'selling_partner' ? 'default' : 'secondary'}>
-                          {company.type === 'selling_partner' ? 'Selling Partner' : 'Customer'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Percent className="w-3 h-3 text-muted-foreground" />
-                          <span className="font-medium">{company.vyapaar_commission_percentage}%</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {company.subcategories && company.subcategories.length > 0 ? (
-                          <div className="flex flex-wrap gap-1 max-w-[200px]">
-                            {company.subcategories.slice(0, 3).map((sub) => (
-                              <Badge key={sub.id} variant="outline" className="text-xs">
-                                {sub.name}
-                              </Badge>
-                            ))}
-                            {company.subcategories.length > 3 && (
-                              <Badge variant="outline" className="text-xs">
-                                +{company.subcategories.length - 3} more
-                              </Badge>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {company.contact_email && (
-                          <p className="text-sm">{company.contact_email}</p>
-                        )}
-                        {company.contact_phone && (
-                          <p className="text-xs text-muted-foreground">{company.contact_phone}</p>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {formatDate(company.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button 
-                            size="icon" 
-                            variant="ghost"
-                            onClick={() => openDocumentsDialog(company)}
-                            data-testid={`docs-company-${company.id}`}
-                            title="View Documents"
-                          >
-                            <Paperclip className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            size="icon" 
-                            variant="ghost"
-                            onClick={() => openDialog(company)}
-                            data-testid={`edit-company-${company.id}`}
-                            title="Edit Company"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Building2 className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-              <h3 className="font-semibold mb-1">No companies found</h3>
-              <p className="text-muted-foreground text-sm mb-4">
-                {searchTerm || typeFilter !== 'all' 
-                  ? 'Try adjusting your filters'
-                  : 'Get started by adding your first company'
-                }
-              </p>
-              {!searchTerm && typeFilter === 'all' && (
-                <Button onClick={() => openDialog()}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Company
-                </Button>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <CompanyTable
+        companies={filteredCompanies}
+        searchTerm={searchTerm}
+        typeFilter={typeFilter}
+        onEdit={openDialog}
+        onOpenDocuments={openDocumentsDialog}
+        onAdd={() => openDialog()}
+      />
 
-      {/* Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {editingCompany ? 'Edit Company' : 'Add New Company'}
-            </DialogTitle>
-            <DialogDescription>
-              {editingCompany ? 'Update company details' : 'Create a new company account'}
-            </DialogDescription>
-          </DialogHeader>
+      <CompanyFormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editingCompany={editingCompany}
+        formData={formData}
+        setFormData={setFormData}
+        categoriesByPrimary={categoriesByPrimary}
+        secondaryCategories={secondaryCategories}
+        submitting={submitting}
+        onSubmit={handleSubmit}
+        onToggleSubcategory={toggleSubcategory}
+      />
 
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Company Name *</Label>
-              <Input
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Enter company name"
-                data-testid="company-name-input"
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label>Company Type *</Label>
-              <Select 
-                value={formData.type} 
-                onValueChange={(v) => setFormData({ ...formData, type: v, subcategory_ids: [] })}
-              >
-                <SelectTrigger data-testid="company-type-select">
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="selling_partner">Selling Partner</SelectItem>
-                  <SelectItem value="customer">Customer</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+      <CompanyDocumentsDialog
+        open={documentsDialogOpen}
+        onOpenChange={setDocumentsDialogOpen}
+        companyName={selectedCompanyName}
+        documents={documents}
+        onUploadClick={() => {
+          setDocumentsDialogOpen(false);
+          setUploadDialogOpen(true);
+        }}
+        onDelete={handleDeleteDocument}
+      />
 
-            <div className="space-y-2">
-              <Label>Vyapaar Commission (%)</Label>
-              <Input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value={formData.vyapaar_commission_percentage}
-                onChange={(e) => setFormData({ ...formData, vyapaar_commission_percentage: e.target.value })}
-                placeholder="15"
-                data-testid="company-commission-input"
-              />
-              <p className="text-xs text-muted-foreground">
-                Default commission rate for this company's deals
-              </p>
-            </div>
-
-            {/* Sub-categories section for selling partners */}
-            {formData.type === 'selling_partner' && (
-              <div className="space-y-3">
-                <Label className="flex items-center gap-2">
-                  <Tag className="w-4 h-4" />
-                  Service Sub-categories
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Select the service categories this partner specializes in
-                </p>
-                
-                {/* Selected subcategories */}
-                {formData.subcategory_ids.length > 0 && (
-                  <div className="flex flex-wrap gap-2 p-2 bg-muted rounded-md">
-                    {formData.subcategory_ids.map(id => {
-                      const cat = secondaryCategories.find(c => c.id === id);
-                      return cat ? (
-                        <Badge key={id} variant="secondary" className="flex items-center gap-1">
-                          {cat.name}
-                          <X 
-                            className="w-3 h-3 cursor-pointer" 
-                            onClick={() => toggleSubcategory(id)}
-                          />
-                        </Badge>
-                      ) : null;
-                    })}
-                  </div>
-                )}
-
-                {/* Category selection */}
-                <div className="border rounded-md max-h-[200px] overflow-y-auto">
-                  {Object.entries(categoriesByPrimary).map(([primaryName, categories]) => (
-                    <div key={primaryName} className="border-b last:border-b-0">
-                      <div className="px-3 py-2 bg-muted/50 font-medium text-sm">
-                        {primaryName}
-                      </div>
-                      <div className="p-2 space-y-1">
-                        {categories.map(cat => (
-                          <div key={cat.id} className="flex items-center space-x-2">
-                            <Checkbox
-                              id={cat.id}
-                              checked={formData.subcategory_ids.includes(cat.id)}
-                              onCheckedChange={() => toggleSubcategory(cat.id)}
-                            />
-                            <label
-                              htmlFor={cat.id}
-                              className="text-sm cursor-pointer"
-                            >
-                              {cat.name}
-                            </label>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Contact Email</Label>
-                <Input
-                  type="email"
-                  value={formData.contact_email}
-                  onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
-                  placeholder="contact@company.com"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Contact Phone</Label>
-                <Input
-                  value={formData.contact_phone}
-                  onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
-                  placeholder="+91 98765 43210"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Address</Label>
-              <Input
-                value={formData.address}
-                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                placeholder="Company address"
-              />
-            </div>
-
-            {/* Default User Section for Customer / Selling-Partner Companies */}
-            {(formData.type === 'customer' || formData.type === 'selling_partner') && !editingCompany && (
-              <div className="border-t pt-4 mt-4">
-                <p className="text-sm font-medium mb-3 flex items-center gap-2">
-                  <UserPlus className="w-4 h-4" />
-                  Default {formData.type === 'selling_partner' ? 'Selling Partner' : 'Customer'} User *
-                </p>
-                <p className="text-xs text-muted-foreground mb-3">
-                  {formData.type === 'selling_partner'
-                    ? 'This user will be created with Selling Partner role. Without it, the company will not appear in lead assignment dropdowns.'
-                    : 'This user will be created with Customer role and can add more team members'}
-                </p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>User Name *</Label>
-                    <Input
-                      value={formData.default_user_name}
-                      onChange={(e) => setFormData({ ...formData, default_user_name: e.target.value })}
-                      placeholder="Full name"
-                      data-testid="default-user-name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>User Email *</Label>
-                    <Input
-                      type="email"
-                      value={formData.default_user_email}
-                      onChange={(e) => setFormData({ ...formData, default_user_email: e.target.value })}
-                      placeholder="user@company.com"
-                      data-testid="default-user-email"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>User Phone</Label>
-                    <Input
-                      value={formData.default_user_phone}
-                      onChange={(e) => setFormData({ ...formData, default_user_phone: e.target.value })}
-                      placeholder="+91 98765 43210"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Password</Label>
-                    <Input
-                      type="password"
-                      value={formData.default_user_password}
-                      onChange={(e) => setFormData({ ...formData, default_user_password: e.target.value })}
-                      placeholder={`Default: ${formData.type === 'selling_partner' ? 'partner123' : 'customer123'}`}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={submitting} data-testid="company-submit-btn">
-              {submitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                'Save Company'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Documents View Dialog */}
-      <Dialog open={documentsDialogOpen} onOpenChange={setDocumentsDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Paperclip className="w-5 h-5" />
-              Documents - {selectedCompanyName}
-            </DialogTitle>
-            <DialogDescription>
-              Corporate profiles, brochures, and other company documents
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4">
-            <div className="flex justify-end mb-4">
-              <Button 
-                size="sm" 
-                onClick={() => {
-                  setDocumentsDialogOpen(false);
-                  setUploadDialogOpen(true);
-                }}
-                data-testid="upload-company-doc-btn"
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Document
-              </Button>
-            </div>
-            <DocumentList 
-              documents={documents} 
-              canDelete={true}
-              onDelete={handleDeleteDocument}
-              emptyMessage="No documents uploaded for this company"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDocumentsDialogOpen(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Document Upload Dialog */}
       <DocumentUploadDialog
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
@@ -726,6 +292,20 @@ const Companies = () => {
     </div>
   );
 };
+
+const StatCard = ({ label, value, color = 'text-foreground', iconColor = 'text-primary/20' }) => (
+  <Card>
+    <CardContent className="pt-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground">{label}</p>
+          <p className={`text-2xl font-bold ${color}`}>{value}</p>
+        </div>
+        <Building2 className={`w-8 h-8 ${iconColor}`} />
+      </div>
+    </CardContent>
+  </Card>
+);
 
 const CompaniesSkeleton = () => (
   <div className="space-y-6">

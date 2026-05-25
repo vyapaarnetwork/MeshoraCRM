@@ -291,6 +291,8 @@ const UsersList = () => {
               <SelectContent>
                 <SelectItem value="all">All Roles</SelectItem>
                 <SelectItem value="super_admin">Super Admin</SelectItem>
+                <SelectItem value="vyapaar_ops">Vyapaar Operations</SelectItem>
+                <SelectItem value="vyapaar_finance">Vyapaar Finance</SelectItem>
                 <SelectItem value="selling_partner">Selling Partner</SelectItem>
                 <SelectItem value="sales_associate">Sales Associate</SelectItem>
                 <SelectItem value="customer">Customer</SelectItem>
@@ -447,6 +449,8 @@ const UsersList = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="super_admin">Super Admin</SelectItem>
+                    <SelectItem value="vyapaar_ops">Vyapaar Operations</SelectItem>
+                    <SelectItem value="vyapaar_finance">Vyapaar Finance</SelectItem>
                     <SelectItem value="selling_partner">Selling Partner</SelectItem>
                     <SelectItem value="sales_associate">Sales Associate</SelectItem>
                     <SelectItem value="customer">Customer</SelectItem>

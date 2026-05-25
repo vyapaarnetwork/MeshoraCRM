@@ -66,6 +66,8 @@ export const formatDateTime = (dateString) => {
 export const getRoleLabel = (role) => {
   const labels = {
     'super_admin': 'Super Admin',
+    'vyapaar_ops': 'Vyapaar Operations',
+    'vyapaar_finance': 'Vyapaar Finance',
     'selling_partner': 'Selling Partner',
     'sales_associate': 'Sales Associate',
     'customer': 'Customer'
@@ -76,6 +78,8 @@ export const getRoleLabel = (role) => {
 export const getRoleColor = (role) => {
   const colors = {
     'super_admin': 'bg-purple-100 text-purple-800',
+    'vyapaar_ops': 'bg-indigo-100 text-indigo-800',
+    'vyapaar_finance': 'bg-amber-100 text-amber-800',
     'selling_partner': 'bg-blue-100 text-blue-800',
     'sales_associate': 'bg-green-100 text-green-800',
     'customer': 'bg-orange-100 text-orange-800'

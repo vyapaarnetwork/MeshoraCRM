@@ -45,7 +45,13 @@ const ProtectedRoute = ({ children, allowedRoles = [] }) => {
     return <Navigate to="/login" replace />;
   }
 
-  if (allowedRoles.length > 0 && !allowedRoles.includes(user?.role)) {
+  // Phase 18: vyapaar_ops & vyapaar_finance get the same surface as super_admin
+  const ADMIN_LIKE_ROLES = ['super_admin', 'vyapaar_ops', 'vyapaar_finance'];
+  const effectiveAllowed = allowedRoles.includes('super_admin')
+    ? Array.from(new Set([...allowedRoles, ...ADMIN_LIKE_ROLES]))
+    : allowedRoles;
+
+  if (effectiveAllowed.length > 0 && !effectiveAllowed.includes(user?.role)) {
     return <Navigate to="/dashboard" replace />;
   }
 

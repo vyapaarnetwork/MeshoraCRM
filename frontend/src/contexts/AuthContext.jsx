@@ -60,9 +60,12 @@ export const AuthProvider = ({ children }) => {
   const isSellingPartner = user?.role === 'selling_partner';
   const isSalesAssociate = user?.role === 'sales_associate';
   const isCustomer = user?.role === 'customer';
-  const isFinance = !!user?.is_finance;
+  const isVyapaarOps = !!user?.is_vyapaar_ops || user?.role === 'vyapaar_ops';
+  const isVyapaarFinance = user?.role === 'vyapaar_finance';
+  const isFinance = !!user?.is_finance || isVyapaarFinance;
   const isDelivery = !!user?.is_delivery;
-  const isVyapaarOps = !!user?.is_vyapaar_ops;
+  // Vyapaar Ops can edit leads/companies; Finance is read-only outside commercials
+  const canEditLeadsCompanies = isAdmin || (isVyapaarOps && !isVyapaarFinance);
   const canAccessCommercials = isAdmin || isSellingPartner || isFinance || isDelivery || isVyapaarOps;
   const canWriteCommercials = isAdmin || isFinance || isDelivery || isVyapaarOps;
 
@@ -81,6 +84,8 @@ export const AuthProvider = ({ children }) => {
       isFinance,
       isDelivery,
       isVyapaarOps,
+      isVyapaarFinance,
+      canEditLeadsCompanies,
       canAccessCommercials,
       canWriteCommercials,
       isAuthenticated: !!user

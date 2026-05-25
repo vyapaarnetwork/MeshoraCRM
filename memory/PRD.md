@@ -196,6 +196,31 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Layout.jsx sidebar logo** swapped from raster `<img>` to the new `MeshoraLogoOnDark` SVG (desktop + mobile + collapsed states + mobile header)
 - [x] **Mobile-friendly**: small Meshora mark + gradient wordmark in mobile login header; responsive at <lg breakpoints (left panel hides)
 
+### Phase 18 - New Vyapaar Roles + Register redesign + Component decomposition (Feb 25, 2026)
+- [x] **Two new UserRole enum values** — `vyapaar_ops` ("Vyapaar Operations") and `vyapaar_finance` ("Vyapaar Finance") added to backend `UserRole` enum and surfaced in Users.jsx role dropdown + role filter. Updated `getRoleLabel` / `getRoleColor` in `utils/api.js` with appropriate labels and color badges (indigo for Ops, amber for Finance).
+- [x] **Role → permissions mapping in `get_current_user`** (server.py:508-545):
+  - `vyapaar_ops` → sets `is_vyapaar_ops=True` (existing flag system: full app access except user/company/category CREATE)
+  - `vyapaar_finance` → sets `is_finance=True` + `is_vyapaar_ops=True` (read everything) + new `is_finance_only_role=True` flag
+  - `is_finance_only_role` users get a 403 block on any POST/PUT/PATCH/DELETE outside `/api/commercials`, `/api/notifications`, `/api/auth` (centralized middleware-style check)
+- [x] **`/api/auth/me` returns un-elevated role + flags derived from the user's actual stored role** so frontend can distinguish ops vs finance vs super_admin properly without seeing synthetic elevation values
+- [x] **AuthContext exposes** `isVyapaarFinance` + `canEditLeadsCompanies` (true for admin and ops, false for finance)
+- [x] **Sidebar nav** (`Layout.jsx`) — `ADMIN_ROLES` now includes `vyapaar_ops` and `vyapaar_finance` so they see Users / Companies / Categories / Partner Mappings / Commission / Document Tags / Email Templates / Grid Report
+- [x] **`ProtectedRoute`** in `App.js` — when `allowedRoles` includes `super_admin`, both `vyapaar_ops` and `vyapaar_finance` are also allowed (read-everything semantics)
+- [x] **Register.jsx redesign** — fully rewritten to mirror Login.jsx 2-panel layout: dark gradient left panel with constellation pattern + `MeshoraLogoOnDark` + "Join the Meshora Network" hero + 3 feature chips (Quick Setup / Verified Partners / Scale Faster); right panel has icon-prefixed input fields, gradient submit, and security card
+- [x] **MeshoraLogo pulse animation** — `MeshoraMark` now has a subtle scale-pulse on the central knot dot (2.8s ease-in-out) + alternating fade on the sparkle dots. Respects `prefers-reduced-motion`. New `animated` prop (default `true`) to toggle.
+- [x] **`Companies.jsx` decomposed** (763 lines → ~280 line orchestrator + 3 sub-components):
+  - `pages/companies/CompanyTable.jsx` — table rendering
+  - `pages/companies/CompanyFormDialog.jsx` — Add/Edit dialog with SubcategoryPicker + DefaultUserSection
+  - `pages/companies/CompanyDocumentsDialog.jsx` — documents viewing dialog
+- [x] **`LeadDetail.jsx` decomposed** (872 lines → ~290 line orchestrator + 5 sub-components):
+  - `pages/leadDetail/LeadOverviewCards.jsx` — LeadOverviewCard + CustomerInfoCard + CommissionBreakdownCard
+  - `pages/leadDetail/CommentsCard.jsx`
+  - `pages/leadDetail/AssignedPartners.jsx` — AssignedPartnersCard + AssignPartnerDialog
+  - `pages/leadDetail/FollowUpsCard.jsx`
+  - `pages/leadDetail/DocumentsCard.jsx`
+  - Wires `canEditLeadsCompanies` so Vyapaar Operations users see admin-level lead controls (Edit Lead, Assigned Partners management)
+- [x] **Testing** — backend pytest 27/28 (96.4%, single failure was a test-script payload mismatch on `/comments`, not a server bug). Frontend Playwright smoke verified Login, Register, Companies, LeadDetail, Users pages all render correctly for both new role accounts.
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
@@ -237,6 +262,8 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 ## Test Credentials
 - **Super Admin**: admin@vyapaarnetwork.com / admin123
 - **Customer**: john@testco.com / test123
+- **Vyapaar Operations**: ops_test@meshora.com / ops123456
+- **Vyapaar Finance**: fin_test@meshora.com / fin123456
 
 ## Prioritized Backlog
 
@@ -249,7 +276,8 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [ ] Lead auto-routing by partner categories
 - [x] Dashboard date range filters (Feb 24, 2026)
 - [x] **Refactor `server.py` (6300+ lines) → extract `routers/commercials.py`** (1559 lines moved; server.py now 4782 lines; Feb 24, 2026)
-- [ ] Fix 32 React Hook dependency warnings
+- [ ] Fix 32 React Hook dependency warnings (deferred — features prioritized)
+- [ ] **Extract `routers/leads.py`** from server.py (~20 lead endpoints scattered in server.py; deferred to a future session per risk-vs-value tradeoff)
 - [x] **Commercials Phase 2** — renewal pipeline auto-creation, analytics page (MRR/ARR/churn/forecast), drag-drop milestone reorder, audit/activity search+filter, is_finance/is_delivery role flags (Feb 24, 2026)
 - [x] **Commercials Phase 2.5 — In-app reminders** (Feb 24, 2026): in-app notifications for milestone-due, billing-due, invoice-overdue, renewal-window with dedup. SendGrid/Twilio hooks scaffolded — pending API keys to activate.
 - [x] **Commercials Phase 3** — AI milestone templates (Gemini 3 Pro), renewal probability, payment-delay risk, Kanban view, PDF invoice generation (Feb 24, 2026)
@@ -258,8 +286,8 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 ### P2 - Medium Priority
 - [x] Dark mode toggle (Feb 24, 2026)
 - [ ] Real-time notifications (WebSocket)
-- [ ] **Refactor `Companies.jsx` (687 lines) and `LeadDetail.jsx` (843 lines)** into smaller sub-components
-- [ ] **Move JWT from localStorage → HttpOnly cookies** (security-critical; full migration touches every API call + CORS + CSRF)
+- [x] **Refactor `Companies.jsx` (687 lines) and `LeadDetail.jsx` (843 lines)** into smaller sub-components (Feb 25, 2026 — Phase 18)
+- [ ] **Move JWT from localStorage → HttpOnly cookies** (security-critical; deferred per user request — too risky for this session)
 
 ## Test Reports
 - `/app/test_reports/iteration_7.json` - Customer User Management tests

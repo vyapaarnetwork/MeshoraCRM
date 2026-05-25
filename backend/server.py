@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse, FileResponse
 from dotenv import load_dotenv
@@ -65,6 +65,8 @@ class UserRole(str, Enum):
     SELLING_PARTNER = "selling_partner"
     SALES_ASSOCIATE = "sales_associate"
     CUSTOMER = "customer"
+    VYAPAAR_OPS = "vyapaar_ops"          # Phase 18: full access except user/company/category creation
+    VYAPAAR_FINANCE = "vyapaar_finance"  # Phase 18: read everything + full commercials write access
 
 # ==================== MODELS ====================
 
@@ -505,18 +507,44 @@ def decode_token(token: str) -> dict:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
     payload = decode_token(credentials.credentials)
     user = await db.users.find_one({"id": payload['user_id']}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    # Phase 18: Map Vyapaar Operations / Vyapaar Finance roles → existing flag system
+    # so the rest of the codebase keeps working with `is_vyapaar_ops` / `is_finance` checks.
+    if user.get('role') == UserRole.VYAPAAR_OPS.value:
+        user['is_vyapaar_ops'] = True
+    if user.get('role') == UserRole.VYAPAAR_FINANCE.value:
+        user['is_finance'] = True
+        user['is_vyapaar_ops'] = True         # grants read-everything access
+        user['is_finance_only_role'] = True   # extra block: no lead/company/master writes
     # Phase 17: Vyapaar Operations users get full app access (same as super_admin)
     # except they cannot create users/companies/categories. We elevate their role
     # in-memory; the three creation endpoints have explicit blocks on the flag.
     if user.get('is_vyapaar_ops') and user.get('role') != UserRole.SUPER_ADMIN.value:
         user['original_role'] = user['role']
         user['role'] = UserRole.SUPER_ADMIN.value
+    # Phase 18: Block VYAPAAR_FINANCE write access to non-commercials endpoints
+    if user.get('is_finance_only_role') and request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        path = request.url.path
+        # Allow writes only on commercials, notifications (mark-read), and self auth endpoints
+        allowed_prefixes = ('/api/commercials', '/api/notifications', '/api/auth')
+        if not any(path.startswith(p) for p in allowed_prefixes):
+            raise HTTPException(
+                status_code=403,
+                detail="Vyapaar Finance role has read-only access to leads, companies, master data, and users."
+            )
     return user
+
+def block_finance_only_write(user: dict):
+    """Phase 18: Explicit guard for routers/modules that bypass get_current_user request checks."""
+    if user.get('is_finance_only_role'):
+        raise HTTPException(
+            status_code=403,
+            detail="Vyapaar Finance role has read-only access outside the Commercials module."
+        )
 
 def calculate_commission(deal_value: float, vyapaar_percentage: float, sales_associate_percentage: Optional[float] = None) -> CommissionBreakdown:
     vyapaar_share = deal_value * (vyapaar_percentage / 100)
@@ -678,18 +706,23 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         if company:
             company_name = company['name']
     
+    # Phase 18: derive flags from the user's actual role so frontend can distinguish
+    # ops vs finance vs super_admin properly (avoid synthetic elevation values).
+    actual_role = current_user.get('original_role') or current_user['role']
     return UserResponse(
         id=current_user['id'],
         email=current_user['email'],
         name=current_user['name'],
-        role=UserRole(current_user['role']),
+        role=UserRole(actual_role),
         company_id=current_user.get('company_id'),
         company_name=company_name,
         phone=current_user.get('phone'),
         is_active=current_user.get('is_active', True),
-        is_finance=current_user.get('is_finance', False),
+        is_finance=current_user.get('is_finance', False) if actual_role != UserRole.VYAPAAR_FINANCE.value else True,
         is_delivery=current_user.get('is_delivery', False),
-        is_vyapaar_ops=current_user.get('is_vyapaar_ops', False),
+        is_vyapaar_ops=(actual_role == UserRole.VYAPAAR_OPS.value) or bool(
+            current_user.get('is_vyapaar_ops', False) and actual_role != UserRole.VYAPAAR_FINANCE.value
+        ),
         created_at=current_user['created_at']
     )
 
