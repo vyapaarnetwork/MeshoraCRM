@@ -5901,6 +5901,95 @@ async def war_room_board(
 class WarRoomBucketOverride(BaseModel):
     bucket: Optional[str] = None  # one of WAR_ROOM_BUCKETS ids, or None to clear
 
+# Phase 29.3: saved views (named filter presets per user)
+class WarRoomViewCreate(BaseModel):
+    name: str
+    hidden_buckets: List[str] = []
+    owner_id: Optional[str] = None
+    partner_id: Optional[str] = None
+    category_id: Optional[str] = None
+    min_value: Optional[float] = None
+
+class WarRoomViewUpdate(BaseModel):
+    name: Optional[str] = None
+    hidden_buckets: Optional[List[str]] = None
+    owner_id: Optional[str] = None
+    partner_id: Optional[str] = None
+    category_id: Optional[str] = None
+    min_value: Optional[float] = None
+
+@api_router.post("/war-room/views")
+async def create_war_room_view(body: WarRoomViewCreate, current_user: dict = Depends(get_current_user)):
+    """Create a saved War Room view (filter + bucket-visibility preset) for the current user."""
+    if current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Not available for customers")
+    name = (body.name or '').strip()[:80]
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    valid_bucket_ids = {b['id'] for b in WAR_ROOM_BUCKETS}
+    hidden = [bid for bid in (body.hidden_buckets or []) if bid in valid_bucket_ids]
+
+    # Enforce a per-user cap (gentle — keeps the dropdown tidy)
+    existing_count = await db.war_room_views.count_documents({"user_id": current_user['id']})
+    if existing_count >= 20:
+        raise HTTPException(status_code=400, detail="Maximum 20 saved views per user — delete one first")
+
+    view = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user['id'],
+        "name": name,
+        "hidden_buckets": hidden,
+        "owner_id": body.owner_id,
+        "partner_id": body.partner_id,
+        "category_id": body.category_id,
+        "min_value": body.min_value,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.war_room_views.insert_one(view)
+    view.pop('_id', None)
+    return view
+
+@api_router.get("/war-room/views")
+async def list_war_room_views(current_user: dict = Depends(get_current_user)):
+    """List the current user's saved views (newest first)."""
+    if current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Not available for customers")
+    views = await db.war_room_views.find(
+        {"user_id": current_user['id']}, {"_id": 0}
+    ).sort("updated_at", -1).to_list(50)
+    return views
+
+@api_router.patch("/war-room/views/{view_id}")
+async def update_war_room_view(view_id: str, body: WarRoomViewUpdate, current_user: dict = Depends(get_current_user)):
+    view = await db.war_room_views.find_one({"id": view_id, "user_id": current_user['id']}, {"_id": 0})
+    if not view:
+        raise HTTPException(status_code=404, detail="View not found")
+    valid_bucket_ids = {b['id'] for b in WAR_ROOM_BUCKETS}
+    update: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if body.name is not None:
+        n = body.name.strip()[:80]
+        if not n:
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        update['name'] = n
+    if body.hidden_buckets is not None:
+        update['hidden_buckets'] = [bid for bid in body.hidden_buckets if bid in valid_bucket_ids]
+    for f in ('owner_id', 'partner_id', 'category_id', 'min_value'):
+        v = getattr(body, f)
+        if v is not None or f in body.dict(exclude_unset=True):
+            update[f] = v
+    await db.war_room_views.update_one({"id": view_id}, {"$set": update})
+    refreshed = await db.war_room_views.find_one({"id": view_id}, {"_id": 0})
+    return refreshed
+
+@api_router.delete("/war-room/views/{view_id}")
+async def delete_war_room_view(view_id: str, current_user: dict = Depends(get_current_user)):
+    res = await db.war_room_views.delete_one({"id": view_id, "user_id": current_user['id']})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="View not found")
+    return {"ok": True}
+
 @api_router.patch("/war-room/leads/{lead_id}/bucket")
 async def override_war_room_bucket(
     lead_id: str, body: WarRoomBucketOverride, current_user: dict = Depends(get_current_user)

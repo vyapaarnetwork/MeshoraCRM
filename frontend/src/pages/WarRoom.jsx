@@ -9,10 +9,12 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '../components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../components/ui/sheet';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import {
   Swords, Play, Square, RefreshCw, Flame, AlertTriangle, Clock, DollarSign, Users,
   Moon, Trophy, Activity, MessageSquare, Calendar, ExternalLink, Sparkles, FileText,
   ChevronRight, TrendingDown, CheckCircle2, History, Heart, ClipboardList, Pin,
+  Bookmark, BookmarkPlus, Trash2, Pencil, ChevronDown,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api, { formatCurrency } from '../utils/api';
@@ -79,6 +81,79 @@ const WarRoom = () => {
     setHiddenBuckets(all);
     try { localStorage.setItem('meshora.warRoom.hiddenBuckets', JSON.stringify([...all])); } catch (e) {/* ignore */}
   };
+
+  // Phase 29.3: Saved views
+  const [savedViews, setSavedViews] = useState([]);
+  const [activeViewId, setActiveViewId] = useState(null);
+  const [viewsMenuOpen, setViewsMenuOpen] = useState(false);
+  const [saveViewName, setSaveViewName] = useState('');
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const loadViews = useCallback(async () => {
+    try {
+      const r = await api.get('/war-room/views');
+      setSavedViews(r.data || []);
+    } catch (e) {/* ignore */}
+  }, []);
+
+  useEffect(() => { loadViews(); }, [loadViews]);
+
+  const applyView = (view) => {
+    const next = new Set(view.hidden_buckets || []);
+    setHiddenBuckets(next);
+    try { localStorage.setItem('meshora.warRoom.hiddenBuckets', JSON.stringify([...next])); } catch (e) {/* ignore */}
+    setActiveViewId(view.id);
+    setViewsMenuOpen(false);
+    toast.success(`Applied: ${view.name}`);
+  };
+
+  const saveCurrentAsView = async () => {
+    const name = saveViewName.trim();
+    if (!name) { toast.error('Name is required'); return; }
+    try {
+      const r = await api.post('/war-room/views', { name, hidden_buckets: [...hiddenBuckets] });
+      setSavedViews((s) => [r.data, ...s]);
+      setActiveViewId(r.data.id);
+      setShowSaveDialog(false);
+      setSaveViewName('');
+      toast.success(`Saved "${name}"`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Save failed');
+    }
+  };
+
+  const renameView = async (viewId) => {
+    const name = renameValue.trim();
+    if (!name) return;
+    try {
+      const r = await api.patch(`/war-room/views/${viewId}`, { name });
+      setSavedViews((s) => s.map((v) => v.id === viewId ? r.data : v));
+      setRenamingId(null);
+      toast.success('Renamed');
+    } catch (e) { toast.error('Rename failed'); }
+  };
+
+  const deleteView = async (viewId, e) => {
+    e?.stopPropagation();
+    if (!window.confirm('Delete this saved view?')) return;
+    try {
+      await api.delete(`/war-room/views/${viewId}`);
+      setSavedViews((s) => s.filter((v) => v.id !== viewId));
+      if (activeViewId === viewId) setActiveViewId(null);
+      toast.success('Deleted');
+    } catch (err) { toast.error('Delete failed'); }
+  };
+
+  // Clear active view label when user manually changes filters away from it
+  useEffect(() => {
+    if (!activeViewId) return;
+    const v = savedViews.find((x) => x.id === activeViewId);
+    if (!v) return;
+    const sameBuckets = (v.hidden_buckets || []).slice().sort().join(',') === [...hiddenBuckets].sort().join(',');
+    if (!sameBuckets) setActiveViewId(null);
+  }, [hiddenBuckets, savedViews, activeViewId]);
 
   const moveLeadToBucket = async (leadId, targetBucket, sourceBucket) => {
     if (!leadId || sourceBucket === targetBucket) return;
@@ -263,10 +338,108 @@ const WarRoom = () => {
         <KpiCard icon={Moon} label="Inactive Value" value={formatCurrency(board.kpis.inactive_pipeline)} sub="Stale 21d+" accent="slate" />
       </div>
 
-      {/* Phase 29.2: Bucket visibility filter chips */}
+      {/* Phase 29.2: Bucket visibility filter chips + Phase 29.3 saved views dropdown */}
       <Card data-testid="bucket-filter-row" className="bg-muted/30">
         <CardContent className="py-2.5 flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium mr-1">Show</span>
+          {/* Saved Views selector */}
+          <Popover open={viewsMenuOpen} onOpenChange={setViewsMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border text-xs hover:shadow-sm transition-shadow"
+                data-testid="saved-views-trigger"
+              >
+                <Bookmark className="w-3.5 h-3.5 text-violet-600" />
+                <span className="font-medium max-w-[160px] truncate">
+                  {activeViewId
+                    ? (savedViews.find((v) => v.id === activeViewId)?.name || 'View')
+                    : 'Saved views'}
+                </span>
+                {savedViews.length > 0 && (
+                  <Badge variant="outline" className="text-[9px] py-0 px-1">{savedViews.length}</Badge>
+                )}
+                <ChevronDown className="w-3 h-3 text-muted-foreground" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-0">
+              <div className="px-3 py-2 border-b flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Your views</span>
+                <button
+                  type="button"
+                  onClick={() => { setViewsMenuOpen(false); setSaveViewName(''); setShowSaveDialog(true); }}
+                  className="text-[11px] text-violet-600 hover:text-violet-700 hover:underline inline-flex items-center gap-1"
+                  data-testid="save-current-view-btn"
+                >
+                  <BookmarkPlus className="w-3 h-3" /> Save current
+                </button>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                {savedViews.length === 0 ? (
+                  <p className="px-3 py-6 text-xs text-center text-muted-foreground">
+                    No saved views yet.<br />
+                    Hide some buckets, then click <span className="font-medium">Save current</span> above.
+                  </p>
+                ) : (
+                  savedViews.map((v) => (
+                    <div
+                      key={v.id}
+                      className={`px-3 py-2 hover:bg-muted/50 cursor-pointer flex items-center gap-2 group ${activeViewId === v.id ? 'bg-violet-50 dark:bg-violet-950/30' : ''}`}
+                      onClick={() => renamingId !== v.id && applyView(v)}
+                      data-testid={`saved-view-${v.id}`}
+                    >
+                      {renamingId === v.id ? (
+                        <Input
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') renameView(v.id);
+                            if (e.key === 'Escape') setRenamingId(null);
+                          }}
+                          autoFocus
+                          className="h-7 text-xs"
+                        />
+                      ) : (
+                        <>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate flex items-center gap-1">
+                              {v.name}
+                              {activeViewId === v.id && <CheckCircle2 className="w-3 h-3 text-violet-600" />}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {v.hidden_buckets?.length > 0 ? `Hides ${v.hidden_buckets.length} bucket(s)` : 'Shows all buckets'}
+                            </div>
+                          </div>
+                          <div className="opacity-0 group-hover:opacity-100 flex gap-0.5 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setRenamingId(v.id); setRenameValue(v.name); }}
+                              className="p-1 rounded hover:bg-muted"
+                              title="Rename"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => deleteView(v.id, e)}
+                              className="p-1 rounded hover:bg-rose-100 dark:hover:bg-rose-950/40 text-rose-600"
+                              title="Delete"
+                              data-testid={`delete-view-${v.id}`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          <span className="w-px h-5 bg-border" />
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">Show</span>
           {board.buckets.map((bucket) => {
             const Icon = BUCKET_ICONS[bucket.id] || Activity;
             const isHidden = hiddenBuckets.has(bucket.id);
@@ -451,9 +624,41 @@ const WarRoom = () => {
         )}
       </div>
 
-      {/* Start session dialog */}
-      <Dialog open={showStartDialog} onOpenChange={setShowStartDialog}>
+      {/* Phase 29.3: Save current view dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
         <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookmarkPlus className="w-5 h-5 text-violet-600" /> Save view
+            </DialogTitle>
+            <DialogDescription>
+              Saves your current bucket filter as a named preset.
+              {hiddenBuckets.size === 0
+                ? ' This view will show ALL buckets.'
+                : ` This view will hide ${hiddenBuckets.size} bucket(s).`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-xs font-medium text-muted-foreground">Name</label>
+            <Input
+              value={saveViewName}
+              onChange={(e) => setSaveViewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveCurrentAsView(); }}
+              placeholder="e.g. My Monday Standup"
+              autoFocus
+              maxLength={80}
+              data-testid="save-view-name-input"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>Cancel</Button>
+            <Button onClick={saveCurrentAsView} data-testid="confirm-save-view-btn">Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Start session dialog */}
+      <Dialog open={showStartDialog} onOpenChange={setShowStartDialog}>        <DialogContent>
           <DialogHeader>
             <DialogTitle>Start Weekly Review</DialogTitle>
             <DialogDescription>The board enters focus mode. Click cards to log them as discussed. At the end, AI generates a structured summary and creates tasks from action items.</DialogDescription>
