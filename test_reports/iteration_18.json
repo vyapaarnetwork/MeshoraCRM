@@ -1,0 +1,50 @@
+{
+  "summary": "Phase 29 Weekly War Room — end-to-end test. BACKEND: 18/19 pytest pass. One FAILURE caught a real backend bug — the followup_pending bucket classification can never fire because compute_lead_health() does not return an 'overdue_count' field. All other rules (recently_won, blocked, inactive, commercial_pending) verified with synthetic leads. Sessions API fully working: start/active/notes PATCH/discuss/end (idempotent) + materialized_task_count + RBAC. Gemini AI summary call succeeded (confirmed in Past Reviews UI: '2 tasks created' + executive_summary text). Customer 403 correct on both /board and /sessions/*. Regression smoke (auth/leads/partner-intelligence/predictive-forecast) green. FRONTEND: All 7 buckets render with correct testids, 47 lead cards loaded, 5 KPI cards visible (Open Leads / Pipeline / Weighted / At Risk / Inactive), review-mode flow works (banner+LIVE badge, notes textarea, click-to-discuss with opacity-60 + active-lead-context sidebar), debounced notes save, End Review → AI completed → Past Reviews shows the just-ended session with 'N tasks created' + executive_summary preview. Help page has Weekly War Room section. Sidebar nav present. Customer redirected away from /war-room (correctly gated).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/war-room/board", "issue": "followup_pending bucket rule never fires because compute_lead_health() does not expose 'overdue_count' in its returned dict. Classifier reads health.get('overdue_count') which is always None/0. Also affects the lead card payload field 'overdue_count' which is always None on the board. FIX: in compute_lead_health (server.py ~line 3590-3601), after computing 'overdue' add it to the returned dict as 'overdue_count': overdue.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/war-room/board", "issue": "high_priority rule requires health_band in ('hot','at_risk') AND deal_value>=100k AND days_inactive<=14. Synthetic newly-created leads with no follow-up/comment history score 50 → band='cold' or 'warm', so high_priority is hard to trigger via fresh seed data. In production the 47 fixture leads happen to be in 'hot' band so the bucket does populate (verified in UI: 16 leads in High Priority). Rule is functional but very narrow."},
+      {"endpoint": "GET /api/war-room/sessions (customer)", "issue": "Customer is not explicitly 403'd on list endpoint — function only blocks customer for board/start/active but list-sessions/get-session allow customer (just returns empty/owned). Tests show 200 with empty array. Consider explicit 403 for parity."},
+      {"endpoint": "POST /api/war-room/sessions/{id}/end", "issue": "Gemini model id 'gemini-3.1-pro-preview' is hard-coded — verify alignment with EMERGENT_LLM_KEY routing; AI completed successfully in test, so no functional bug, just brittle."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "End Review → summary-dialog auto-open", "issue": "After clicking End Review and AI returns, the [data-testid='summary-dialog'] sometimes does not become visible within 45s in the same tab even though the underlying POST /end succeeded (verified: session ended, 2 tasks created, executive_summary persisted, Past Reviews sheet shows the session). May be a Radix Dialog mount race with the long-running async POST OR setSummaryOpen runs before currentSession is set. Manually opening from Past Reviews works fine. LOW priority — user can still see summary via History sheet.", "affected_selectors": ["[data-testid='summary-dialog']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase29_war_room.py",
+    "/app/test_reports/pytest/phase29_results.xml"
+  ],
+  "action_items": [
+    "P0 BACKEND BUG: In /app/backend/server.py compute_lead_health() (~line 3620-3625) add 'overdue_count': overdue to the returned dict. Without this fix, the War Room 'Follow-up Pending' bucket can never populate and lead-card overdue_count is always null. Reproduce: seed a lead with one past-dated unfinished follow_up — it lands in 'inactive' or is dropped instead of 'followup_pending'.",
+    "P2 (nice-to-have): Frontend WarRoom.jsx endSession() — instead of relying on setSummaryOpen(true) right after the await, also set window.__currentSummary = result so the SummaryDialog has stable data on first render, and avoid the dialog race.",
+    "P3: Add explicit 403 for customer on GET /api/war-room/sessions and GET /api/war-room/sessions/{id} (currently allows pass-through with empty/owned results)."
+  ],
+  "critical_code_review_comments": [
+    "BUG: server.py compute_lead_health() returns dict with score/band/days_inactive/factors — NO overdue_count. War Room classifier (line 5687) depends on it. Two consumers in server.py also reference h.get('overdue_count') (e.g. lines 4630, 5844 card payload) — all silently get 0/None.",
+    "WarRoom.jsx endSession uses native window.confirm — fine for desktop testing but not mobile-friendly and not auto-acceptable in Playwright unless dialog handler is registered. Consider an AlertDialog (already in shadcn) for consistency.",
+    "_classify_war_room_bucket priority order is sound (won → blocked → inactive → high_priority → followup_pending → commercial_pending → partner_coordination). However high_priority's band==hot/at_risk gate is so narrow that the bucket effectively requires existing engagement history; new leads will skip directly into commercial_pending/partner_coordination/None.",
+    "Gemini call wraps emergentintegrations and handles JSON parse failure gracefully (fallback executive_summary=raw[:500]). Good defensive coding.",
+    "Materialized Task creation correctly persists source='war_room_session' + source_session_id for traceability. Notification on cross-user assignment is best-effort (try/except) — fine.",
+    "Auto-close prior session logic in /sessions/start is correct and idempotent — verified by test_session_start_auto_closes_prior."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase29_war_room.py (NEW — 19 pytest cases: board shape/fields/customer-403, 5 classification rules with synthetic leads, sessions start/auto-close/active/notes/discuss/end/idempotent/list/detail/customer-403, materialized-tasks marker, 4 regression smoke)"
+  ],
+  "success_rate": {
+    "backend": "94.7% — 18/19 pytest pass; 1 fail caught real backend bug (overdue_count missing from compute_lead_health)",
+    "frontend": "92% — 11/12 flows pass; only end-review summary-dialog auto-open has a Radix mount race, but end-of-session + AI summary + materialized tasks all confirmed via Past Reviews UI"
+  },
+  "test_credentials": "admin@vyapaarnetwork.com/admin123, john@testco.com/test123 — both work. Auth returns 'access_token' (not 'token').",
+  "seed_data_creation": "Synthetic leads prefixed TEST_WR_{recently_won,blocked,inactive,hp,fp,cp}_<uuid> inserted into db.leads then cleaned up via fixture teardown. Session 'TEST_WR Session 1' & 'TEST_WR Session 2' inserted into db.war_room_sessions then cleaned up. Tasks with source_session_id of test session cleaned up.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 29 backend tests are at /app/backend/tests/test_phase29_war_room.py. After the main agent patches compute_lead_health() to expose overdue_count, re-run only TestBucketClassification — it will go from 1 fail to all pass. Authentication note: backend returns 'access_token' (not 'token') — already handled. Frontend tests can use page.on('dialog', accept) to bypass the native window.confirm in endSession. Past Reviews sheet is the source of truth that end-session completed even if summary-dialog has a mount race.",
+  "rca of the issue": "RCA — followup_pending bucket bug: in server.py around lines 3589-3601 the function computes a local variable `overdue` (count of unfinished follow_ups whose scheduled_date < today) and uses it to adjust the health score, but the returned dict on line 3621-3626 only includes score/band/days_inactive/factors. Downstream in _classify_war_room_bucket (line 5687) and on the war-room card payload (line 5844), code reads health.get('overdue_count') which is permanently None. Reproduction: insert a lead with `{follow_ups: [{is_completed:false, scheduled_date: <past>}], deal_value:25000, status_id: <open status>, updated_at:<recent>}` → call GET /api/war-room/board → lead is filtered out by classifier's `days_inactive<14` fallback (returns None), never landing in followup_pending. Fix: one-line — add `'overdue_count': overdue,` to the returned dict at line ~3624. Initialize `overdue = 0` outside the follow_ups branch so it's always defined (currently scoped inside `if follow_ups:`)."
+}

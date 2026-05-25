@@ -21,6 +21,7 @@ import PredictiveForecast from './pages/PredictiveForecast';
 import PartnerIntelligence from './pages/PartnerIntelligence';
 import GuestDealRoom from './pages/GuestDealRoom';
 import Help from './pages/Help';
+import WarRoom from './pages/WarRoom';
 import GridReport from './pages/GridReport';
 import Users from './pages/Users';
 import Companies from './pages/Companies';
@@ -247,6 +248,13 @@ function AppRoutes() {
       <Route path="/help" element={
         <ProtectedRoute>
           <Help />
+        </ProtectedRoute>
+      } />
+
+      {/* Phase 29: Weekly War Room - admin/ops/finance/selling partner/sales associate */}
+      <Route path="/war-room" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
+          <WarRoom />
         </ProtectedRoute>
       } />
 

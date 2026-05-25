@@ -13,7 +13,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 import jwt
 import bcrypt
 from sendgrid import SendGridAPIClient
@@ -5647,6 +5647,506 @@ VALID_STAKEHOLDER_ROLES = {
     "blocker", "champion", "end_user", "other"
 }
 VALID_ENGAGEMENT = {"supportive", "neutral", "resistant", "unknown"}
+
+
+# ==================== PHASE 29: WEEKLY WAR ROOM ====================
+# Smart-bucket Kanban board + Weekly Review Mode + AI session summary.
+# Buckets are COMPUTED from lead signals — no manual drag-drop. The value is the
+# auto-categorization itself: leads land where they need attention this week.
+
+WAR_ROOM_BUCKETS = [
+    {"id": "high_priority", "label": "🔥 High Priority", "color": "#EF4444"},
+    {"id": "blocked", "label": "⚠️ Blocked", "color": "#F59E0B"},
+    {"id": "followup_pending", "label": "🟡 Follow-up Pending", "color": "#EAB308"},
+    {"id": "commercial_pending", "label": "💰 Commercial Pending", "color": "#10B981"},
+    {"id": "partner_coordination", "label": "🤝 Partner Coordination", "color": "#8B5CF6"},
+    {"id": "inactive", "label": "💤 Inactive", "color": "#64748B"},
+    {"id": "recently_won", "label": "✅ Recently Won", "color": "#22C55E"},
+]
+
+def _classify_war_room_bucket(lead: dict, health: dict, today: date) -> str:
+    """Decide which War Room bucket a lead belongs to. Priority order matters —
+    a lead can only be in one bucket; we pick the most actionable."""
+    status_is_won = bool(lead.get('status_is_won'))
+    status_is_lost = bool(lead.get('status_is_lost'))
+
+    # 1) Recently Won — within last 14 days (gives admin reason to celebrate)
+    if status_is_won:
+        try:
+            updated = datetime.fromisoformat((lead.get('updated_at') or '').replace('Z', '+00:00')).date()
+            if (today - updated).days <= 14:
+                return "recently_won"
+        except Exception:
+            pass
+        return "recently_won"
+
+    if status_is_lost:
+        return None  # excluded from board
+
+    days_inactive = health.get('days_inactive') or 0
+    overdue_count = health.get('overdue_count') or 0
+    health_band = health.get('band', 'cold')
+    deal_value = float(lead.get('deal_value') or 0)
+    has_blocker = any(
+        '#blocker' in (c.get('content') or '').lower() or '#blocked' in (c.get('content') or '').lower()
+        for c in (lead.get('comments') or [])[-10:]
+    )
+    pending_approvals = sum(1 for a in (lead.get('approvals') or []) if a.get('status') == 'pending')
+    has_active_partners = any(p.get('status') == 'active' for p in (lead.get('assigned_partners') or []))
+
+    # 2) Blocked — explicit #blocker comment or pending approval waiting > 3 days
+    if has_blocker:
+        return "blocked"
+    if pending_approvals:
+        oldest_pending = min(
+            (a.get('created_at') for a in (lead.get('approvals') or []) if a.get('status') == 'pending'),
+            default=None,
+        )
+        if oldest_pending:
+            try:
+                cd = datetime.fromisoformat(oldest_pending.replace('Z', '+00:00')).date()
+                if (today - cd).days >= 3:
+                    return "blocked"
+            except Exception:
+                pass
+
+    # 3) Inactive — > 21 days no activity (any health band)
+    if days_inactive >= 21:
+        return "inactive"
+
+    # 4) High Priority — Hot/At-risk band + deal value >= 100000 + recent activity
+    if health_band in ('hot', 'at_risk') and deal_value >= 100000 and days_inactive <= 14:
+        return "high_priority"
+
+    # 5) Follow-up Pending — overdue follow-ups
+    if overdue_count > 0:
+        return "followup_pending"
+
+    # 6) Commercial Pending — has commercial but not yet "active" stage; or status name contains 'proposal'/'commercial'
+    status_name = (lead.get('status_name') or '').lower()
+    if 'proposal' in status_name or 'commercial' in status_name or 'negotiat' in status_name or 'quote' in status_name:
+        return "commercial_pending"
+
+    # 7) Partner Coordination — has active partner + days_inactive 7-21 (waiting on partner)
+    if has_active_partners and 7 <= days_inactive <= 21:
+        return "partner_coordination"
+
+    # Default — no urgent bucket needed. Show in inactive if 14+ days, else skip.
+    if days_inactive >= 14:
+        return "inactive"
+    return None
+
+@api_router.get("/war-room/board")
+async def war_room_board(
+    owner_id: Optional[str] = None,
+    partner_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+    min_value: Optional[float] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Compute the smart-bucket board. Returns buckets + revenue strip + counts.
+    Buckets are computed per-request (cheap on <10k leads, easy to extend)."""
+
+    lead_query: Dict[str, Any] = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        lead_query['selling_partner_id'] = current_user['id']
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        lead_query['sales_associate_id'] = current_user['id']
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Not available for customers")
+
+    if owner_id:
+        lead_query['$or'] = [
+            {'selling_partner_id': owner_id},
+            {'sales_associate_id': owner_id},
+        ]
+    if partner_id:
+        lead_query['$or'] = [
+            {'selling_partner_id': partner_id},
+            {'assigned_partners.partner_id': partner_id},
+        ]
+    if category_id:
+        lead_query['primary_category_id'] = category_id
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+
+    leads = await db.leads.find(lead_query, {"_id": 0}).to_list(5000)
+    today = datetime.now(timezone.utc).date()
+
+    bucket_map: Dict[str, List[dict]] = {b['id']: [] for b in WAR_ROOM_BUCKETS}
+
+    total_pipeline = 0.0
+    weighted_pipeline = 0.0
+    at_risk_pipeline = 0.0
+    inactive_pipeline = 0.0
+
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '') or {}
+        lead['status_is_won'] = bool(st.get('is_won'))
+        lead['status_is_lost'] = bool(st.get('is_lost'))
+        lead['status_name'] = st.get('name')
+        lead['status_color'] = st.get('color')
+
+        # Filter by min_value
+        deal_value = float(lead.get('deal_value') or 0)
+        if min_value is not None and deal_value < min_value:
+            continue
+
+        # Compute health
+        h = compute_lead_health(lead)
+        bucket = _classify_war_room_bucket(lead, h, today)
+        if not bucket:
+            continue
+
+        # Aggregate revenue stats (exclude won)
+        if not lead['status_is_won']:
+            total_pipeline += deal_value
+            prob = _probability_for(st.get('name', ''), False) / 100
+            weighted_pipeline += deal_value * prob
+            if h['band'] == 'at_risk':
+                at_risk_pipeline += deal_value
+            if bucket == 'inactive':
+                inactive_pipeline += deal_value
+
+        # Strip down to card-friendly payload
+        # Top public/internal comment count + mentions count
+        comment_count = len(lead.get('comments') or [])
+        pending_approvals_n = sum(1 for a in (lead.get('approvals') or []) if a.get('status') == 'pending')
+        next_action = h.get('next_action') or {}
+
+        # Last follow-up date (most recent regardless of complete status)
+        followups = lead.get('follow_ups') or []
+        next_followup = None
+        next_followup_overdue = False
+        if followups:
+            pending = [f for f in followups if not f.get('is_completed') and f.get('scheduled_date')]
+            if pending:
+                pending.sort(key=lambda f: f['scheduled_date'])
+                nf = pending[0]
+                next_followup = nf['scheduled_date']
+                next_followup_overdue = (nf['scheduled_date'] < today.isoformat())
+
+        card = {
+            "id": lead['id'],
+            "title": lead.get('title') or lead.get('customer_company') or 'Untitled',
+            "customer_company": lead.get('customer_company'),
+            "customer_name": lead.get('customer_name'),
+            "primary_category_name": lead.get('primary_category_name'),
+            "deal_value": deal_value,
+            "status_name": st.get('name'),
+            "status_color": st.get('color'),
+            "selling_partner_name": lead.get('selling_partner_name'),
+            "sales_associate_name": lead.get('sales_associate_name'),
+            "referred_by_partner_name": lead.get('referred_by_partner_name'),
+            "active_partners_count": sum(1 for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'),
+            "days_inactive": h.get('days_inactive'),
+            "overdue_count": h.get('overdue_count'),
+            "health_band": h.get('band'),
+            "health_score": h.get('score'),
+            "next_action_label": next_action.get('label'),
+            "next_action_kind": next_action.get('kind'),
+            "next_followup": next_followup,
+            "next_followup_overdue": next_followup_overdue,
+            "comment_count": comment_count,
+            "pending_approvals": pending_approvals_n,
+            "probability": _probability_for(st.get('name', ''), False),
+            "expected_revenue": round(deal_value * (_probability_for(st.get('name', ''), False) / 100), 0),
+            "deal_room_enabled": bool(lead.get('deal_room_enabled')),
+            "updated_at": lead.get('updated_at'),
+        }
+        bucket_map[bucket].append(card)
+
+    # Sort each bucket by deal_value desc (highest revenue first)
+    for bid in bucket_map:
+        bucket_map[bid].sort(key=lambda c: -(c['deal_value'] or 0))
+
+    return {
+        "buckets": [
+            {
+                **b,
+                "count": len(bucket_map[b['id']]),
+                "total_value": round(sum(c['deal_value'] or 0 for c in bucket_map[b['id']]), 2),
+                "leads": bucket_map[b['id']],
+            }
+            for b in WAR_ROOM_BUCKETS
+        ],
+        "kpis": {
+            "total_pipeline": round(total_pipeline, 2),
+            "weighted_pipeline": round(weighted_pipeline, 2),
+            "at_risk_pipeline": round(at_risk_pipeline, 2),
+            "inactive_pipeline": round(inactive_pipeline, 2),
+            "total_leads": sum(len(bucket_map[bid]) for bid in bucket_map),
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+# ----- WEEKLY REVIEW SESSIONS -----
+
+class WarRoomSessionStart(BaseModel):
+    title: Optional[str] = None
+
+class WarRoomSessionNotesUpdate(BaseModel):
+    notes: str
+
+class WarRoomDiscussLead(BaseModel):
+    lead_id: str
+    note: Optional[str] = None
+
+@api_router.post("/war-room/sessions/start")
+async def start_war_room_session(body: WarRoomSessionStart, current_user: dict = Depends(get_current_user)):
+    """Start a new Weekly Review session. Closes any open session from same user first."""
+    if current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Not available for customers")
+    # Close any open sessions from this user
+    await db.war_room_sessions.update_many(
+        {"started_by": current_user['id'], "ended_at": None},
+        {"$set": {"ended_at": datetime.now(timezone.utc).isoformat(), "auto_closed": True}}
+    )
+    today = datetime.now(timezone.utc)
+    iso_week = today.strftime("%Y-W%V")
+    session = {
+        "id": str(uuid.uuid4()),
+        "title": (body.title or '').strip() or f"Weekly Review {iso_week}",
+        "iso_week": iso_week,
+        "started_by": current_user['id'],
+        "started_by_name": current_user['name'],
+        "started_at": today.isoformat(),
+        "ended_at": None,
+        "notes": "",
+        "discussed_lead_ids": [],
+        "discussion_notes": {},  # lead_id -> note
+        "summary": None,
+        "action_items": [],
+    }
+    await db.war_room_sessions.insert_one(session)
+    session.pop('_id', None)
+    return session
+
+@api_router.get("/war-room/sessions/active")
+async def get_active_war_room_session(current_user: dict = Depends(get_current_user)):
+    """Return the current user's active (not-yet-ended) session if any."""
+    if current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Not available for customers")
+    s = await db.war_room_sessions.find_one(
+        {"started_by": current_user['id'], "ended_at": None},
+        {"_id": 0}
+    )
+    return s
+
+@api_router.patch("/war-room/sessions/{session_id}/notes")
+async def update_war_room_session_notes(session_id: str, body: WarRoomSessionNotesUpdate, current_user: dict = Depends(get_current_user)):
+    session = await db.war_room_sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session['started_by'] != current_user['id'] and current_user.get('role') != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if session.get('ended_at'):
+        raise HTTPException(status_code=400, detail="Session already ended")
+    await db.war_room_sessions.update_one(
+        {"id": session_id},
+        {"$set": {"notes": (body.notes or '')[:20000]}}
+    )
+    return {"ok": True}
+
+@api_router.post("/war-room/sessions/{session_id}/discuss")
+async def discuss_lead_in_session(session_id: str, body: WarRoomDiscussLead, current_user: dict = Depends(get_current_user)):
+    """Mark a lead as discussed in this session, optionally with a per-lead note."""
+    session = await db.war_room_sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session['started_by'] != current_user['id'] and current_user.get('role') != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if session.get('ended_at'):
+        raise HTTPException(status_code=400, detail="Session already ended")
+    update = {}
+    if body.lead_id not in (session.get('discussed_lead_ids') or []):
+        update["$addToSet"] = {"discussed_lead_ids": body.lead_id}
+    if body.note:
+        notes_map = session.get('discussion_notes') or {}
+        notes_map[body.lead_id] = (body.note or '').strip()[:2000]
+        update.setdefault("$set", {})["discussion_notes"] = notes_map
+    if update:
+        await db.war_room_sessions.update_one({"id": session_id}, update)
+    return {"ok": True}
+
+@api_router.post("/war-room/sessions/{session_id}/end")
+async def end_war_room_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    """End the session and generate AI summary + extract action items into Tasks."""
+    session = await db.war_room_sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session['started_by'] != current_user['id'] and current_user.get('role') != UserRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if session.get('ended_at'):
+        return session  # idempotent
+
+    # Gather context for the AI: discussed leads + session notes + per-lead notes
+    discussed_ids = session.get('discussed_lead_ids') or []
+    discussion_notes = session.get('discussion_notes') or {}
+    leads_brief: List[str] = []
+    if discussed_ids:
+        leads = await db.leads.find({"id": {"$in": discussed_ids}}, {"_id": 0}).to_list(200)
+        statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+        smap = {s['id']: s for s in statuses}
+        for ld in leads:
+            st = smap.get(ld.get('status_id') or '') or {}
+            line = f"- {ld.get('title','Untitled')} ({ld.get('customer_company','')}, ₹{ld.get('deal_value') or 0:,.0f}, stage: {st.get('name','?')})"
+            note = discussion_notes.get(ld['id'])
+            if note:
+                line += f" — note: {note}"
+            leads_brief.append(line)
+
+    summary_payload = {
+        "leads_progressed": [],
+        "high_risk_leads": [],
+        "blocked_opportunities": [],
+        "revenue_updates": "",
+        "partner_dependencies": [],
+        "action_items": [],
+        "upcoming_followups": [],
+        "executive_summary": "",
+    }
+
+    if EMERGENT_LLM_KEY:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage  # noqa: WPS433
+            sys_msg = (
+                "You are an expert sales operations analyst summarizing a weekly review meeting. "
+                "Given the meeting notes + list of leads discussed, output STRICT valid JSON with this shape — no markdown, no preamble, no trailing text:\n"
+                "{\"executive_summary\": str (2-3 sentences), \"leads_progressed\": [str], \"high_risk_leads\": [str], "
+                "\"blocked_opportunities\": [str], \"revenue_updates\": str, \"partner_dependencies\": [str], "
+                "\"action_items\": [{\"action\": str, \"owner\": str|null, \"due_date\": YYYY-MM-DD|null, \"lead_hint\": str|null}], "
+                "\"upcoming_followups\": [str]}.\n"
+                "For action_items, parse statements like 'Hardik to send proposal by Thursday' into {action, owner, due_date}. "
+                "If owner is unclear, set null. Convert relative dates ('Thursday', 'next week') to absolute YYYY-MM-DD assuming today is "
+                f"{datetime.now(timezone.utc).date().isoformat()}. "
+                "Be concise — each list item ≤ 100 chars. Output JSON ONLY."
+            )
+            prompt = (
+                f"Meeting title: {session.get('title','Weekly Review')}\n"
+                f"Started by: {session.get('started_by_name','')}\n\n"
+                f"Leads discussed ({len(leads_brief)}):\n" + ("\n".join(leads_brief) or '(none)') + "\n\n"
+                f"Meeting notes:\n{session.get('notes','') or '(none)'}"
+            )
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"war-room-{session_id}",
+                system_message=sys_msg,
+            ).with_model("gemini", "gemini-3.1-pro-preview")
+            raw = await chat.send_message(UserMessage(text=prompt))
+            raw = (raw or '').strip().strip('`')
+            if raw.lower().startswith('json'):
+                raw = raw[4:].strip()
+            try:
+                parsed = json.loads(raw)
+                for k in summary_payload:
+                    if k in parsed:
+                        summary_payload[k] = parsed[k]
+            except json.JSONDecodeError as je:
+                logger.warning(f"War room AI summary JSON parse failed: {je}; raw={raw[:200]}")
+                summary_payload['executive_summary'] = raw[:500]
+        except Exception as e:
+            logger.warning(f"War room AI summary failed: {e}")
+            summary_payload['executive_summary'] = "AI summary unavailable for this session."
+
+    # Materialize action_items into Tasks (best-effort attribution to the user)
+    user_lookup: Dict[str, str] = {}
+    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(500)
+    for u in users:
+        user_lookup[u.get('name', '').lower().strip()] = u['id']
+        if u.get('email'):
+            user_lookup[u['email'].lower().strip()] = u['id']
+
+    materialized_tasks: List[dict] = []
+    for ai in (summary_payload.get('action_items') or []):
+        if not isinstance(ai, dict):
+            continue
+        owner_id = None
+        owner_name = ai.get('owner')
+        if owner_name:
+            owner_id = user_lookup.get((owner_name or '').lower().strip())
+        # Try to attach a lead — if lead_hint matches a discussed lead title, pick it
+        lead_id_match = None
+        hint = (ai.get('lead_hint') or '').lower().strip()
+        if hint and discussed_ids:
+            for ld_id in discussed_ids:
+                ld = await db.leads.find_one({"id": ld_id}, {"_id": 0, "title": 1, "customer_company": 1})
+                if not ld:
+                    continue
+                if hint in (ld.get('title', '').lower()) or hint in (ld.get('customer_company', '').lower()):
+                    lead_id_match = ld_id
+                    break
+        task = {
+            "id": str(uuid.uuid4()),
+            "title": (ai.get('action') or '').strip()[:300] or 'War Room action item',
+            "description": f"Auto-extracted from Weekly Review session: {session.get('title')}",
+            "assignee_id": owner_id or current_user['id'],
+            "lead_id": lead_id_match,
+            "commercial_id": None,
+            "due_date": ai.get('due_date'),
+            "priority": "high",
+            "status": "todo",
+            "created_by": current_user['id'],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": None,
+            "source": "war_room_session",
+            "source_session_id": session_id,
+        }
+        await db.tasks.insert_one(task)
+        task.pop('_id', None)
+        materialized_tasks.append(task)
+        # Notify the assignee
+        if owner_id and owner_id != current_user['id']:
+            try:
+                await create_notification(
+                    user_id=owner_id,
+                    title=f"New task from Weekly Review · {session.get('title')}",
+                    message=task['title'],
+                    notification_type=NotificationType.LEAD_MENTION,
+                    lead_id=lead_id_match,
+                )
+            except Exception:
+                pass
+
+    ended_at = datetime.now(timezone.utc).isoformat()
+    await db.war_room_sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "ended_at": ended_at,
+            "summary": summary_payload,
+            "materialized_task_ids": [t['id'] for t in materialized_tasks],
+            "materialized_task_count": len(materialized_tasks),
+        }}
+    )
+    session['ended_at'] = ended_at
+    session['summary'] = summary_payload
+    session['materialized_task_ids'] = [t['id'] for t in materialized_tasks]
+    session['materialized_task_count'] = len(materialized_tasks)
+    return session
+
+@api_router.get("/war-room/sessions")
+async def list_war_room_sessions(limit: int = 20, current_user: dict = Depends(get_current_user)):
+    """List recent sessions. Admin sees all; partner/associate sees their own."""
+    if current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Not available for customers")
+    q: Dict[str, Any] = {}
+    if current_user['role'] != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        q['started_by'] = current_user['id']
+    sessions = await db.war_room_sessions.find(q, {"_id": 0}).sort("started_at", -1).limit(min(50, max(1, limit))).to_list(50)
+    return sessions
+
+@api_router.get("/war-room/sessions/{session_id}")
+async def get_war_room_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    session = await db.war_room_sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if (session['started_by'] != current_user['id']
+        and current_user.get('role') != UserRole.SUPER_ADMIN.value
+        and not current_user.get('is_vyapaar_ops')):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return session
+
 
 @api_router.get("/leads/{lead_id}/stakeholders")
 async def list_stakeholders(lead_id: str, current_user: dict = Depends(get_current_user)):

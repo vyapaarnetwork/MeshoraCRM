@@ -45,7 +45,8 @@ import {
   TrendingUp,
   Sparkles,
   Trophy,
-  HelpCircle
+  HelpCircle,
+  Swords
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
@@ -266,6 +267,16 @@ const Layout = ({ children }) => {
       roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner', 'sales_associate']
     });
 
+    // Phase 29: Weekly War Room — for everyone who works leads
+    if (isAdmin || isVyapaarOps || isVyapaarFinance || isSellingPartner || isSalesAssociate) {
+      items.push({
+        label: 'War Room',
+        icon: Swords,
+        path: '/war-room',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner', 'sales_associate'],
+      });
+    }
+
     // Phase 2: Revenue Intelligence — admin-like roles + selling partners
     if (isAdmin || isFinance || isDelivery || isVyapaarOps || isVyapaarFinance || isSellingPartner) {
       items.push({
@@ -274,7 +285,6 @@ const Layout = ({ children }) => {
         path: '/revenue-intelligence',
         roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner'],
       });
-      // Phase 24: Predictive Revenue Forecasting
       items.push({
         label: 'Predictive Forecast',
         icon: Sparkles,

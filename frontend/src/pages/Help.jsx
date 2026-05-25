@@ -11,6 +11,41 @@ import { useAuth } from '../contexts/AuthContext';
 
 const CATEGORIES = [
   {
+    id: 'warroom',
+    label: 'Weekly War Room',
+    icon: Sparkles,
+    color: 'from-rose-500 to-violet-500',
+    items: [
+      {
+        title: 'Weekly War Room',
+        icon: Sparkles,
+        description: 'A live operations board that auto-sorts your open leads into 7 smart buckets — 🔥 High Priority, ⚠️ Blocked, 🟡 Follow-up Pending, 💰 Commercial Pending, 🤝 Partner Coordination, 💤 Inactive, ✅ Recently Won. Replaces spreadsheet-based weekly reviews.',
+        howTo: 'Open /war-room from the sidebar. Click "Start Weekly Review" to enter focus mode — a side notes panel appears, click cards to log them as discussed. Click "End Review" and AI generates a structured summary with action items auto-converted into Tasks.',
+        examples: [
+          'Daily standup: open the board, scan the High Priority + Blocked buckets only',
+          'Weekly review meeting: Start Review → walk through cards → End Review for AI summary',
+          'Mention #blocker in any comment to force a lead into the Blocked bucket',
+        ],
+        whyItHelps: 'Replaces 60 minutes of spreadsheet prep + meeting + post-meeting note-taking with a 30-minute interactive session that auto-generates action items and tasks.',
+        roles: ['super_admin', 'selling_partner', 'sales_associate', 'vyapaar_ops', 'vyapaar_finance'],
+      },
+      {
+        title: 'AI Weekly Review Summary',
+        icon: Brain,
+        description: 'At the end of every Weekly Review session, Gemini analyzes your meeting notes + discussed leads + per-lead context and outputs a structured summary: Executive Summary, Leads Progressed, High-Risk, Blocked, Revenue Updates, Partner Dependencies, Action Items, Upcoming Follow-ups.',
+        whyItHelps: 'No more "what did we decide?" the next morning. Every decision is captured, attributed, and time-stamped.',
+        roles: ['super_admin', 'selling_partner', 'sales_associate', 'vyapaar_ops'],
+      },
+      {
+        title: 'AI Action Item Extraction',
+        icon: ClipboardList,
+        description: 'Write meeting notes naturally — "Hardik to send proposal by Thursday" or "Escalate Acme deal to leadership". When you End the Review, AI parses these into structured tasks with assignee, due date, and lead link, then creates them automatically with notifications.',
+        whyItHelps: 'Action items don\'t die in meeting notes anymore — they show up in everyone\'s task list with a deadline.',
+        roles: ['super_admin', 'selling_partner', 'sales_associate', 'vyapaar_ops'],
+      },
+    ],
+  },
+  {
     id: 'ai',
     label: 'AI-Powered Features',
     icon: Brain,
