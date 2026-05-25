@@ -4946,6 +4946,221 @@ async def ai_command_bar(body: CommandQueryRequest, current_user: dict = Depends
         "count": len(results),
     }
 
+# ==================== PHASE 3: PARTNER INTELLIGENCE LAYER ====================
+
+@api_router.get("/dashboard/partner-intelligence")
+async def partner_intelligence(current_user: dict = Depends(get_current_user)):
+    """Phase 3: Partner Intelligence dashboard.
+
+    Returns leaderboard (composite score), conversion funnel, category strength matrix,
+    pipeline-per-partner, and average deal cycle time.
+    """
+    if current_user['role'] not in (UserRole.SUPER_ADMIN.value,) and not current_user.get('is_vyapaar_ops') and current_user['role'] != UserRole.SELLING_PARTNER.value:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+
+    partners = await db.users.find({"role": "selling_partner", "is_active": True}, {"_id": 0}).to_list(500)
+    partner_by_id = {p['id']: p for p in partners}
+    leads = await db.leads.find({}, {"_id": 0}).to_list(5000)
+
+    # Aggregations
+    by_partner: Dict[str, Dict[str, Any]] = {}
+    cat_matrix: Dict[str, Dict[str, int]] = {}  # partner_id -> {category: won_count}
+
+    today = datetime.now(timezone.utc).date()
+
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '') or {}
+        is_won = bool(st.get('is_won'))
+        is_lost = bool(st.get('is_lost'))
+        is_closed = is_won or is_lost
+
+        # Determine all partner IDs touching this lead (active + historical)
+        partner_ids = set()
+        if lead.get('selling_partner_id'):
+            partner_ids.add(lead['selling_partner_id'])
+        for ap in (lead.get('assigned_partners') or []):
+            if ap.get('partner_id'):
+                partner_ids.add(ap['partner_id'])
+
+        for pid in partner_ids:
+            if pid not in by_partner:
+                p = partner_by_id.get(pid) or {}
+                by_partner[pid] = {
+                    "partner_id": pid,
+                    "partner_name": p.get('name') or 'Unknown',
+                    "company_name": p.get('company_name'),
+                    "assigned": 0, "engaged": 0, "won": 0, "lost": 0,
+                    "open_pipeline": 0.0, "won_revenue": 0.0,
+                    "cycle_days_sum": 0.0, "cycle_days_count": 0,
+                    "avg_deal_size": 0.0,
+                }
+            entry = by_partner[pid]
+            entry['assigned'] += 1
+            if len(lead.get('comments') or []) + len(lead.get('follow_ups') or []) > 0:
+                entry['engaged'] += 1
+            deal_value = float(lead.get('deal_value') or 0)
+            if is_won:
+                entry['won'] += 1
+                entry['won_revenue'] += deal_value
+                # Cycle days = (status updated_at) - created_at
+                try:
+                    created = datetime.fromisoformat((lead.get('created_at') or '').replace('Z', '+00:00'))
+                    closed = datetime.fromisoformat((lead.get('updated_at') or '').replace('Z', '+00:00'))
+                    cycle = (closed - created).total_seconds() / 86400
+                    if 0 <= cycle <= 730:
+                        entry['cycle_days_sum'] += cycle
+                        entry['cycle_days_count'] += 1
+                except Exception:
+                    pass
+                # Category matrix
+                cat = lead.get('primary_category_name') or 'Uncategorized'
+                cat_matrix.setdefault(pid, {})[cat] = cat_matrix.get(pid, {}).get(cat, 0) + 1
+            elif is_lost:
+                entry['lost'] += 1
+            else:
+                entry['open_pipeline'] += deal_value
+
+    # Compute composite scores
+    leaderboard = []
+    for pid, e in by_partner.items():
+        closed = e['won'] + e['lost']
+        win_rate = (e['won'] / closed * 100) if closed > 0 else 0
+        avg_cycle = (e['cycle_days_sum'] / e['cycle_days_count']) if e['cycle_days_count'] > 0 else None
+        avg_deal_size = (e['won_revenue'] / e['won']) if e['won'] > 0 else 0
+        # Composite: 40% won_revenue (normalized), 30% win_rate, 20% engagement, 10% speed
+        revenue_score = min(100, (e['won_revenue'] / 1_000_000) * 10) if e['won_revenue'] else 0
+        engagement_pct = (e['engaged'] / e['assigned'] * 100) if e['assigned'] > 0 else 0
+        speed_score = 0
+        if avg_cycle is not None:
+            speed_score = max(0, min(100, 100 - (avg_cycle / 0.9)))  # ~90 days = 0pts
+        composite = round((revenue_score * 0.4) + (win_rate * 0.3) + (engagement_pct * 0.2) + (speed_score * 0.1), 1)
+        leaderboard.append({
+            **e,
+            "win_rate": round(win_rate, 1),
+            "avg_cycle_days": round(avg_cycle, 1) if avg_cycle else None,
+            "avg_deal_size": round(avg_deal_size, 0),
+            "engagement_pct": round(engagement_pct, 1),
+            "composite_score": composite,
+        })
+    leaderboard.sort(key=lambda x: -x['composite_score'])
+
+    # Build top categories per partner (for the matrix heatmap)
+    top_categories: Dict[str, List[Dict[str, Any]]] = {}
+    for pid, cats in cat_matrix.items():
+        top_categories[pid] = sorted(
+            [{"category": c, "won_count": n} for c, n in cats.items()],
+            key=lambda x: -x['won_count']
+        )[:5]
+
+    # Health summary
+    total_partners = len(partners)
+    active_partners = sum(1 for e in leaderboard if e['assigned'] > 0)
+
+    return {
+        "kpis": {
+            "total_partners": total_partners,
+            "active_partners": active_partners,
+            "total_won_revenue": round(sum(e['won_revenue'] for e in leaderboard), 2),
+            "avg_win_rate": round(
+                sum(e['win_rate'] for e in leaderboard if e['won'] + e['lost'] > 0)
+                / max(1, sum(1 for e in leaderboard if e['won'] + e['lost'] > 0)),
+                1
+            ),
+        },
+        "leaderboard": leaderboard,
+        "top_categories": top_categories,
+    }
+
+@api_router.post("/partners/{partner_id}/ai/coaching")
+async def ai_partner_coaching(partner_id: str, current_user: dict = Depends(get_current_user)):
+    """Generate AI coaching tips for a selling partner using their historical performance."""
+    if current_user['role'] != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    partner = await db.users.find_one({"id": partner_id, "role": "selling_partner"}, {"_id": 0})
+    if not partner:
+        raise HTTPException(status_code=404, detail="Selling partner not found")
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+    leads = await db.leads.find({
+        "$or": [
+            {"selling_partner_id": partner_id},
+            {"assigned_partners.partner_id": partner_id},
+        ]
+    }, {"_id": 0}).to_list(2000)
+
+    # Build summary stats
+    won = lost = open_ = 0
+    won_rev = 0.0; open_val = 0.0
+    by_stage: Dict[str, int] = {}
+    by_category: Dict[str, int] = {}
+    examples_to_focus: List[Dict[str, Any]] = []
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '') or {}
+        stage = st.get('name', 'Unstaged')
+        by_stage[stage] = by_stage.get(stage, 0) + 1
+        if st.get('is_won'):
+            won += 1; won_rev += float(lead.get('deal_value') or 0)
+            cat = lead.get('primary_category_name') or 'Uncategorized'
+            by_category[cat] = by_category.get(cat, 0) + 1
+        elif st.get('is_lost'):
+            lost += 1
+        else:
+            open_ += 1; open_val += float(lead.get('deal_value') or 0)
+            # Compute health to find at-risk for focus
+            lead['active_partners_count'] = len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'])
+            lead['status_is_won'] = False
+            h = compute_lead_health(lead)
+            if h['band'] in ('at_risk', 'cold') and len(examples_to_focus) < 5:
+                examples_to_focus.append({"id": lead['id'], "title": lead.get('title'), "deal_value": lead.get('deal_value') or 0, "band": h['band'], "stage": stage})
+
+    closed = won + lost
+    win_rate = (won / closed * 100) if closed else 0
+
+    context = (
+        f"Selling Partner: {partner.get('name')} ({partner.get('company_name') or 'No company'})\n"
+        f"Total deals touched: {len(leads)} (won {won}, lost {lost}, open {open_})\n"
+        f"Won revenue: ₹{won_rev:,.0f} | Open pipeline: ₹{open_val:,.0f} | Win rate: {win_rate:.1f}%\n"
+        f"Deals by stage: " + ", ".join(f"{s}={c}" for s, c in by_stage.items()) + "\n"
+        f"Won categories: " + (", ".join(f"{c}={n}" for c, n in sorted(by_category.items(), key=lambda x: -x[1])[:5]) or "—") + "\n"
+        f"At-risk / cold open leads (for focus): " + (", ".join(f"\"{e['title']}\" ({e['stage']}, {e['band']}, ₹{e['deal_value']:,.0f})" for e in examples_to_focus) or "—")
+    )
+    system_msg = (
+        "You are a senior sales coach analyzing a selling partner's performance. Return STRICT JSON only. Schema:\n"
+        "{\n"
+        '  "summary": string (1-2 sentences overall),\n'
+        '  "strengths": array of 2-4 short bullets,\n'
+        '  "weaknesses": array of 2-4 short bullets,\n'
+        '  "coaching_tips": array of 3-5 actionable, specific tips (one sentence each),\n'
+        '  "leads_to_focus": array of {lead_id, title, why_focus} — pull from the at-risk/cold list,\n'
+        '  "next_training_topic": short string (e.g. "negotiation pricing objections"),\n'
+        '  "confidence": 0-100 integer\n'
+        "}\n"
+        "Use the actual stats and lead titles from context. Avoid generic advice. If the partner has very few deals, acknowledge it and recommend volume-building tactics."
+    )
+    parsed = await _ai_lead_chat(f"partner-coach-{partner_id}", system_msg, f"Partner context:\n{context}\n\nReturn STRICT JSON only.")
+
+    return {
+        "partner": {"id": partner_id, "name": partner.get('name'), "company_name": partner.get('company_name')},
+        "stats": {
+            "won": won, "lost": lost, "open": open_,
+            "won_revenue": round(won_rev, 2), "open_pipeline": round(open_val, 2),
+            "win_rate": round(win_rate, 1), "total_deals": len(leads),
+        },
+        "summary": str(parsed.get('summary') or ''),
+        "strengths": [str(x) for x in (parsed.get('strengths') or [])][:5],
+        "weaknesses": [str(x) for x in (parsed.get('weaknesses') or [])][:5],
+        "coaching_tips": [str(x) for x in (parsed.get('coaching_tips') or [])][:6],
+        "leads_to_focus": (parsed.get('leads_to_focus') or [])[:5],
+        "next_training_topic": str(parsed.get('next_training_topic') or ''),
+        "confidence": max(0, min(100, int(parsed.get('confidence') or 70))),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
 # ==================== BULK IMPORT ====================
 
 @api_router.get("/leads/import/template")
