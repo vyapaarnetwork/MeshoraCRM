@@ -1,0 +1,47 @@
+{
+  "summary": "Phases 24/25/26 end-to-end tested. Backend: 21/21 pytest tests PASS in /app/backend/tests/test_phase24_25_26.py (auth-cookie migration, predictive-forecast 3/6/9/12 horizons + structure, partner-intelligence RBAC, partner-commission-analytics RBAC for admin/ops/finance + customer 403, AI coaching admin-only, AI regression for /ai/command + /leads/{id}/ai/risk-analysis + follow-up). Frontend: cookie-based login + refresh-persistence + new nav links + Predictive Forecast page (KPI cards, chart, breakdown table, horizon switcher) + Partner Intelligence page (leaderboard + AI Coach dialog with real Gemini coaching content) all verified visually + functionally. Auth cookie set with HttpOnly=true, Secure=true, SameSite=Lax — confirmed via browser context.cookies(). localStorage contains NO token (only posthog + meshora-theme). Page refresh on /dashboard keeps user logged in (cookie auth works end-to-end). Bearer-token path still works (test_me_works_with_bearer_only PASS). One frontend issue: the visible Logout control couldn't be located via standard selectors (button:has-text('Logout'), data-testid=logout-btn, etc.) — likely tucked inside a user-avatar dropdown that wasn't opened by the test; backend POST /api/auth/logout works correctly (test_logout_clears_cookie_and_blocks_me PASS) and clears the cookie. Hydration warnings (same family as iteration_12) appear on the new /predictive-forecast page table (<span> wrapper from Emergent visual-edit instrumentation injected between <tbody> and <tr>).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PredictiveForecast.jsx — Month-by-Month Breakdown table (around line 181)", "issue": "Same React hydration warning class as iteration_12: '<span> cannot be a child of <tbody>' and '<tr> cannot be a child of <span>'. The x-ve-dynamic instrumentation wraps the forecast rows in <span style={{display:'contents'}}>. Rendering still works but pollutes console.", "selector": "tbody > span > tr inside Predictive Forecast breakdown table", "priority": "MEDIUM"},
+      {"component": "Recharts ResponsiveContainer", "issue": "Console warnings: 'The width(-1) and height(-1) of chart should be greater than 0' on Predictive Forecast + Partner Intelligence pages. Chart still renders after layout settles but the warning fires on every render cycle.", "selector": "ResponsiveContainer in PredictiveForecast.jsx + PartnerIntelligence.jsx", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Frontend logout via UI", "issue": "Could not locate a visible Logout button on /dashboard via standard selectors ([data-testid=logout-btn], [data-testid=sidebar-logout], button:has-text('Logout'), a:has-text('Logout')). Backend logout API works (cookie cleared, /me returns 401 after). The control likely lives inside the user-avatar dropdown in the top-right (\"Super Admin\" pill). Recommend adding data-testid=\"logout-btn\" or data-testid=\"user-menu-trigger\" + data-testid=\"logout-btn\" to make the flow testable.", "affected_selectors": ["[data-testid=logout-btn]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase24_25_26.py",
+    "/app/test_reports/pytest/phase24_25_26_results.xml"
+  ],
+  "action_items": [
+    "(MEDIUM) Frontend: add data-testid='logout-btn' to the Logout button (likely in the user-avatar dropdown / topbar) so e2e tests can exercise the cookie-clear path through the UI.",
+    "(MEDIUM, carry-over) Fix React hydration warnings on table rows — same pattern as CommercialDetail.jsx milestone table in iteration_12, now also on PredictiveForecast.jsx breakdown table. Wrap dynamic <tr> rows with React.Fragment instead of implicit <span>.",
+    "(LOW) Suppress or fix Recharts 'width(-1)/height(-1)' warnings on initial mount in PredictiveForecast + PartnerIntelligence by guaranteeing the container has a minHeight/aspect before mount."
+  ],
+  "critical_code_review_comments": [
+    "Phase 26 auth migration is correctly backward compatible: get_current_user reads cookie FIRST then falls back to Bearer (server.py:549-551). Both paths verified by separate pytest tests.",
+    "Cookie attributes match spec exactly: HttpOnly=True, Secure=True, SameSite=lax, path=/, max_age=JWT_EXPIRATION_HOURS*3600. Browser confirms httpOnly + secure + lax on the preview HTTPS domain.",
+    "Frontend has no token in localStorage after login — only posthog + theme keys. AuthContext correctly relies on /auth/me with credentials:include on mount.",
+    "Predictive forecast endpoint validates horizon_months and returns exact-length forecast array for 3/6/9/12. summary.trend_direction is one of up/down/flat. AI narrative returned in <60s.",
+    "Partner-commission-analytics RBAC matches spec: super_admin / vyapaar_ops / vyapaar_finance allowed; customer 403; finance role correctly bypasses the read-only block on this GET.",
+    "Partner-intelligence existing RBAC: super_admin + vyapaar_ops + selling_partner allowed; customer 403. Spec said selling_partner should access — verified.",
+    "AI coaching endpoint is admin/ops only (verified by customer 403). Real Gemini call completes within timeout and returns full schema (partner, stats, summary, strengths, weaknesses, coaching_tips, leads_to_focus, next_training_topic, confidence).",
+    "Existing AI endpoints (/ai/command, /leads/{id}/ai/risk-analysis, /leads/{id}/ai/follow-up-suggestion) still accept Bearer tokens — Phase 26 did not break the regression path.",
+    "Logout endpoint correctly returns 200 unconditionally (no auth required) — frontend can call it on any 'logout' click without a valid session, as documented in the code comment."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase24_25_26.py (new — 21 tests covering Phases 24/25/26)"
+  ],
+  "success_rate": {"backend": "100% (21/21 pytest)", "frontend": "90% (login, cookie set, refresh-persistence, sidebar nav, /predictive-forecast page render, horizon switcher, /partner-intelligence page render, AI Coach dialog — all verified. Logout-via-UI not exercised due to missing testid on the logout button.)"},
+  "test_credentials": "Used: admin@vyapaarnetwork.com/admin123, john@testco.com/test123, ops_test@meshora.com/ops123456, fin_test@meshora.com/fin123456. All four work. No new credentials created.",
+  "seed_data_creation": "None. Tests use existing data (selling_partner users, leads).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 24/25/26 tests live at /app/backend/tests/test_phase24_25_26.py — 21 tests, ~92s including 2-3 Gemini calls. Run with: pytest /app/backend/tests/test_phase24_25_26.py -v --junitxml=/app/test_reports/pytest/phase24_25_26_results.xml. Note: BASE_URL is loaded from /app/frontend/.env REACT_APP_BACKEND_URL (env var fallback) since pytest does not auto-load that file. Auth cookie 'access_token' is set with HttpOnly+Secure+SameSite=Lax on the preview HTTPS domain. Frontend uses ONLY cookies — no localStorage token. To test logout via UI in the future, first add data-testid='logout-btn' to the Logout control in the topbar/user-menu (currently unreachable by standard selectors).",
+  "rca of the issue": "N/A — no functional bugs. The two outstanding cosmetic items (hydration warnings on table rows + Recharts width(-1) warning) are environment-side: hydration warning is from Emergent's visual-edit dynamic-instrumentation <span> wrapper around mapped <tr> rows; Recharts warnings fire during the first paint when the container width has not yet been measured by the layout engine. Both are non-blocking. The only test-side miss (UI logout) is a missing data-testid, not a functional defect — the backend logout flow + cookie clear are verified in pytest."
+}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
@@ -32,7 +32,7 @@ const RevenueIntelligence = () => {
   const [endDate, setEndDate] = useState('');
   const [runningRules, setRunningRules] = useState(false);
 
-  const fetch = async () => {
+  const fetch = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -42,9 +42,9 @@ const RevenueIntelligence = () => {
       setData(res.data);
     } catch (e) { /* ignore */ }
     finally { setLoading(false); }
-  };
+  }, [startDate, endDate]);
 
-  useEffect(() => { fetch(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { fetch(); }, [fetch]);
 
   if (loading) return <RevenueIntelligenceSkeleton />;
   if (!data) return null;

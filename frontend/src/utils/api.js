@@ -7,28 +7,24 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json'
   },
-  timeout: 30000
+  timeout: 30000,
+  // Phase 26: send the httpOnly auth cookie with every request
+  withCredentials: true,
 });
 
-// Request interceptor to add auth token
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// Phase 26: JWT is now in an httpOnly cookie. We no longer attach Authorization
+// headers from localStorage. (Auth interceptor removed.)
 
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      // Drop legacy token if present (one-time cleanup) and bounce to login
+      try { localStorage.removeItem('token'); } catch (e) { /* ignore */ }
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

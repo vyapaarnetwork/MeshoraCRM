@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse, FileResponse
 from dotenv import load_dotenv
@@ -510,6 +510,28 @@ def create_token(user_id: str, email: str, role: str) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
+# Phase 26: HttpOnly cookie helpers (JWT moved out of localStorage to mitigate XSS)
+_AUTH_COOKIE_NAME = "access_token"
+_AUTH_COOKIE_MAX_AGE = JWT_EXPIRATION_HOURS * 3600
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    """Set the JWT as an httpOnly cookie. samesite=lax is fine because preview/prod
+    serve frontend and /api on the SAME domain via Kubernetes ingress, so this is
+    a first-party cookie. secure=True ensures HTTPS-only in preview/prod."""
+    response.set_cookie(
+        key=_AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=_AUTH_COOKIE_MAX_AGE,
+        path="/",
+    )
+
+def _clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(key=_AUTH_COOKIE_NAME, path="/")
+
+
 def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -518,8 +540,18 @@ def decode_token(token: str) -> dict:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-async def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
-    payload = decode_token(credentials.credentials)
+async def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+):
+    # Phase 26: Read JWT from httpOnly cookie first (preferred), fall back to
+    # Authorization Bearer header for legacy clients / API testing tools.
+    token = request.cookies.get('access_token')
+    if not token and credentials:
+        token = credentials.credentials
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_token(token)
     user = await db.users.find_one({"id": payload['user_id']}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
@@ -611,7 +643,7 @@ async def send_followup_reminder(to_email: str, lead_title: str, followup_date: 
 # ==================== AUTH ROUTES ====================
 
 @api_router.post("/auth/register", response_model=TokenResponse)
-async def register(user_data: UserCreate):
+async def register(user_data: UserCreate, response: Response):
     # Only allow customer self-registration; other roles must be created by admin
     if user_data.role != UserRole.CUSTOMER:
         raise HTTPException(
@@ -659,6 +691,7 @@ async def register(user_data: UserCreate):
     await db.users.insert_one(user_doc)
     
     token = create_token(user_id, user_data.email, user_data.role.value)
+    _set_auth_cookie(response, token)
     
     return TokenResponse(
         access_token=token,
@@ -676,7 +709,7 @@ async def register(user_data: UserCreate):
     )
 
 @api_router.post("/auth/login", response_model=TokenResponse)
-async def login(credentials: UserLogin):
+async def login(credentials: UserLogin, response: Response):
     user = await db.users.find_one({"email": credentials.email}, {"_id": 0})
     if not user or not verify_password(credentials.password, user['password']):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -691,6 +724,7 @@ async def login(credentials: UserLogin):
             company_name = company['name']
     
     token = create_token(user['id'], user['email'], user['role'])
+    _set_auth_cookie(response, token)
     
     return TokenResponse(
         access_token=token,
@@ -736,6 +770,13 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         ),
         created_at=current_user['created_at']
     )
+
+@api_router.post("/auth/logout")
+async def logout(response: Response):
+    """Phase 26: Clear the httpOnly auth cookie. Returns 200 regardless of auth state
+    so the frontend can call this on any 'logout' click without needing a valid session."""
+    _clear_auth_cookie(response)
+    return {"ok": True}
 
 # ==================== PROFILE ROUTES ====================
 
@@ -4406,6 +4447,505 @@ async def revenue_intelligence(
             {"band": "at_risk", "value": round(health_buckets['at_risk'], 2)},
         ],
     }
+
+# ==================== PHASE 24: PREDICTIVE REVENUE FORECASTING ====================
+
+def _ema(values: List[float], alpha: float = 0.5) -> float:
+    """Exponential moving average for trend smoothing."""
+    if not values:
+        return 0.0
+    ema = values[0]
+    for v in values[1:]:
+        ema = alpha * v + (1 - alpha) * ema
+    return ema
+
+def _months_between(start: datetime, end: datetime) -> int:
+    return (end.year - start.year) * 12 + (end.month - start.month)
+
+@api_router.get("/dashboard/predictive-forecast")
+async def predictive_forecast(
+    horizon_months: int = 6,
+    current_user: dict = Depends(get_current_user),
+):
+    """Predictive Revenue Forecasting.
+    Combines:
+      - Statistical baseline (linear regression + EMA on last 12 months of won revenue)
+      - Pipeline-weighted forecast (weighted_pipeline / stage-velocity)
+      - Per-lead closure probability (status_prob × health_factor × recency_factor)
+      - Optional AI narrative (Gemini) — best-effort, falls back silently
+    """
+    horizon_months = max(1, min(12, int(horizon_months or 6)))
+
+    lead_query: Dict[str, Any] = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        lead_query['selling_partner_id'] = current_user['id']
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        lead_query['sales_associate_id'] = current_user['id']
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        lead_query['created_by'] = current_user['id']
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+    leads = await db.leads.find(lead_query, {"_id": 0}).to_list(5000)
+
+    today = datetime.now(timezone.utc).date()
+    today_dt = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc)
+
+    # 1) Historical won revenue per month (last 12 months) — for statistical baseline
+    history_window = 12
+    history_buckets: Dict[str, float] = {}
+    history_counts: Dict[str, int] = {}
+    for i in range(history_window - 1, -1, -1):
+        m_dt = (today.replace(day=1) - timedelta(days=30 * i)).replace(day=1)
+        history_buckets[m_dt.isoformat()] = 0.0
+        history_counts[m_dt.isoformat()] = 0
+
+    avg_close_days_by_stage: Dict[str, List[float]] = {}
+    won_close_days: List[float] = []
+
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '') or {}
+        if not st.get('is_won'):
+            continue
+        updated = lead.get('updated_at') or lead.get('created_at') or ''
+        if not updated:
+            continue
+        try:
+            d = datetime.fromisoformat(updated.replace('Z', '+00:00')).date()
+        except Exception:
+            continue
+        m_iso = d.replace(day=1).isoformat()
+        if m_iso in history_buckets:
+            history_buckets[m_iso] += float(lead.get('deal_value') or 0)
+            history_counts[m_iso] += 1
+        # Average days to close (created → won)
+        try:
+            created = datetime.fromisoformat((lead.get('created_at') or '').replace('Z', '+00:00')).date()
+            days = (d - created).days
+            if 0 <= days <= 720:
+                won_close_days.append(days)
+        except Exception:
+            pass
+
+    history_series = [
+        {"month": datetime.fromisoformat(k).strftime("%b %Y"), "month_iso": k, "won_revenue": round(v, 2), "won_count": history_counts[k]}
+        for k, v in sorted(history_buckets.items())
+    ]
+    monthly_values = [h['won_revenue'] for h in history_series]
+
+    # 2) Statistical baseline (linear regression slope + EMA)
+    n = len(monthly_values)
+    if n >= 2 and sum(monthly_values) > 0:
+        xs = list(range(n))
+        x_mean = sum(xs) / n
+        y_mean = sum(monthly_values) / n
+        num = sum((xs[i] - x_mean) * (monthly_values[i] - y_mean) for i in range(n))
+        den = sum((xs[i] - x_mean) ** 2 for i in range(n)) or 1
+        slope = num / den
+        intercept = y_mean - slope * x_mean
+    else:
+        slope = 0.0
+        intercept = monthly_values[-1] if monthly_values else 0.0
+
+    ema_baseline = _ema(monthly_values, alpha=0.55)
+    avg_won = (sum(monthly_values) / n) if n > 0 else 0.0
+
+    # 3) Pipeline-weighted forecast — assign each open lead an expected close month
+    avg_close_overall = (sum(won_close_days) / len(won_close_days)) if won_close_days else 60.0
+    pipeline_per_month: Dict[str, float] = {}
+    closure_predictions = []  # per-lead
+
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '') or {}
+        if st.get('is_won') or st.get('is_lost'):
+            continue
+        status_name = st.get('name', 'Unstaged')
+        deal_value = float(lead.get('deal_value') or 0)
+        if deal_value <= 0:
+            continue
+
+        # Probability from status + health + recency
+        status_prob = _probability_for(status_name, False)
+
+        lead_for_h = {**lead, 'active_partners_count': len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active']), 'status_is_won': False}
+        h = compute_lead_health(lead_for_h)
+        # Health multiplier: hot 1.2 / warm 1.0 / cold 0.75 / at_risk 0.5
+        health_mult = {"hot": 1.2, "warm": 1.0, "cold": 0.75, "at_risk": 0.5}.get(h['band'], 1.0)
+        # Recency: leads inactive > 30 days get penalized
+        days_inactive = h.get('days_inactive') or 0
+        recency_mult = 1.0 if days_inactive <= 7 else (0.85 if days_inactive <= 30 else 0.6)
+
+        prob = min(1.0, max(0.0, status_prob * health_mult * recency_mult))
+        expected = deal_value * prob
+
+        # Expected close date — stage-based offset (rough heuristic on avg_close_overall)
+        stage_offset_days = {
+            'new': avg_close_overall, 'contact': avg_close_overall * 0.85,
+            'qualified': avg_close_overall * 0.7, 'proposal': avg_close_overall * 0.45,
+            'negotiat': avg_close_overall * 0.25, 'renewal': avg_close_overall * 0.4,
+        }
+        offset = avg_close_overall
+        for k, off in stage_offset_days.items():
+            if k in status_name.lower():
+                offset = off
+                break
+        # If lead has overdue follow-ups, push out 14 days
+        if (h.get('overdue_count') or 0) > 0:
+            offset += 14
+        expected_close = today + timedelta(days=max(0, int(offset)))
+
+        # Bucket into target month
+        month_key = expected_close.replace(day=1).isoformat()
+        pipeline_per_month[month_key] = pipeline_per_month.get(month_key, 0) + expected
+
+        closure_predictions.append({
+            "lead_id": lead.get('id'),
+            "title": lead.get('title', ''),
+            "customer_company": lead.get('customer_company', ''),
+            "deal_value": deal_value,
+            "stage": status_name,
+            "probability": round(prob * 100, 1),
+            "expected_revenue": round(expected, 2),
+            "health_band": h['band'],
+            "expected_close_date": expected_close.isoformat(),
+            "days_to_close": (expected_close - today).days,
+        })
+
+    # 4) Build horizon forecast — combine statistical + pipeline-weighted, weighted
+    forecast = []
+    for i in range(horizon_months):
+        m_dt = (today.replace(day=1) + timedelta(days=32 * i)).replace(day=1)
+        m_iso = m_dt.isoformat()
+        stat_forecast = max(0, intercept + slope * (n + i))   # linear projection
+        stat_blend = (stat_forecast * 0.55) + (ema_baseline * 0.25) + (avg_won * 0.20)
+        pipeline_predicted = pipeline_per_month.get(m_iso, 0)
+        combined = round((stat_blend * 0.45) + (pipeline_predicted * 0.55), 2)
+
+        # Confidence band: ±25% widening with horizon
+        spread = 0.18 + (i * 0.04)
+        forecast.append({
+            "month": m_dt.strftime("%b %Y"),
+            "month_iso": m_iso,
+            "stat_forecast": round(stat_blend, 2),
+            "pipeline_forecast": round(pipeline_predicted, 2),
+            "combined": combined,
+            "low": round(combined * (1 - spread), 2),
+            "high": round(combined * (1 + spread), 2),
+        })
+
+    # 5) Top closure predictions for next 90 days
+    closure_predictions.sort(key=lambda x: (-x['expected_revenue']))
+    next_90 = [c for c in closure_predictions if c['days_to_close'] <= 90][:20]
+
+    # 6) AI narrative (best-effort)
+    ai_narrative = None
+    if EMERGENT_LLM_KEY and forecast:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage  # noqa: WPS433
+            summary_lines = [f"  - {f['month']}: ₹{f['combined']:,.0f} (range ₹{f['low']:,.0f}–₹{f['high']:,.0f})" for f in forecast[:horizon_months]]
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"forecast-{uuid.uuid4()}",
+                system_message=(
+                    "You are a revenue operations analyst. Given a forecast table, write a 2-3 sentence executive summary "
+                    "highlighting trend direction, biggest opportunity month, and one risk. Be concrete with numbers. "
+                    "Use Indian Rupee notation (₹). No markdown, no bullets, no preamble like 'Here is the summary'."
+                ),
+            ).with_model("gemini", "gemini-3.1-pro-preview")
+            prompt = (
+                f"Last 6 months won revenue (₹): {[round(x, 0) for x in monthly_values[-6:]]}\n"
+                f"Forecast (next {horizon_months} months):\n" + "\n".join(summary_lines) + "\n"
+                f"Pipeline tracked: {len(closure_predictions)} open deals, total weighted ₹{sum(c['expected_revenue'] for c in closure_predictions):,.0f}"
+            )
+            raw = await chat.send_message(UserMessage(text=prompt))
+            ai_narrative = (raw or '').strip().strip('`').strip()[:600]
+        except Exception as e:
+            logger.warning(f"AI narrative failed (silent fallback): {e}")
+            ai_narrative = None
+
+    # 7) Trend signal
+    if n >= 3:
+        recent_3 = sum(monthly_values[-3:]) / 3
+        prior_3 = (sum(monthly_values[-6:-3]) / 3) if n >= 6 else recent_3
+        if prior_3 > 0:
+            mom_change_pct = ((recent_3 - prior_3) / prior_3) * 100
+        else:
+            mom_change_pct = 0
+        trend_direction = "up" if mom_change_pct > 5 else ("down" if mom_change_pct < -5 else "flat")
+    else:
+        mom_change_pct = 0
+        trend_direction = "flat"
+
+    return {
+        "horizon_months": horizon_months,
+        "history": history_series,
+        "forecast": forecast,
+        "closure_predictions_next_90d": next_90,
+        "summary": {
+            "total_forecast": round(sum(f['combined'] for f in forecast), 2),
+            "avg_monthly_forecast": round(sum(f['combined'] for f in forecast) / horizon_months, 2) if horizon_months else 0,
+            "avg_historical_monthly": round(avg_won, 2),
+            "trend_direction": trend_direction,
+            "mom_change_pct": round(mom_change_pct, 1),
+            "pipeline_weighted_total": round(sum(c['expected_revenue'] for c in closure_predictions), 2),
+            "open_deal_count": len(closure_predictions),
+            "avg_close_days": round(avg_close_overall, 1),
+        },
+        "ai_narrative": ai_narrative,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+# ==================== PHASE 25: PARTNER COMMISSION & REFERRAL ANALYTICS ====================
+# (Companion endpoint to the existing partner-intelligence at line ~5457 — commission/referral
+# data that the leaderboard endpoint doesn't expose.)
+
+@api_router.get("/dashboard/partner-commission-analytics")
+async def partner_commission_analytics(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    # Restrict to roles that can see this — admin/ops/finance only
+    if current_user['role'] not in (
+        UserRole.SUPER_ADMIN.value, UserRole.VYAPAAR_OPS.value, UserRole.VYAPAAR_FINANCE.value
+    ):
+        raise HTTPException(status_code=403, detail="Admin/Operations/Finance only")
+
+    lead_query: Dict[str, Any] = {}
+    if start_date or end_date:
+        cond = {}
+        if start_date:
+            cond["$gte"] = start_date
+        if end_date:
+            cond["$lte"] = end_date + 'T23:59:59'
+        lead_query['created_at'] = cond
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+    leads = await db.leads.find(lead_query, {"_id": 0}).to_list(5000)
+    users = await db.users.find({"role": "selling_partner"}, {"_id": 0}).to_list(2000)
+    associates = await db.users.find({"role": "sales_associate"}, {"_id": 0}).to_list(2000)
+
+    # Build partner stats
+    partner_stats: Dict[str, Dict[str, Any]] = {}
+    associate_stats: Dict[str, Dict[str, Any]] = {}
+    today = datetime.now(timezone.utc).date()
+
+    def _ensure_partner(pid: str, pname: str):
+        if pid not in partner_stats:
+            partner_stats[pid] = {
+                "partner_id": pid,
+                "partner_name": pname,
+                "assigned_count": 0,
+                "won_count": 0,
+                "lost_count": 0,
+                "open_count": 0,
+                "won_revenue": 0.0,
+                "open_pipeline": 0.0,
+                "total_close_days": 0.0,
+                "close_days_samples": 0,
+                "commission_paid": 0.0,
+                "referrals_brought": 0,
+                "referrals_won": 0,
+                "categories": {},
+                "monthly_won": {},  # YYYY-MM: deal_count
+            }
+
+    for u in users:
+        _ensure_partner(u['id'], u.get('name', u.get('email', 'Unknown')))
+
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '') or {}
+        is_won = bool(st.get('is_won'))
+        is_lost = bool(st.get('is_lost'))
+        deal_value = float(lead.get('deal_value') or 0)
+        primary_cat = lead.get('primary_category_name') or 'Uncategorized'
+
+        # Stats for all assigned_partners (multi-partner concurrent assignment supported)
+        for ap in (lead.get('assigned_partners') or []):
+            pid = ap.get('partner_id')
+            if not pid:
+                continue
+            _ensure_partner(pid, ap.get('partner_name', 'Unknown'))
+            partner_stats[pid]['assigned_count'] += 1
+            ap_status = ap.get('status', 'active')
+            if ap_status == 'won':
+                partner_stats[pid]['won_count'] += 1
+                partner_stats[pid]['won_revenue'] += deal_value
+                # Time to close
+                try:
+                    if ap.get('assigned_at') and ap.get('won_at'):
+                        a = datetime.fromisoformat(ap['assigned_at'].replace('Z', '+00:00')).date()
+                        w = datetime.fromisoformat(ap['won_at'].replace('Z', '+00:00')).date()
+                        days = (w - a).days
+                        if 0 <= days <= 720:
+                            partner_stats[pid]['total_close_days'] += days
+                            partner_stats[pid]['close_days_samples'] += 1
+                except Exception:
+                    pass
+                # Monthly heatmap
+                try:
+                    w = datetime.fromisoformat(ap['won_at'].replace('Z', '+00:00')).date()
+                    mkey = w.strftime("%Y-%m")
+                    partner_stats[pid]['monthly_won'][mkey] = partner_stats[pid]['monthly_won'].get(mkey, 0) + 1
+                except Exception:
+                    pass
+            elif ap_status == 'lost':
+                partner_stats[pid]['lost_count'] += 1
+            else:
+                partner_stats[pid]['open_count'] += 1
+                partner_stats[pid]['open_pipeline'] += deal_value
+            # Categories
+            cat = partner_stats[pid]['categories']
+            cat[primary_cat] = cat.get(primary_cat, 0) + 1
+
+        # Referrer commission tracking — admin commission share goes to platform
+        # We approximate partner's commission as the selling_partner_share when won
+        if is_won and lead.get('selling_partner_id'):
+            pid = lead['selling_partner_id']
+            _ensure_partner(pid, lead.get('selling_partner_name', 'Unknown'))
+            v_pct = float(lead.get('vyapaar_percentage') or 0)
+            sa_pct = float(lead.get('sales_associate_commission') or 0)
+            v_share = deal_value * (v_pct / 100)
+            sa_share = v_share * (sa_pct / 100) if sa_pct else 0
+            v_net = v_share - sa_share
+            partner_share = deal_value - v_share
+            partner_stats[pid]['commission_paid'] += partner_share
+
+            # Associate commission tracking
+            if lead.get('sales_associate_id') and sa_share > 0:
+                aid = lead['sales_associate_id']
+                if aid not in associate_stats:
+                    associate_stats[aid] = {
+                        "associate_id": aid,
+                        "associate_name": lead.get('sales_associate_name', 'Unknown'),
+                        "leads_brought": 0,
+                        "won_count": 0,
+                        "won_revenue": 0.0,
+                        "commission_earned": 0.0,
+                    }
+                associate_stats[aid]['won_count'] += 1
+                associate_stats[aid]['won_revenue'] += deal_value
+                associate_stats[aid]['commission_earned'] += sa_share
+
+        # Track lead origination by associate (regardless of won/lost)
+        if lead.get('sales_associate_id'):
+            aid = lead['sales_associate_id']
+            if aid not in associate_stats:
+                associate_stats[aid] = {
+                    "associate_id": aid,
+                    "associate_name": lead.get('sales_associate_name', 'Unknown'),
+                    "leads_brought": 0,
+                    "won_count": 0,
+                    "won_revenue": 0.0,
+                    "commission_earned": 0.0,
+                }
+            associate_stats[aid]['leads_brought'] += 1
+
+        # Referral tracking — referred_by_partner_id
+        ref_pid = lead.get('referred_by_partner_id')
+        if ref_pid:
+            _ensure_partner(ref_pid, lead.get('referred_by_partner_name', 'Unknown'))
+            partner_stats[ref_pid]['referrals_brought'] += 1
+            if is_won:
+                partner_stats[ref_pid]['referrals_won'] += 1
+
+    # Compute derived metrics + rank
+    partners_list = []
+    for p in partner_stats.values():
+        conv = (p['won_count'] / p['assigned_count'] * 100) if p['assigned_count'] > 0 else 0
+        avg_close = (p['total_close_days'] / p['close_days_samples']) if p['close_days_samples'] > 0 else None
+        avg_deal = (p['won_revenue'] / p['won_count']) if p['won_count'] > 0 else 0
+        referral_conv = (p['referrals_won'] / p['referrals_brought'] * 100) if p['referrals_brought'] > 0 else 0
+        # Performance score (composite, 0-100)
+        score = 0
+        score += min(50, p['won_count'] * 3)          # win volume
+        score += min(25, conv / 4)                     # conversion
+        score += min(15, p['won_revenue'] / 1e6 * 5)   # revenue scale (₹10L = full pts)
+        if avg_close is not None:
+            score += max(0, 10 - min(10, avg_close / 30))  # speed bonus
+        partners_list.append({
+            "partner_id": p['partner_id'],
+            "partner_name": p['partner_name'],
+            "assigned_count": p['assigned_count'],
+            "won_count": p['won_count'],
+            "lost_count": p['lost_count'],
+            "open_count": p['open_count'],
+            "won_revenue": round(p['won_revenue'], 2),
+            "open_pipeline": round(p['open_pipeline'], 2),
+            "conversion_rate": round(conv, 1),
+            "avg_close_days": round(avg_close, 1) if avg_close is not None else None,
+            "avg_deal_size": round(avg_deal, 2),
+            "commission_paid": round(p['commission_paid'], 2),
+            "referrals_brought": p['referrals_brought'],
+            "referrals_won": p['referrals_won'],
+            "referral_conversion": round(referral_conv, 1),
+            "top_category": (max(p['categories'].items(), key=lambda x: x[1])[0] if p['categories'] else None),
+            "performance_score": round(min(100, max(0, score)), 1),
+            "monthly_won": p['monthly_won'],
+        })
+
+    partners_list.sort(key=lambda x: -x['performance_score'])
+
+    # Build heatmap matrix for top 8 partners × last 6 months
+    top_8 = partners_list[:8]
+    months = []
+    for i in range(5, -1, -1):
+        m_dt = (today.replace(day=1) - timedelta(days=30 * i)).replace(day=1)
+        months.append(m_dt.strftime("%Y-%m"))
+    heatmap = {
+        "months": [datetime.strptime(m, "%Y-%m").strftime("%b") for m in months],
+        "partners": [
+            {
+                "partner_name": p['partner_name'],
+                "values": [p['monthly_won'].get(m, 0) for m in months],
+            }
+            for p in top_8
+        ],
+    }
+
+    # Associates list
+    associates_list = sorted(associate_stats.values(), key=lambda x: -x['commission_earned'])
+
+    # Aggregate KPIs
+    total_partners = len([p for p in partners_list if p['assigned_count'] > 0])
+    total_commission = sum(p['commission_paid'] for p in partners_list)
+    total_won_revenue = sum(p['won_revenue'] for p in partners_list)
+    avg_partner_revenue = (total_won_revenue / total_partners) if total_partners > 0 else 0
+
+    # Category specialization (across system)
+    category_partner_map: Dict[str, Dict[str, int]] = {}
+    for p in partners_list:
+        if not p['top_category']:
+            continue
+        category_partner_map.setdefault(p['top_category'], {})[p['partner_name']] = p['won_count']
+    category_leaders = []
+    for cat, partner_dict in category_partner_map.items():
+        top_partner = max(partner_dict.items(), key=lambda x: x[1])
+        category_leaders.append({
+            "category": cat,
+            "leader": top_partner[0],
+            "wins": top_partner[1],
+        })
+    category_leaders.sort(key=lambda x: -x['wins'])
+
+    return {
+        "kpis": {
+            "active_partners": total_partners,
+            "total_partner_revenue": round(total_won_revenue, 2),
+            "total_commission_paid": round(total_commission, 2),
+            "avg_partner_revenue": round(avg_partner_revenue, 2),
+            "top_performer": partners_list[0]['partner_name'] if partners_list else None,
+            "top_performer_revenue": partners_list[0]['won_revenue'] if partners_list else 0,
+        },
+        "partners": partners_list,
+        "top_associates": associates_list[:10],
+        "heatmap": heatmap,
+        "category_leaders": category_leaders[:10],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 
 # ==================== PHASE 2: STAKEHOLDERS ====================
 

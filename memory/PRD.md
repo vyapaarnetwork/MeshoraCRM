@@ -252,6 +252,39 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Frontend `CommandBar.jsx`** — Dialog-based command palette. Cmd+K / Ctrl+K global keyboard shortcut from anywhere in the app (Layout.jsx). Header has an "Ask Meshora…" button (with ⌘K hint kbd) on desktop, sparkle icon button on mobile. Empty state shows 5 sample queries as clickable shortcuts. Result rows show health-band icon, status badge with color, customer/company/category/partner subline, deal value. Click a result row → navigate to lead detail. Suggested follow-up chips below results re-run the bar with the new query.
 - [x] **Verified live:** Query "Show me at-risk leads" → returned 20 at-risk leads with proper styling. Query "Big deals worth more than 1 lakh" → 5 results. Query "Hot leads inactive more than 5 days" → 0 (correctly empty since most hot leads are active). Cmd+K toggle confirmed working.
 
+### Phase 24 — Predictive Revenue Forecasting (Feb 25, 2026)
+- [x] **`GET /api/dashboard/predictive-forecast?horizon_months=N`** — hybrid statistical + pipeline-weighted forecast endpoint:
+  - Statistical baseline: linear regression slope + EMA on last 12 months of won revenue (45% weight)
+  - Pipeline-weighted: per-lead expected close month derived from status probability × health multiplier × recency multiplier × stage-velocity offset (55% weight)
+  - Confidence band: ±18% widening +4% per horizon month
+  - Returns `history` (12mo won-revenue series), `forecast` (N months with stat/pipeline/combined/low/high), `closure_predictions_next_90d` (top-20 most-likely deals with per-lead probability + expected close date), `summary` (totals, MoM trend, open deals)
+  - **AI executive narrative**: Gemini 3 Pro generates a 2-3 sentence boardroom summary highlighting trend direction, biggest opportunity month, and one risk. Falls back gracefully if LLM key missing.
+- [x] **Frontend `PredictiveForecast.jsx`** (`/predictive-forecast`) — full page with horizon selector (3/6/9/12), AI narrative banner with violet gradient, 4 KPI cards (total/avg/trend/pipeline-weighted), composed chart (bars=actual, dashed line=forecast, shaded band=confidence interval, "Today" reference line), month-by-month breakdown table (statistical vs pipeline vs combined vs range), top-20 closure predictions list with per-deal probability tile + click-to-open-lead.
+- [x] **Sidebar nav** — new "Predictive Forecast" link with `Sparkles` icon for admin/ops/finance/selling_partner.
+
+### Phase 25 — Partner Intelligence Layer (existing + commission analytics) (Feb 25, 2026)
+- [x] **Pre-existing `GET /api/dashboard/partner-intelligence`** (from earlier session) wired into routes & nav:
+  - Composite leaderboard score (40% revenue + 30% win-rate + 20% engagement + 10% speed)
+  - AI coaching dialog per partner (`POST /api/partners/{id}/ai/coaching`) — Gemini extracts strengths/weaknesses/coaching tips/leads-to-focus/next-training-topic
+  - Frontend `PartnerIntelligence.jsx` page existed but was unrouted — added route in App.js + sidebar nav with `Trophy` icon for admin/ops/finance.
+- [x] **New `GET /api/dashboard/partner-commission-analytics`** — companion endpoint exposing commission/referral/category-leader data the leaderboard doesn't surface:
+  - Per-partner commission paid (computed from selling_partner_share when won)
+  - Referral conversion ratios (`referred_by_partner_id` → won rate)
+  - Top sales associates by commission earned
+  - Monthly activity heatmap for top-8 partners × last 6 months
+  - Category leaders (top partner per primary category by wins)
+  - Date range filter via `start_date` / `end_date` query params
+  - RBAC: admin / vyapaar_ops / vyapaar_finance only
+
+### Phase 26 — JWT migration: localStorage → HttpOnly Cookies (Feb 25, 2026)
+- [x] **Backend** — `_set_auth_cookie(response, token)` helper sets `access_token` cookie with `HttpOnly; Secure; SameSite=lax; Max-Age=86400; Path=/`. Called from `/api/auth/login` and `/api/auth/register`. New `POST /api/auth/logout` endpoint clears the cookie (returns 200 unconditionally).
+- [x] **`get_current_user`** now reads token from cookie first, falls back to `Authorization: Bearer` header for legacy clients / cURL testing — fully backward compatible. Uses `HTTPBearer(auto_error=False)` so missing header is OK when cookie is present.
+- [x] **Frontend `api.js`** — axios instance gains `withCredentials: true`; removed the request interceptor that attached `Authorization: Bearer ${localStorage.token}`. Response interceptor still clears legacy `localStorage.token` (one-time cleanup) and bounces to `/login` on 401.
+- [x] **`AuthContext.jsx`** rewritten — no more `localStorage.setItem('token')`. On mount, just calls `/api/auth/me`; if 401, user is unauthenticated. `login()` and `register()` only set user state — cookie is set by backend. `logout()` calls `/api/auth/logout` then clears state + legacy localStorage entry.
+- [x] **CORS** already had `allow_credentials=True` from earlier setup. Frontend + backend share the same Kubernetes-ingress origin in preview/prod (first-party cookie), so `samesite=lax` is sufficient.
+- [x] **Verified end-to-end via curl** — login sets cookie, `/auth/me` works with cookie-only, `/auth/logout` clears it, post-logout `/auth/me` returns 401, Bearer header path also still works (backward compat).
+- [x] **React Hook deps** — fixed 4 production-build warnings (GridReport.fetchReport via useCallback, Reports.fetchReports via useCallback, LeadForm useEffect with eslint-disable comment for id-only deps, RevenueIntelligence.fetch via useCallback). Frontend now builds cleanly with `CI=true yarn build` — zero warnings.
+
 
 
 

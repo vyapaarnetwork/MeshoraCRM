@@ -43,7 +43,8 @@ import {
   Moon,
   Briefcase,
   TrendingUp,
-  Sparkles
+  Sparkles,
+  Trophy
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
@@ -272,6 +273,22 @@ const Layout = ({ children }) => {
         path: '/revenue-intelligence',
         roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner'],
       });
+      // Phase 24: Predictive Revenue Forecasting
+      items.push({
+        label: 'Predictive Forecast',
+        icon: Sparkles,
+        path: '/predictive-forecast',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner'],
+      });
+      // Phase 25: Partner Intelligence Layer (admin/ops only — RBAC enforced in backend)
+      if (isAdmin || isVyapaarOps || isVyapaarFinance) {
+        items.push({
+          label: 'Partner Intelligence',
+          icon: Trophy,
+          path: '/partner-intelligence',
+          roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
+        });
+      }
     }
 
     return items.filter(item => item.roles.includes(user?.role));

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -71,11 +71,7 @@ const Reports = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('6months');
   const [reportPeriod, setReportPeriod] = useState('monthly');
 
-  useEffect(() => {
-    fetchReports();
-  }, [dateRange, reportPeriod]);
-
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     setLoading(true);
     try {
       const params = {
@@ -108,7 +104,11 @@ const Reports = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateRange, reportPeriod, isAdmin, isSellingPartner, isSalesAssociate, user?.id]);
+
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
 
   const handlePeriodChange = (period) => {
     setSelectedPeriod(period);

@@ -58,6 +58,7 @@ const LeadForm = () => {
     if (isEditing) {
       fetchLead();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Refetch selling partners filtered by selected sub-category

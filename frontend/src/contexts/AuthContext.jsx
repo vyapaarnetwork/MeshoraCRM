@@ -13,45 +13,46 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('token');
-    setToken(null);
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch (e) {
+      // ignore — even if backend errors, clear local state
+    }
+    // One-time cleanup of legacy localStorage token (Phase 26)
+    try { localStorage.removeItem('token'); } catch (e) { /* ignore */ }
     setUser(null);
   }, []);
 
   useEffect(() => {
+    // Phase 26: rely on the httpOnly cookie set by login/register. Always try
+    // /auth/me on mount; if 401, user just isn't logged in.
     const initAuth = async () => {
-      if (token) {
-        try {
-          const response = await api.get('/auth/me');
-          setUser(response.data);
-        } catch (error) {
-          console.error('Auth initialization failed:', error);
-          logout();
-        }
+      try {
+        const response = await api.get('/auth/me');
+        setUser(response.data);
+      } catch (error) {
+        setUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
     initAuth();
-  }, [token, logout]);
+  }, []);
 
   const login = async (email, password) => {
     const response = await api.post('/auth/login', { email, password });
-    const { access_token, user: userData } = response.data;
-    localStorage.setItem('token', access_token);
-    setToken(access_token);
+    const { user: userData } = response.data;
+    // The httpOnly cookie is already set by the backend; we only track user in memory.
     setUser(userData);
     return userData;
   };
 
   const register = async (userData) => {
     const response = await api.post('/auth/register', userData);
-    const { access_token, user: newUser } = response.data;
-    localStorage.setItem('token', access_token);
-    setToken(access_token);
+    const { user: newUser } = response.data;
     setUser(newUser);
     return newUser;
   };
@@ -72,7 +73,6 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={{
       user,
-      token,
       loading,
       login,
       register,
