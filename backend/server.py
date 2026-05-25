@@ -456,6 +456,9 @@ class LeadResponse(BaseModel):
     created_by_name: Optional[str] = None
     created_at: str
     updated_at: str
+    # Phase 27: Deal Room state
+    deal_room_enabled: bool = False
+    deal_room_opened_at: Optional[str] = None
 
 # Customer User Management Models
 class CustomerUserCreate(BaseModel):
@@ -2638,7 +2641,9 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         created_by=lead['created_by'],
         created_by_name=created_by_user['name'] if created_by_user else None,
         created_at=lead['created_at'],
-        updated_at=lead['updated_at']
+        updated_at=lead['updated_at'],
+        deal_room_enabled=bool(lead.get('deal_room_enabled', False)),
+        deal_room_opened_at=lead.get('deal_room_opened_at'),
     )
 
 async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
@@ -3079,6 +3084,7 @@ async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user))
         raise HTTPException(status_code=404, detail="Lead not found")
     
     # Access control
+    is_email_match_only_customer = False
     if current_user['role'] == UserRole.SELLING_PARTNER.value and lead.get('selling_partner_id') != current_user['id']:
         # Also allow if they're in assigned_partners (multi-partner)
         if not any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])):
@@ -3091,8 +3097,27 @@ async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user))
         is_email_match = lead.get('customer_email') and lead.get('customer_email').lower() == (current_user.get('email') or '').lower()
         if not (is_creator or is_email_match):
             raise HTTPException(status_code=403, detail="Access denied")
-    
-    return await enrich_lead(lead)
+        # If access is via email match (not creator), redact internal fields
+        is_email_match_only_customer = is_email_match and not is_creator
+
+    enriched = await enrich_lead(lead)
+    if is_email_match_only_customer:
+        # Phase 27: customer who only matches via email should not see internal commercial details
+        enriched.description = None
+        enriched.deal_value = 0
+        enriched.commission_override = None
+        enriched.sales_associate_commission = None
+        enriched.commission_breakdown = None
+        # Strip internal comments (only public ones survive)
+        enriched.comments = [c for c in enriched.comments if getattr(c, 'is_public', False)]
+        # Strip referrer / sales associate info
+        enriched.referred_by_partner_id = None
+        enriched.referred_by_partner_name = None
+        enriched.referred_by_associate_id = None
+        enriched.referred_by_associate_name = None
+        enriched.sales_associate_id = None
+        enriched.sales_associate_name = None
+    return enriched
 
 @api_router.put("/leads/{lead_id}", response_model=LeadResponse)
 async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = Depends(get_current_user)):

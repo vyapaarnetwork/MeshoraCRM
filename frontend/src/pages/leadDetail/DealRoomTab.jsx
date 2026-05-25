@@ -31,7 +31,10 @@ const DealRoomTab = ({ leadId, lead, onLeadRefresh }) => {
   const [toggling, setToggling] = useState(false);
 
   const canManage = isAdmin || isVyapaarOps || isSellingPartner;
-  const enabled = !!lead?.deal_room_enabled;
+  // Phase 27 fix (iter 15): keep a local optimistic flag so the UI flips immediately after a successful toggle,
+  // even if the parent's lead prop hasn't refetched yet.
+  const [localEnabled, setLocalEnabled] = useState(null);
+  const enabled = localEnabled !== null ? localEnabled : !!lead?.deal_room_enabled;
 
   const loadDealRoom = useCallback(async () => {
     setLoading(true);
@@ -54,6 +57,8 @@ const DealRoomTab = ({ leadId, lead, onLeadRefresh }) => {
     try {
       await api.post(`/leads/${leadId}/deal-room/toggle`, { enabled: newEnabled });
       toast.success(newEnabled ? 'Deal Room opened — customer can now collaborate.' : 'Deal Room closed.');
+      // Optimistic local update — flip UI immediately
+      setLocalEnabled(newEnabled);
       // Re-fetch parent lead so the deal_room_enabled flag propagates AND eagerly load the new view.
       if (onLeadRefresh) await onLeadRefresh();
       if (newEnabled) await loadDealRoom();
