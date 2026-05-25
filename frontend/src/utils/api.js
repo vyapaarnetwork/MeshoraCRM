@@ -8,20 +8,38 @@ const api = axios.create({
     'Content-Type': 'application/json'
   },
   timeout: 30000,
-  // Phase 26: send the httpOnly auth cookie with every request
+  // Phase 26: send the httpOnly auth cookie on same-origin/SameSite=None scenarios
   withCredentials: true,
 });
 
-// Phase 26: JWT is now in an httpOnly cookie. We no longer attach Authorization
-// headers from localStorage. (Auth interceptor removed.)
+// Phase 26.1 (production hot-fix): also attach Authorization: Bearer header from
+// localStorage when present. We discovered that some production deployments host the
+// frontend on a custom domain (e.g. app.vyapaar.net) while /api lives on a different
+// domain, which makes the response a cross-site request. Browsers may then refuse to
+// store/send the httpOnly cookie depending on third-party-cookie settings. Falling back
+// to a Bearer header guarantees the session works regardless. The backend's
+// get_current_user already reads cookie OR Authorization header (whichever is present).
+api.interceptors.request.use(
+  (config) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      if (token && !config.headers.Authorization) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    } catch (e) { /* ignore */ }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Drop legacy token if present (one-time cleanup) and bounce to login
-      try { localStorage.removeItem('token'); } catch (e) { /* ignore */ }
+      // Drop stored token on 401 (token might be expired/invalid)
+      try { localStorage.removeItem('access_token'); } catch (e) { /* ignore */ }
+      try { localStorage.removeItem('token'); } catch (e) { /* ignore one-time legacy cleanup */ }
       // Public paths that should NOT redirect on 401 (Phase 27.5: guest magic link)
       const p = window.location.pathname;
       const isPublicPath = p === '/login' || p === '/register' || p.startsWith('/deal-room/');

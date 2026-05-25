@@ -520,21 +520,24 @@ _AUTH_COOKIE_NAME = "access_token"
 _AUTH_COOKIE_MAX_AGE = JWT_EXPIRATION_HOURS * 3600
 
 def _set_auth_cookie(response: Response, token: str) -> None:
-    """Set the JWT as an httpOnly cookie. samesite=lax is fine because preview/prod
-    serve frontend and /api on the SAME domain via Kubernetes ingress, so this is
-    a first-party cookie. secure=True ensures HTTPS-only in preview/prod."""
+    """Set the JWT as an httpOnly cookie.
+    SameSite=None + Secure is used so the cookie works across both same-origin (preview,
+    where frontend & /api share the K8s ingress domain) AND cross-origin production
+    setups (where the frontend custom domain — e.g. app.vyapaar.net — may differ from
+    the backend domain). All requests are HTTPS so Secure is mandatory anyway, and the
+    cookie is httpOnly to mitigate XSS. Cross-site cookie behaviour requires SameSite=None."""
     response.set_cookie(
         key=_AUTH_COOKIE_NAME,
         value=token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=_AUTH_COOKIE_MAX_AGE,
         path="/",
     )
 
 def _clear_auth_cookie(response: Response) -> None:
-    response.delete_cookie(key=_AUTH_COOKIE_NAME, path="/")
+    response.delete_cookie(key=_AUTH_COOKIE_NAME, path="/", samesite="none", secure=True)
 
 
 def decode_token(token: str) -> dict:

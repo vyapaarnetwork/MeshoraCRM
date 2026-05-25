@@ -21,14 +21,15 @@ export const AuthProvider = ({ children }) => {
     } catch (e) {
       // ignore — even if backend errors, clear local state
     }
-    // One-time cleanup of legacy localStorage token (Phase 26)
+    // Phase 26.1: clear both legacy and new keys
+    try { localStorage.removeItem('access_token'); } catch (e) { /* ignore */ }
     try { localStorage.removeItem('token'); } catch (e) { /* ignore */ }
     setUser(null);
   }, []);
 
   useEffect(() => {
-    // Phase 26: rely on the httpOnly cookie set by login/register. Always try
-    // /auth/me on mount; if 401, user just isn't logged in.
+    // Phase 26.1: try /auth/me with whatever auth we have (cookie via withCredentials,
+    // OR Authorization header from localStorage via request interceptor).
     const initAuth = async () => {
       try {
         const response = await api.get('/auth/me');
@@ -44,15 +45,22 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     const response = await api.post('/auth/login', { email, password });
-    const { user: userData } = response.data;
-    // The httpOnly cookie is already set by the backend; we only track user in memory.
+    const { access_token, user: userData } = response.data;
+    // Phase 26.1: store token in localStorage as Bearer fallback for cross-domain prod
+    // (the backend also sets an httpOnly cookie — whichever the browser accepts).
+    if (access_token) {
+      try { localStorage.setItem('access_token', access_token); } catch (e) { /* ignore */ }
+    }
     setUser(userData);
     return userData;
   };
 
   const register = async (userData) => {
     const response = await api.post('/auth/register', userData);
-    const { user: newUser } = response.data;
+    const { access_token, user: newUser } = response.data;
+    if (access_token) {
+      try { localStorage.setItem('access_token', access_token); } catch (e) { /* ignore */ }
+    }
     setUser(newUser);
     return newUser;
   };

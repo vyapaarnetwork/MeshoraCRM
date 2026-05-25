@@ -277,7 +277,18 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - RBAC: admin / vyapaar_ops / vyapaar_finance only
 
 ### Phase 26 — JWT migration: localStorage → HttpOnly Cookies (Feb 25, 2026)
-- [x] **Backend** — `_set_auth_cookie(response, token)` helper sets `access_token` cookie with `HttpOnly; Secure; SameSite=lax; Max-Age=86400; Path=/`. Called from `/api/auth/login` and `/api/auth/register`. New `POST /api/auth/logout` endpoint clears the cookie (returns 200 unconditionally).
+### Phase 26.1 — Production auth hot-fix (Feb 25, 2026)
+- [x] **Bug**: User reported login on production (`app.vyapaar.net`) auto-logs out before dashboard renders. Reproduction trace showed:
+  - The Emergent edge proxy returns `Access-Control-Allow-Origin: *` together with `Access-Control-Allow-Credentials: true` — an invalid combination per the W3C CORS spec that may block cookie storage on some browsers / privacy configurations.
+  - Cookie was set with `SameSite=lax`, which prevents the browser from sending it on cross-origin XHR even when third-party cookies are allowed.
+- [x] **Backend fix**: `_set_auth_cookie` now sets `SameSite=none; Secure` — required for cross-site cookie flows. `_clear_auth_cookie` updated to match.
+- [x] **Frontend fix**: Re-added Bearer header as a **fallback** alongside the cookie (hybrid auth):
+  - `api.js` request interceptor reads `localStorage.access_token` and attaches `Authorization: Bearer <token>` if present.
+  - `AuthContext.login()` / `register()` persist `response.data.access_token` into `localStorage`. `logout()` clears it AND calls `/api/auth/logout` to invalidate the cookie.
+  - Backend's `get_current_user` already accepts either cookie OR Bearer (Phase 26), so no backend changes needed.
+- [x] **Verified in preview**: login → /dashboard, hard-refresh preserves session (token in localStorage acts as defense-in-depth if the cookie is blocked by browser privacy settings).
+
+### Phase 26 (original) — JWT migration: localStorage → HttpOnly Cookies (Feb 25, 2026)
 - [x] **`get_current_user`** now reads token from cookie first, falls back to `Authorization: Bearer` header for legacy clients / cURL testing — fully backward compatible. Uses `HTTPBearer(auto_error=False)` so missing header is OK when cookie is present.
 - [x] **Frontend `api.js`** — axios instance gains `withCredentials: true`; removed the request interceptor that attached `Authorization: Bearer ${localStorage.token}`. Response interceptor still clears legacy `localStorage.token` (one-time cleanup) and bounces to `/login` on 401.
 - [x] **`AuthContext.jsx`** rewritten — no more `localStorage.setItem('token')`. On mount, just calls `/api/auth/me`; if 401, user is unauthenticated. `login()` and `register()` only set user state — cookie is set by backend. `logout()` calls `/api/auth/logout` then clears state + legacy localStorage entry.
