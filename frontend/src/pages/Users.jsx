@@ -64,7 +64,8 @@ const UsersList = () => {
     company_name: '',
     phone: '',
     is_finance: false,
-    is_delivery: false
+    is_delivery: false,
+    is_vyapaar_ops: false
   });
 
   // Delete confirmation state
@@ -103,7 +104,8 @@ const UsersList = () => {
         company_name: '',
         phone: user.phone || '',
         is_finance: !!user.is_finance,
-        is_delivery: !!user.is_delivery
+        is_delivery: !!user.is_delivery,
+        is_vyapaar_ops: !!user.is_vyapaar_ops
       });
     } else {
       setFormData({
@@ -115,7 +117,8 @@ const UsersList = () => {
         company_name: '',
         phone: '',
         is_finance: false,
-        is_delivery: false
+        is_delivery: false,
+        is_vyapaar_ops: false
       });
     }
     setDialogOpen(true);
@@ -156,7 +159,8 @@ const UsersList = () => {
           phone: formData.phone || null,
           company_id: formData.company_id || null,
           is_finance: formData.is_finance,
-          is_delivery: formData.is_delivery
+          is_delivery: formData.is_delivery,
+          is_vyapaar_ops: formData.is_vyapaar_ops
         };
         if (formData.password) {
           payload.password = formData.password;
@@ -174,7 +178,8 @@ const UsersList = () => {
           company_id: formData.company_id || null,
           company_name: formData.company_id ? null : formData.company_name || null,
           is_finance: formData.is_finance,
-          is_delivery: formData.is_delivery
+          is_delivery: formData.is_delivery,
+          is_vyapaar_ops: formData.is_vyapaar_ops
         };
         await api.post('/users', payload);
         toast.success('User created successfully');
@@ -482,9 +487,19 @@ const UsersList = () => {
               />
             </div>
 
-            {/* Phase 2: Commercials role flags */}
+            {/* Phase 2 + Phase 17: Vyapaar team role flags */}
             <div className="space-y-2 border rounded-md p-3 bg-muted/30">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">Commercials Permissions (optional)</Label>
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">Vyapaar Team Roles (optional)</Label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.is_vyapaar_ops}
+                  onChange={(e) => setFormData({ ...formData, is_vyapaar_ops: e.target.checked })}
+                  className="w-4 h-4"
+                  data-testid="user-is-vyapaar-ops"
+                />
+                <span><strong>Vyapaar Operations</strong> — full app access except user/company/category creation</span>
+              </label>
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input
                   type="checkbox"
@@ -493,7 +508,7 @@ const UsersList = () => {
                   className="w-4 h-4"
                   data-testid="user-is-finance"
                 />
-                <span><strong>Finance role</strong> — can raise invoices, record payments, see analytics</span>
+                <span><strong>Vyapaar Finance</strong> — raise invoices, record payments, see analytics</span>
               </label>
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input
@@ -503,7 +518,7 @@ const UsersList = () => {
                   className="w-4 h-4"
                   data-testid="user-is-delivery"
                 />
-                <span><strong>Delivery role</strong> — can update milestone status, manage commercials</span>
+                <span><strong>Delivery Lead</strong> — update milestone status, manage commercials</span>
               </label>
             </div>
 

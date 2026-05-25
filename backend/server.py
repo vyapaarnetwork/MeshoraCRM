@@ -102,6 +102,7 @@ class UserResponse(BaseModel):
     subcategory_ids: Optional[List[str]] = None  # Inherited from company (selling partners)
     is_finance: bool = False  # Phase 2 commercials: can raise invoices / record payments
     is_delivery: bool = False  # Phase 2 commercials: can update milestone delivery status
+    is_vyapaar_ops: bool = False  # Phase 17: Vyapaar Operations — full app access except user/company/category creation
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -177,6 +178,7 @@ class AdminUserCreate(BaseModel):
     phone: Optional[str] = None
     is_finance: bool = False
     is_delivery: bool = False
+    is_vyapaar_ops: bool = False
 
 # Admin User Update Model
 class AdminUserUpdate(BaseModel):
@@ -189,6 +191,7 @@ class AdminUserUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_finance: Optional[bool] = None
     is_delivery: Optional[bool] = None
+    is_vyapaar_ops: Optional[bool] = None
 
 # Lead Referral Model (for Selling Partners)
 class LeadReferralCreate(BaseModel):
@@ -507,6 +510,12 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user = await db.users.find_one({"id": payload['user_id']}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    # Phase 17: Vyapaar Operations users get full app access (same as super_admin)
+    # except they cannot create users/companies/categories. We elevate their role
+    # in-memory; the three creation endpoints have explicit blocks on the flag.
+    if user.get('is_vyapaar_ops') and user.get('role') != UserRole.SUPER_ADMIN.value:
+        user['original_role'] = user['role']
+        user['role'] = UserRole.SUPER_ADMIN.value
     return user
 
 def calculate_commission(deal_value: float, vyapaar_percentage: float, sales_associate_percentage: Optional[float] = None) -> CommissionBreakdown:
@@ -680,6 +689,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         is_active=current_user.get('is_active', True),
         is_finance=current_user.get('is_finance', False),
         is_delivery=current_user.get('is_delivery', False),
+        is_vyapaar_ops=current_user.get('is_vyapaar_ops', False),
         created_at=current_user['created_at']
     )
 
@@ -712,6 +722,7 @@ async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depen
         is_active=updated_user.get('is_active', True),
         is_finance=updated_user.get('is_finance', False),
         is_delivery=updated_user.get('is_delivery', False),
+        is_vyapaar_ops=updated_user.get('is_vyapaar_ops', False),
         created_at=updated_user['created_at']
     )
 
@@ -857,6 +868,8 @@ async def mark_all_notifications_read(current_user: dict = Depends(get_current_u
 @api_router.post("/users", response_model=UserResponse)
 async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(get_current_user)):
     """Admin creates a new user of any type"""
+    if current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar Operations cannot create users")
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
         raise HTTPException(status_code=403, detail="Only super admin can create users")
     
@@ -905,6 +918,7 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         "is_active": True,
         "is_finance": user_data.is_finance,
         "is_delivery": user_data.is_delivery,
+        "is_vyapaar_ops": user_data.is_vyapaar_ops,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
@@ -921,6 +935,7 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         is_active=True,
         is_finance=user_data.is_finance,
         is_delivery=user_data.is_delivery,
+        is_vyapaar_ops=user_data.is_vyapaar_ops,
         created_at=user_doc['created_at']
     )
 
@@ -1019,12 +1034,15 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
         is_active=user.get('is_active', True),
         is_finance=user.get('is_finance', False),
         is_delivery=user.get('is_delivery', False),
+        is_vyapaar_ops=user.get('is_vyapaar_ops', False),
         created_at=user['created_at']
     )
 
 @api_router.put("/users/{user_id}", response_model=UserResponse)
 async def update_user(user_id: str, user_data: AdminUserUpdate, current_user: dict = Depends(get_current_user)):
     """Admin updates a user"""
+    if current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar Operations cannot edit users")
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
         raise HTTPException(status_code=403, detail="Only super admin can update users")
     
@@ -1076,12 +1094,15 @@ async def update_user(user_id: str, user_data: AdminUserUpdate, current_user: di
         is_active=updated_user.get('is_active', True),
         is_finance=updated_user.get('is_finance', False),
         is_delivery=updated_user.get('is_delivery', False),
+        is_vyapaar_ops=updated_user.get('is_vyapaar_ops', False),
         created_at=updated_user['created_at']
     )
 
 @api_router.delete("/users/{user_id}")
 async def delete_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """Admin deletes a user"""
+    if current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar Operations cannot delete users")
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
         raise HTTPException(status_code=403, detail="Only super admin can delete users")
     
@@ -1128,6 +1149,7 @@ async def list_users(role: Optional[str] = None, current_user: dict = Depends(ge
             is_active=user.get('is_active', True),
             is_finance=user.get('is_finance', False),
             is_delivery=user.get('is_delivery', False),
+            is_vyapaar_ops=user.get('is_vyapaar_ops', False),
             created_at=user['created_at']
         ))
     
@@ -1286,6 +1308,8 @@ async def delete_company_user(user_id: str, current_user: dict = Depends(get_cur
 
 @api_router.post("/companies", response_model=CompanyResponse)
 async def create_company(company_data: CompanyCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar Operations cannot create companies")
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
         raise HTTPException(status_code=403, detail="Only super admin can create companies")
     
@@ -1585,6 +1609,8 @@ async def delete_lead_status(status_id: str, current_user: dict = Depends(get_cu
 # Primary Category
 @api_router.post("/master/primary-categories", response_model=PrimaryCategoryResponse)
 async def create_primary_category(category_data: PrimaryCategoryCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar Operations cannot create categories")
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
         raise HTTPException(status_code=403, detail="Only super admin can create categories")
     
@@ -1632,6 +1658,8 @@ async def delete_primary_category(category_id: str, current_user: dict = Depends
 # Secondary Category
 @api_router.post("/master/secondary-categories", response_model=SecondaryCategoryResponse)
 async def create_secondary_category(category_data: SecondaryCategoryCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar Operations cannot create categories")
     if current_user['role'] != UserRole.SUPER_ADMIN.value:
         raise HTTPException(status_code=403, detail="Only super admin can create categories")
     

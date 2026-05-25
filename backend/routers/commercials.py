@@ -195,7 +195,7 @@ async def _ensure_commercial_access(commercial: dict, current_user: dict, write:
     if role == UserRole.SUPER_ADMIN.value:
         return
     # Finance & Delivery elevated roles (Phase 2)
-    if current_user.get('is_finance') or current_user.get('is_delivery'):
+    if current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops'):
         return
     if role == UserRole.SELLING_PARTNER.value:
         if write:
@@ -271,7 +271,7 @@ def _serialise_commercial(c: dict) -> dict:
 # ---- Endpoints ----
 @router.post("/commercials")
 async def create_commercial(payload: CommercialCreate, current_user: dict = Depends(get_current_user)):
-    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops')):
         raise HTTPException(status_code=403, detail="Only admin / finance / delivery users can create commercials")
     lead = await db.leads.find_one({"id": payload.lead_id}, {"_id": 0})
     if not lead:
@@ -343,14 +343,14 @@ async def list_commercials(
         }, {"_id": 0, "id": 1}).to_list(2000)
         lead_ids = [ld['id'] for ld in leads]
         query['lead_id'] = {"$in": lead_ids}
-    elif not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+    elif not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops')):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     items = await db.commercials.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     return items
 
 @router.get("/commercials/dashboard")
 async def commercials_dashboard(current_user: dict = Depends(get_current_user)):
-    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops')):
         raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
     today = datetime.now(timezone.utc).date()
     all_comm = await db.commercials.find({}, {"_id": 0}).to_list(2000)
@@ -436,7 +436,7 @@ async def run_renewal_scan(current_user: dict = Depends(get_current_user)):
     and don't already have a renewal lead, mark contract_status=renewal_due and auto-create a
     renewal Lead (status Renewal) tagged back to the contract.
     Idempotent — safe to call repeatedly."""
-    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops')):
         raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
 
     today = datetime.now(timezone.utc).date()
@@ -537,7 +537,7 @@ async def run_renewal_scan(current_user: dict = Depends(get_current_user)):
 async def commercials_analytics(months: int = 12, current_user: dict = Depends(get_current_user)):
     """Returns MRR trend (last N months), churn metrics, revenue forecast (next 90 days),
     and project-vs-recurring revenue mix."""
-    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops')):
         raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
 
     today = datetime.now(timezone.utc).date()
@@ -746,7 +746,7 @@ async def run_commercial_reminder_scan(milestone_lead_days: int = 3, current_use
       - Recurring billings due within `milestone_lead_days`
       - Contracts inside their renewal-notice window
     Idempotent: dedup window of 20h per (user, type, commercial, dedup_key)."""
-    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops')):
         raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
 
     today = datetime.now(timezone.utc).date()
@@ -881,7 +881,7 @@ class AIMilestoneSuggestRequest(BaseModel):
 @router.post("/commercials/ai/suggest-milestones")
 async def ai_suggest_milestones(payload: AIMilestoneSuggestRequest, current_user: dict = Depends(get_current_user)):
     """Use the configured LLM to suggest a milestone breakdown based on past deals + project brief."""
-    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery')):
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops')):
         raise HTTPException(status_code=403, detail="Admin / finance / delivery only")
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=503, detail="LLM key not configured. Set EMERGENT_LLM_KEY in backend .env")
@@ -1135,7 +1135,7 @@ async def ai_payment_delay_risk(commercial_id: str, current_user: dict = Depends
 @router.get("/commercials/kanban")
 async def commercials_kanban(current_user: dict = Depends(get_current_user)):
     """Group all commercials into kanban columns by status."""
-    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('role') == UserRole.SELLING_PARTNER.value):
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_finance') or current_user.get('is_delivery') or current_user.get('is_vyapaar_ops') or current_user.get('role') == UserRole.SELLING_PARTNER.value):
         raise HTTPException(status_code=403, detail="Forbidden")
     query: Dict[str, Any] = {}
     if current_user.get('role') == UserRole.SELLING_PARTNER.value:
