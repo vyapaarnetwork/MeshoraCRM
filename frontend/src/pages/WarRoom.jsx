@@ -50,6 +50,35 @@ const WarRoom = () => {
   // Phase 29.1: drag-and-drop state
   const [draggingLeadId, setDraggingLeadId] = useState(null);
   const [dragOverBucket, setDragOverBucket] = useState(null);
+  // Phase 29.2: per-user bucket visibility filter (persisted in localStorage)
+  const [hiddenBuckets, setHiddenBuckets] = useState(() => {
+    try {
+      const raw = localStorage.getItem('meshora.warRoom.hiddenBuckets');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (e) { return new Set(); }
+  });
+
+  const toggleBucket = (bucketId) => {
+    setHiddenBuckets((prev) => {
+      const next = new Set(prev);
+      if (next.has(bucketId)) next.delete(bucketId);
+      else next.add(bucketId);
+      try { localStorage.setItem('meshora.warRoom.hiddenBuckets', JSON.stringify([...next])); } catch (e) {/* ignore */}
+      return next;
+    });
+  };
+
+  const resetFilter = () => {
+    setHiddenBuckets(new Set());
+    try { localStorage.removeItem('meshora.warRoom.hiddenBuckets'); } catch (e) {/* ignore */}
+  };
+
+  const showOnly = (bucketId) => {
+    const all = new Set((board?.buckets || []).map((b) => b.id));
+    all.delete(bucketId);
+    setHiddenBuckets(all);
+    try { localStorage.setItem('meshora.warRoom.hiddenBuckets', JSON.stringify([...all])); } catch (e) {/* ignore */}
+  };
 
   const moveLeadToBucket = async (leadId, targetBucket, sourceBucket) => {
     if (!leadId || sourceBucket === targetBucket) return;
@@ -234,6 +263,51 @@ const WarRoom = () => {
         <KpiCard icon={Moon} label="Inactive Value" value={formatCurrency(board.kpis.inactive_pipeline)} sub="Stale 21d+" accent="slate" />
       </div>
 
+      {/* Phase 29.2: Bucket visibility filter chips */}
+      <Card data-testid="bucket-filter-row" className="bg-muted/30">
+        <CardContent className="py-2.5 flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium mr-1">Show</span>
+          {board.buckets.map((bucket) => {
+            const Icon = BUCKET_ICONS[bucket.id] || Activity;
+            const isHidden = hiddenBuckets.has(bucket.id);
+            return (
+              <button
+                key={bucket.id}
+                type="button"
+                onClick={() => toggleBucket(bucket.id)}
+                onDoubleClick={() => showOnly(bucket.id)}
+                title={isHidden ? 'Click to show this bucket. Double-click to show ONLY this bucket.' : 'Click to hide this bucket. Double-click to show ONLY this bucket.'}
+                className={`group inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-all ${
+                  isHidden
+                    ? 'bg-transparent border-dashed border-muted-foreground/30 text-muted-foreground/50 hover:border-muted-foreground/60'
+                    : 'border-transparent text-foreground hover:shadow-sm'
+                }`}
+                style={!isHidden ? { backgroundColor: bucket.color + '20', borderColor: bucket.color + '40' } : {}}
+                data-testid={`filter-chip-${bucket.id}`}
+              >
+                <Icon className="w-3 h-3" style={!isHidden ? { color: bucket.color } : {}} />
+                <span className={isHidden ? 'line-through' : ''}>{bucket.label.replace(/^[^\s]+\s/, '')}</span>
+                <Badge variant="outline" className="text-[9px] py-0 px-1 ml-0.5">{bucket.count}</Badge>
+              </button>
+            );
+          })}
+          {hiddenBuckets.size > 0 && (
+            <button
+              type="button"
+              onClick={resetFilter}
+              className="ml-1 text-[11px] text-violet-600 hover:text-violet-700 hover:underline"
+              data-testid="filter-reset-btn"
+            >
+              Reset
+            </button>
+          )}
+          <span className="ml-auto text-[10px] text-muted-foreground">
+            {hiddenBuckets.size > 0 ? `${board.buckets.length - hiddenBuckets.size}/${board.buckets.length} visible` : 'All visible'}
+            <span className="hidden md:inline"> · double-click a chip to isolate</span>
+          </span>
+        </CardContent>
+      </Card>
+
       {/* Review session banner */}
       {isReviewMode && (
         <Card className="border-violet-300 dark:border-violet-800 bg-gradient-to-r from-violet-100/60 to-indigo-100/60 dark:from-violet-950/30 dark:to-indigo-950/30" data-testid="review-mode-banner">
@@ -257,7 +331,16 @@ const WarRoom = () => {
         {/* Board */}
         <div className="overflow-x-auto">
           <div className="flex gap-3 min-w-max pb-3">
-            {board.buckets.map((bucket) => {
+            {board.buckets.filter((b) => !hiddenBuckets.has(b.id)).length === 0 && (
+              <Card className="w-full" data-testid="all-hidden-state">
+                <CardContent className="py-12 text-center space-y-3">
+                  <Moon className="w-8 h-8 mx-auto text-muted-foreground opacity-40" />
+                  <p className="text-sm text-muted-foreground">All buckets are hidden.</p>
+                  <Button size="sm" variant="outline" onClick={resetFilter}>Reset filters</Button>
+                </CardContent>
+              </Card>
+            )}
+            {board.buckets.filter((b) => !hiddenBuckets.has(b.id)).map((bucket) => {
               const Icon = BUCKET_ICONS[bucket.id] || Activity;
               return (
                 <div
