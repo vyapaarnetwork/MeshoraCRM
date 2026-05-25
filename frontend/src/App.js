@@ -16,6 +16,7 @@ import CompanyUsers from './pages/CompanyUsers';
 import Categories from './pages/Categories';
 import Commission from './pages/Commission';
 import Reports from './pages/Reports';
+import RevenueIntelligence from './pages/RevenueIntelligence';
 import GridReport from './pages/GridReport';
 import Users from './pages/Users';
 import Companies from './pages/Companies';
@@ -211,6 +212,13 @@ function AppRoutes() {
       <Route path="/reports" element={
         <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
           <Reports />
+        </ProtectedRoute>
+      } />
+
+      {/* Revenue Intelligence - Admin + Vyapaar Ops + Vyapaar Finance + Selling Partner */}
+      <Route path="/revenue-intelligence" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner']}>
+          <RevenueIntelligence />
         </ProtectedRoute>
       } />
 

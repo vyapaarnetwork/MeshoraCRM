@@ -23,6 +23,7 @@ import NextActionCard from '../components/NextActionCard';
 import ActivityTimeline from '../components/ActivityTimeline';
 import TasksCard from '../components/TasksCard';
 import AIMeetingSummaryDialog from '../components/AIMeetingSummaryDialog';
+import StakeholderCard from '../components/StakeholderCard';
 
 const LeadDetail = () => {
   const { id } = useParams();
@@ -339,6 +340,7 @@ const LeadDetail = () => {
             onSubmitReply={handleReplyComment}
           />
           <TasksCard leadId={id} />
+          <StakeholderCard leadId={id} canEdit={canEditLeadsCompanies} />
           <ActivityTimeline activities={activities} />
           <DocumentsCard
             documents={documents}

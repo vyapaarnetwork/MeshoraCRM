@@ -227,6 +227,10 @@ class NotificationType(str, Enum):
     LEAD_MENTION = "lead_mention"
     # Phase 1.5: Task assignments
     TASK_ASSIGNED = "task_assigned"
+    # Phase 2: Smart Notification rules
+    RULE_LEAD_INACTIVE = "rule_lead_inactive"
+    RULE_PROPOSAL_PENDING = "rule_proposal_pending"
+    RULE_HIGH_VALUE_AT_RISK = "rule_high_value_at_risk"
 
 class NotificationCreate(BaseModel):
     type: NotificationType
@@ -4197,6 +4201,404 @@ async def dashboard_digest(current_user: dict = Depends(get_current_user)):
             "overdue": overdue_tasks,
         },
     }
+
+# ==================== PHASE 2: REVENUE INTELLIGENCE ====================
+
+# Heuristic probability mapping by lead status name (case-insensitive substring match)
+_STATUS_PROBABILITY = {
+    'new': 0.10,
+    'contact': 0.25,           # "contacted"
+    'qualified': 0.40,
+    'proposal': 0.60,
+    'negotiat': 0.75,          # "negotiation"
+    'won': 1.00,
+    'lost': 0.00,
+    'renewal': 0.65,
+    'draft': 0.10,
+}
+
+def _probability_for(status_name: Optional[str], status_is_won: bool, status_is_lost: bool = False) -> float:
+    if status_is_won:
+        return 1.0
+    if status_is_lost:
+        return 0.0
+    name = (status_name or '').lower()
+    for key, p in _STATUS_PROBABILITY.items():
+        if key in name:
+            return p
+    return 0.30  # safe default for unknown statuses
+
+@api_router.get("/dashboard/revenue-intelligence")
+async def revenue_intelligence(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Phase 2: Revenue Intelligence Dashboard.
+
+    Returns KPI cards (pipeline, weighted, MRR/ARR, win rate), pipeline-by-stage breakdown,
+    forecast-by-month, top selling partners by revenue, health distribution by deal value,
+    and at-risk pipeline sum.
+    """
+    # Role-based scope
+    lead_query: Dict[str, Any] = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        lead_query['selling_partner_id'] = current_user['id']
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        lead_query['sales_associate_id'] = current_user['id']
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        lead_query['created_by'] = current_user['id']
+
+    # Date filter (created_at)
+    if start_date or end_date:
+        cond = {}
+        if start_date:
+            cond["$gte"] = start_date
+        if end_date:
+            cond["$lte"] = end_date + 'T23:59:59'
+        lead_query['created_at'] = cond
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+
+    leads = await db.leads.find(lead_query, {"_id": 0}).to_list(2000)
+
+    # KPI aggregates
+    total_pipeline = 0.0
+    weighted_pipeline = 0.0
+    won_value = 0.0
+    won_count = 0
+    closed_count = 0  # won + lost
+    at_risk_value = 0.0
+    by_stage: Dict[str, Dict[str, Any]] = {}
+    by_partner: Dict[str, Dict[str, Any]] = {}
+    health_buckets = {"hot": 0.0, "warm": 0.0, "cold": 0.0, "at_risk": 0.0}
+
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '')
+        status_is_won = bool(st and st.get('is_won'))
+        status_is_lost = bool(st and st.get('is_lost'))
+        status_name = (st or {}).get('name', 'Unstaged')
+        deal_value = float(lead.get('deal_value') or 0)
+
+        # Pipeline = open (non-closed)
+        if not status_is_won and not status_is_lost:
+            total_pipeline += deal_value
+            prob = _probability_for(status_name, False)
+            weighted_pipeline += deal_value * prob
+
+        if status_is_won:
+            won_value += deal_value
+            won_count += 1
+            closed_count += 1
+        if status_is_lost:
+            closed_count += 1
+
+        # Stage breakdown
+        stage_key = status_name
+        if stage_key not in by_stage:
+            by_stage[stage_key] = {"stage": stage_key, "count": 0, "total_value": 0.0, "weighted_value": 0.0, "color": (st or {}).get('color', '#6366F1')}
+        by_stage[stage_key]['count'] += 1
+        by_stage[stage_key]['total_value'] += deal_value
+        by_stage[stage_key]['weighted_value'] += deal_value * _probability_for(status_name, status_is_won, status_is_lost)
+
+        # Partner breakdown (only count Won deals for revenue)
+        partner_id = lead.get('selling_partner_id')
+        partner_name = lead.get('selling_partner_name') or 'Unassigned'
+        if partner_id or partner_name == 'Unassigned':
+            pkey = partner_id or '__unassigned__'
+            if pkey not in by_partner:
+                by_partner[pkey] = {"partner_id": partner_id, "partner_name": partner_name, "won_revenue": 0.0, "deal_count": 0, "won_count": 0}
+            by_partner[pkey]['deal_count'] += 1
+            if status_is_won:
+                by_partner[pkey]['won_revenue'] += deal_value
+                by_partner[pkey]['won_count'] += 1
+
+        # Health bucket by value
+        lead_for_health = {**lead}
+        lead_for_health['active_partners_count'] = len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'])
+        lead_for_health['status_is_won'] = status_is_won
+        h = compute_lead_health(lead_for_health)
+        health_buckets[h['band']] = health_buckets.get(h['band'], 0) + deal_value
+        if h['band'] == 'at_risk' and not status_is_won and not status_is_lost:
+            at_risk_value += deal_value
+
+    win_rate = (won_count / closed_count * 100) if closed_count > 0 else 0
+    avg_deal_size = (won_value / won_count) if won_count > 0 else 0
+
+    # MRR / ARR from commercials (recurring deals)
+    commercials = await db.commercials.find({"$or": [{"type": "recurring"}, {"deal_type": "recurring"}]}, {"_id": 0}).to_list(2000)
+    mrr = 0.0
+    arr = 0.0
+    for c in commercials:
+        if c.get('status') == 'cancelled' or c.get('status') == 'churned':
+            continue
+        billing_cycle = (c.get('billing_cycle') or 'monthly').lower()
+        amount = float(c.get('recurring_amount') or c.get('total_value') or 0)
+        if amount <= 0:
+            continue
+        if billing_cycle == 'monthly':
+            mrr += amount
+        elif billing_cycle == 'quarterly':
+            mrr += amount / 3.0
+        elif billing_cycle == 'annual' or billing_cycle == 'yearly':
+            mrr += amount / 12.0
+    arr = mrr * 12
+
+    # Forecast next 90 days — weighted pipeline expected to close monthly
+    today = datetime.now(timezone.utc).date()
+    forecast = []
+    for offset_months in range(3):
+        month_start = (today.replace(day=1) + timedelta(days=32 * offset_months)).replace(day=1)
+        # forecasted revenue = weighted_pipeline / 3 (uniform spread) — simple but tunable
+        label = month_start.strftime("%b %Y")
+        forecast.append({
+            "month": label,
+            "month_iso": month_start.isoformat(),
+            "forecasted": round(weighted_pipeline / 3, 2),
+        })
+
+    # Win rate trend (last 6 months)
+    win_trend = []
+    for offset_months in range(5, -1, -1):
+        month_dt = (today.replace(day=1) - timedelta(days=30 * offset_months)).replace(day=1)
+        m_start_iso = month_dt.isoformat()
+        next_month = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+        m_end_iso = next_month.isoformat()
+        month_won = sum(
+            1 for l in leads
+            if status_map.get(l.get('status_id') or '', {}).get('is_won')
+            and l.get('updated_at', '') >= m_start_iso and l.get('updated_at', '') < m_end_iso
+        )
+        month_closed = sum(
+            1 for l in leads
+            if (status_map.get(l.get('status_id') or '', {}).get('is_won') or status_map.get(l.get('status_id') or '', {}).get('is_lost'))
+            and l.get('updated_at', '') >= m_start_iso and l.get('updated_at', '') < m_end_iso
+        )
+        win_trend.append({
+            "month": month_dt.strftime("%b"),
+            "won": month_won,
+            "closed": month_closed,
+            "win_rate": round((month_won / month_closed * 100) if month_closed > 0 else 0, 1),
+        })
+
+    return {
+        "kpis": {
+            "total_pipeline": round(total_pipeline, 2),
+            "weighted_pipeline": round(weighted_pipeline, 2),
+            "won_value": round(won_value, 2),
+            "won_count": won_count,
+            "avg_deal_size": round(avg_deal_size, 2),
+            "win_rate": round(win_rate, 1),
+            "at_risk_value": round(at_risk_value, 2),
+            "mrr": round(mrr, 2),
+            "arr": round(arr, 2),
+            "total_leads": len(leads),
+        },
+        "pipeline_by_stage": sorted(by_stage.values(), key=lambda x: -x['total_value']),
+        "top_partners": sorted(by_partner.values(), key=lambda x: -x['won_revenue'])[:8],
+        "forecast": forecast,
+        "win_rate_trend": win_trend,
+        "health_value_distribution": [
+            {"band": "hot", "value": round(health_buckets['hot'], 2)},
+            {"band": "warm", "value": round(health_buckets['warm'], 2)},
+            {"band": "cold", "value": round(health_buckets['cold'], 2)},
+            {"band": "at_risk", "value": round(health_buckets['at_risk'], 2)},
+        ],
+    }
+
+# ==================== PHASE 2: STAKEHOLDERS ====================
+
+class StakeholderCreate(BaseModel):
+    name: str
+    role_type: str  # decision_maker | influencer | technical_evaluator | finance_approver | blocker | champion | end_user
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    title: Optional[str] = None  # e.g. "VP Sales"
+    notes: Optional[str] = None
+    engagement: str = "neutral"  # supportive | neutral | resistant | unknown
+
+class StakeholderUpdate(BaseModel):
+    name: Optional[str] = None
+    role_type: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    engagement: Optional[str] = None
+
+VALID_STAKEHOLDER_ROLES = {
+    "decision_maker", "influencer", "technical_evaluator", "finance_approver",
+    "blocker", "champion", "end_user", "other"
+}
+VALID_ENGAGEMENT = {"supportive", "neutral", "resistant", "unknown"}
+
+@api_router.get("/leads/{lead_id}/stakeholders")
+async def list_stakeholders(lead_id: str, current_user: dict = Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return lead.get('stakeholders') or []
+
+@api_router.post("/leads/{lead_id}/stakeholders")
+async def add_stakeholder(lead_id: str, body: StakeholderCreate, current_user: dict = Depends(get_current_user)):
+    if body.role_type not in VALID_STAKEHOLDER_ROLES:
+        raise HTTPException(status_code=400, detail=f"Invalid role_type. Must be one of {sorted(VALID_STAKEHOLDER_ROLES)}")
+    if body.engagement not in VALID_ENGAGEMENT:
+        raise HTTPException(status_code=400, detail="Invalid engagement")
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    stakeholder = {
+        "id": str(uuid.uuid4()),
+        **body.dict(),
+        "created_by": current_user['id'],
+        "created_by_name": current_user['name'],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$push": {"stakeholders": stakeholder}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return stakeholder
+
+@api_router.patch("/leads/{lead_id}/stakeholders/{stakeholder_id}")
+async def update_stakeholder(lead_id: str, stakeholder_id: str, body: StakeholderUpdate, current_user: dict = Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    stakeholders = lead.get('stakeholders') or []
+    updated = None
+    for s in stakeholders:
+        if s['id'] == stakeholder_id:
+            for k, v in body.dict(exclude_unset=True).items():
+                if v is None:
+                    continue
+                if k == 'role_type' and v not in VALID_STAKEHOLDER_ROLES:
+                    raise HTTPException(status_code=400, detail="Invalid role_type")
+                if k == 'engagement' and v not in VALID_ENGAGEMENT:
+                    raise HTTPException(status_code=400, detail="Invalid engagement")
+                s[k] = v
+            s['updated_at'] = datetime.now(timezone.utc).isoformat()
+            updated = s
+            break
+    if not updated:
+        raise HTTPException(status_code=404, detail="Stakeholder not found")
+    await db.leads.update_one({"id": lead_id}, {"$set": {"stakeholders": stakeholders, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return updated
+
+@api_router.delete("/leads/{lead_id}/stakeholders/{stakeholder_id}")
+async def delete_stakeholder(lead_id: str, stakeholder_id: str, current_user: dict = Depends(get_current_user)):
+    res = await db.leads.update_one(
+        {"id": lead_id},
+        {"$pull": {"stakeholders": {"id": stakeholder_id}}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    if res.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Stakeholder not found")
+    return {"deleted": True}
+
+# ==================== PHASE 2: SMART NOTIFICATIONS ENGINE ====================
+
+@api_router.post("/notifications/run-rules")
+async def run_smart_notification_rules(current_user: dict = Depends(get_current_user)):
+    """Manually-triggered smart-rules evaluator. Iterates over all active leads and emits
+    in-app notifications for triggered rules (with dedup so re-runs don't spam).
+
+    Rules:
+      R1: Lead inactive 10+ days → notify the owner (created_by) and assigned partners
+      R2: Proposal pending follow-up — Lead is in 'Proposal' status with overdue follow-up
+      R3: High-value lead (>=10L) gone at-risk → notify admins
+    """
+    if current_user['role'] not in (UserRole.SUPER_ADMIN.value,) and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    today = datetime.now(timezone.utc).date()
+    today_iso = today.isoformat()
+    leads = await db.leads.find({}, {"_id": 0}).to_list(2000)
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map = {s['id']: s for s in statuses}
+
+    fired = []
+    for lead in leads:
+        st = status_map.get(lead.get('status_id') or '') or {}
+        if st.get('is_won') or st.get('is_lost'):
+            continue
+
+        lead_for_h = {**lead}
+        lead_for_h['active_partners_count'] = len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'])
+        lead_for_h['status_is_won'] = bool(st.get('is_won'))
+        h = compute_lead_health(lead_for_h)
+        days_inactive = h.get('days_inactive') or 0
+
+        recipients = set()
+        if lead.get('created_by'):
+            recipients.add(lead['created_by'])
+        for p in (lead.get('assigned_partners') or []):
+            if p.get('status') == 'active' and p.get('partner_id'):
+                recipients.add(p['partner_id'])
+
+        # R1 — inactive 10+ days
+        if days_inactive >= 10:
+            for uid in recipients:
+                dedup_key = f"rule-r1-{lead['id']}-{today_iso}"
+                exists = await db.notifications.find_one({"user_id": uid, "data.dedup_key": dedup_key})
+                if exists:
+                    continue
+                await create_notification(
+                    user_id=uid,
+                    notification_type="rule_lead_inactive",
+                    title=f"Lead quiet for {int(days_inactive)} days",
+                    message=f"\"{lead.get('title', '')}\" hasn't seen activity in {int(days_inactive)} days. Reach out today.",
+                    lead_id=lead['id'],
+                    data={"dedup_key": dedup_key, "rule": "R1"},
+                )
+                fired.append({"rule": "R1", "lead_id": lead['id'], "user_id": uid})
+
+        # R2 — proposal stage + overdue follow-up
+        if 'proposal' in (st.get('name') or '').lower():
+            overdue_count = sum(
+                1 for f in (lead.get('follow_ups') or [])
+                if not f.get('is_completed') and (f.get('scheduled_date') or '') < today_iso
+            )
+            if overdue_count > 0:
+                for uid in recipients:
+                    dedup_key = f"rule-r2-{lead['id']}-{today_iso}"
+                    exists = await db.notifications.find_one({"user_id": uid, "data.dedup_key": dedup_key})
+                    if exists:
+                        continue
+                    await create_notification(
+                        user_id=uid,
+                        notification_type="rule_proposal_pending",
+                        title=f"Proposal pending follow-up",
+                        message=f"\"{lead.get('title', '')}\" is in Proposal stage with {overdue_count} overdue follow-up(s).",
+                        lead_id=lead['id'],
+                        data={"dedup_key": dedup_key, "rule": "R2"},
+                    )
+                    fired.append({"rule": "R2", "lead_id": lead['id'], "user_id": uid})
+
+        # R3 — high value at risk
+        if float(lead.get('deal_value') or 0) >= 1_000_000 and h['band'] == 'at_risk':
+            admins = await db.users.find(
+                {"$or": [{"role": "super_admin"}, {"is_vyapaar_ops": True}]},
+                {"_id": 0, "id": 1}
+            ).to_list(50)
+            for admin in admins:
+                dedup_key = f"rule-r3-{lead['id']}-{today_iso}"
+                exists = await db.notifications.find_one({"user_id": admin['id'], "data.dedup_key": dedup_key})
+                if exists:
+                    continue
+                await create_notification(
+                    user_id=admin['id'],
+                    notification_type="rule_high_value_at_risk",
+                    title=f"High-value deal at risk",
+                    message=f"\"{lead.get('title', '')}\" (₹{lead.get('deal_value'):,}) has dropped to At Risk. Engage immediately.",
+                    lead_id=lead['id'],
+                    data={"dedup_key": dedup_key, "rule": "R3"},
+                )
+                fired.append({"rule": "R3", "lead_id": lead['id'], "user_id": admin['id']})
+
+    return {"fired_count": len(fired), "events": fired[:50]}
 
 # ==================== BULK IMPORT ====================
 

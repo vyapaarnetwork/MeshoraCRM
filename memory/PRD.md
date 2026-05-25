@@ -223,6 +223,20 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Rich rendering in comments** — `MeetingSummaryRender` sub-component inside CommentsCard detects the `meeting_summary` field on a comment and renders a gradient violet→indigo card with sentiment badge + bulleted Risks/Opportunities/Next steps lists inline, so the summary stays beautiful inside the threaded comment view.
 - [x] **Verified live with Gemini** — sent a sample Acme Corp note ("Met with Priya from finance team … Ravi worried about Okta SSO … 250 sales reps expansion") and Gemini correctly extracted 3 risks, 1 opportunity, 3 next steps, 2 action items, 3 stakeholders (Priya, Ravi, CISO) with positive sentiment. 2 tasks auto-created on lead.
 
+### Phase 21 — Revenue Intelligence + Stakeholders + Smart Notifications Engine (Feb 25, 2026)
+- [x] **Revenue Intelligence dashboard** — new `GET /api/dashboard/revenue-intelligence?start_date=&end_date=` returning role-scoped: KPIs (total_pipeline, weighted_pipeline using `_STATUS_PROBABILITY` heuristic map, won_value, won_count, avg_deal_size, win_rate, at_risk_value, MRR/ARR from recurring commercials by billing_cycle, total_leads), pipeline_by_stage (with colors), top_partners (won_revenue + conversion), forecast (3-month weighted spread), win_rate_trend (last 6 months), health_value_distribution. Frontend `/revenue-intelligence` page renders 8 gradient KPI cards + 4 recharts (BarChart pipeline-by-stage, PieChart pipeline-value-by-health, LineChart win-rate-trend, AreaChart revenue-forecast) + top-partners ranked list. Date range filter (From/To/Apply). Accessible to admin/ops/finance/selling-partner.
+- [x] **Stakeholder Relationship Mapping** — new `lead.stakeholders[]` embedded array. Endpoints: `GET/POST /api/leads/{id}/stakeholders`, `PATCH/DELETE /api/leads/{id}/stakeholders/{sid}`. Validation on `role_type` (decision_maker, influencer, technical_evaluator, finance_approver, blocker, champion, end_user, other) and `engagement` (supportive/neutral/resistant/unknown). Frontend `StakeholderCard.jsx` on Lead Detail: role icon (Crown/ShieldCheck/Wrench/$/Ban/Star/User), role badge + engagement badge, title, email, phone, notes, edit/remove dropdown, full create/edit dialog.
+- [x] **Smart Notifications Engine** — new `POST /api/notifications/run-rules` admin endpoint. Three rules implemented with `dedup_key` deduplication so re-runs don't spam:
+  - **R1** Lead quiet 10+ days → notifies lead owner + active partners
+  - **R2** Lead in 'Proposal' stage + overdue follow-up → notifies owner + active partners
+  - **R3** High-value lead (≥₹10L) at-risk → notifies all admins/ops
+  - First run fired **34 notifications** across the 75 existing leads (verified).
+- [x] **New NotificationType values**: `RULE_LEAD_INACTIVE`, `RULE_PROPOSAL_PENDING`, `RULE_HIGH_VALUE_AT_RISK`.
+- [x] **"Run Smart Rules" button** on Revenue Intelligence page (admin/ops only) shows toast with fired count.
+- [x] **Sidebar nav** — new "Revenue Intelligence" link with `TrendingUp` icon for super_admin / vyapaar_ops / vyapaar_finance / selling_partner.
+- [x] **ProtectedRoute `/revenue-intelligence`** allows admin-like roles + selling_partner.
+
+
 
 
 

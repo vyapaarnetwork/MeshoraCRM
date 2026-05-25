@@ -41,7 +41,8 @@ import {
   UserPlus,
   Sun,
   Moon,
-  Briefcase
+  Briefcase,
+  TrendingUp
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
@@ -247,6 +248,16 @@ const Layout = ({ children }) => {
       path: '/reports',
       roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner', 'sales_associate']
     });
+
+    // Phase 2: Revenue Intelligence — admin-like roles + selling partners
+    if (isAdmin || isFinance || isDelivery || isVyapaarOps || isVyapaarFinance || isSellingPartner) {
+      items.push({
+        label: 'Revenue Intelligence',
+        icon: TrendingUp,
+        path: '/revenue-intelligence',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner'],
+      });
+    }
 
     return items.filter(item => item.roles.includes(user?.role));
   };
