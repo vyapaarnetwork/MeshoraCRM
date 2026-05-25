@@ -102,8 +102,8 @@ const Layout = ({ children }) => {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
@@ -615,7 +615,7 @@ const Layout = ({ children }) => {
                     Settings
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout} className="text-destructive" data-testid="logout-menu-item">
+                  <DropdownMenuItem onClick={handleLogout} className="text-destructive" data-testid="logout-btn">
                     <LogOut className="w-4 h-4 mr-2" />
                     Logout
                   </DropdownMenuItem>
