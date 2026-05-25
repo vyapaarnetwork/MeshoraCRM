@@ -46,6 +46,7 @@ import {
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
 import { MeshoraMark, MeshoraLogoOnDark } from './MeshoraLogo';
+import RoleContextBanner from './RoleContextBanner';
 
 // Vyapaar small mark for "Powered by" footer
 const VYAPAAR_LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
@@ -558,6 +559,10 @@ const Layout = ({ children }) => {
             </div>
           </div>
         </header>
+
+        {/* Phase 18: Role context banner for Vyapaar Operations / Finance users */}
+        {user?.role === 'vyapaar_ops' && <RoleContextBanner role="vyapaar_ops" />}
+        {user?.role === 'vyapaar_finance' && <RoleContextBanner role="vyapaar_finance" />}
 
         {/* Page Content */}
         <main className="flex-1 p-4 lg:p-6">

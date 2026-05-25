@@ -220,6 +220,7 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - `pages/leadDetail/DocumentsCard.jsx`
   - Wires `canEditLeadsCompanies` so Vyapaar Operations users see admin-level lead controls (Edit Lead, Assigned Partners management)
 - [x] **Testing** — backend pytest 27/28 (96.4%, single failure was a test-script payload mismatch on `/comments`, not a server bug). Frontend Playwright smoke verified Login, Register, Companies, LeadDetail, Users pages all render correctly for both new role accounts.
+- [x] **Role context banner** (`RoleContextBanner.jsx`) — when a `vyapaar_ops` or `vyapaar_finance` user logs in, a subtle full-width banner appears under the top header showing "You're viewing as Vyapaar Operations / Finance" with their permission summary. Indigo accent for Ops, amber accent for Finance. Dismissible per session via `sessionStorage`. Respects dark mode.
 
 ## Key API Endpoints
 
