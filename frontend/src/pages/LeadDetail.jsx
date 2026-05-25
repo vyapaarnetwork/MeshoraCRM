@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader } from '../components/ui/card';
 import { Skeleton } from '../components/ui/skeleton';
-import { ArrowLeft, Edit, Briefcase } from 'lucide-react';
+import { ArrowLeft, Edit, Briefcase, Sparkles } from 'lucide-react';
 import { DocumentUploadDialog, LEAD_DOCUMENT_TAGS } from '../components/DocumentUpload';
 import ClosedWonWizard from '../components/ClosedWonWizard';
 import api from '../utils/api';
@@ -22,6 +22,7 @@ import { HealthScoreBadge, HealthScoreCard } from '../components/HealthScore';
 import NextActionCard from '../components/NextActionCard';
 import ActivityTimeline from '../components/ActivityTimeline';
 import TasksCard from '../components/TasksCard';
+import AIMeetingSummaryDialog from '../components/AIMeetingSummaryDialog';
 
 const LeadDetail = () => {
   const { id } = useParams();
@@ -57,6 +58,9 @@ const LeadDetail = () => {
   const [commercial, setCommercial] = useState(null);
   const [showCommercialsWizard, setShowCommercialsWizard] = useState(false);
   const [wizardAutoOpenedForLead, setWizardAutoOpenedForLead] = useState(null);
+
+  // AI Meeting Summary
+  const [showAIDialog, setShowAIDialog] = useState(false);
 
   const fetchHealthAndActivity = useCallback(async () => {
     try {
@@ -294,6 +298,15 @@ const LeadDetail = () => {
         </Button>
         {health && <HealthScoreBadge health={health} />}
         <div className="flex-1" />
+        <Button
+          variant="outline"
+          onClick={() => setShowAIDialog(true)}
+          data-testid="ai-meeting-summary-btn"
+          className="border-violet-200 dark:border-violet-900 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40"
+        >
+          <Sparkles className="w-4 h-4 mr-2" />
+          AI Summary
+        </Button>
         {(isAdmin || canAccessCommercials) && (
           <Button
             variant={commercial ? 'outline' : 'default'}
@@ -383,6 +396,16 @@ const LeadDetail = () => {
         onOpenChange={setShowCommercialsWizard}
         lead={lead}
         existingCommercial={commercial}
+      />
+
+      <AIMeetingSummaryDialog
+        open={showAIDialog}
+        onOpenChange={setShowAIDialog}
+        leadId={id}
+        onSuccess={() => {
+          fetchLead();
+          fetchHealthAndActivity();
+        }}
       />
     </div>
   );

@@ -213,6 +213,17 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] New `NotificationType.TASK_ASSIGNED = "task_assigned"` enum value.
 - [x] **Verified end-to-end** — created a task via curl (id returned, assignee resolved, status transitions to in_progress); posted a threaded reply (parent_comment_id stored); dashboard digest endpoint returns full counts (3 overdue follow-ups, 31 at-risk, 0 mentions, 3 tasks). Frontend Playwright smoke tested: digest tile + reply buttons + Tasks form all render.
 
+### Phase 20 — AI Meeting Summaries (Feb 25, 2026)
+- [x] **`POST /api/leads/{id}/ai/meeting-summary`** — accepts `raw_notes` (up to 25K chars), `meeting_date`, `auto_create_tasks` boolean. Calls Gemini 3 Pro via `emergentintegrations` SDK with a strict-JSON system prompt extracting: summary, risks, opportunities, next_steps, action_items, sentiment (positive/neutral/negative/mixed), key_stakeholders.
+- [x] **Storage** — the structured summary is persisted both as a comment with embedded `meeting_summary` payload (so it shows in the unified Activity Timeline and CommentsCard) AND in a new top-level `lead.meeting_summaries[]` array for history retrieval.
+- [x] **Auto-task creation** — when `auto_create_tasks=true`, each action item becomes a real Task in the `tasks` collection with `source="ai_meeting_summary"`, mapped priority (low/medium/high), and computed `due_date = today + due_in_days`. Returned `created_task_ids` count is shown in the dialog.
+- [x] **`GET /api/leads/{id}/ai/meeting-summaries`** — paginated history endpoint returning all summaries for a lead (newest first).
+- [x] **Frontend `AIMeetingSummaryDialog.jsx`** — full-featured modal with date picker, large textarea (with char counter / max 25K), "Auto-create tasks from action items" checkbox, gradient violet→indigo submit CTA labelled "Analyzing… (~10s)" during the LLM call. Result view renders summary card with sentiment badge, color-coded sections (Risks/Opportunities/Next Steps), Key stakeholder chips, and a list of extracted action items with a "X task(s) created" emerald badge.
+- [x] **Lead Detail integration** — new "AI Summary" button (sparkle icon, violet outline) in the lead detail header next to Edit Lead. On success, both the lead and health/activity feeds are refreshed.
+- [x] **Rich rendering in comments** — `MeetingSummaryRender` sub-component inside CommentsCard detects the `meeting_summary` field on a comment and renders a gradient violet→indigo card with sentiment badge + bulleted Risks/Opportunities/Next steps lists inline, so the summary stays beautiful inside the threaded comment view.
+- [x] **Verified live with Gemini** — sent a sample Acme Corp note ("Met with Priya from finance team … Ravi worried about Okta SSO … 250 sales reps expansion") and Gemini correctly extracted 3 risks, 1 opportunity, 3 next steps, 2 action items, 3 stakeholders (Priya, Ravi, CISO) with positive sentiment. 2 tasks auto-created on lead.
+
+
 
 
 ### Phase 18 - New Vyapaar Roles + Register redesign + Component decomposition (Feb 25, 2026)

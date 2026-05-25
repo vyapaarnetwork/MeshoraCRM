@@ -23,6 +23,7 @@ from enum import Enum
 import csv
 import io
 import re
+import json
 
 ROOT_DIR = Path(__file__).parent
 UPLOAD_DIR = ROOT_DIR / 'uploads'
@@ -3785,6 +3786,189 @@ async def snooze_follow_up(
     updated = await db.leads.find_one({"id": lead_id}, {"_id": 0})
     return await enrich_lead(updated)
 
+# ==================== PHASE 2: AI MEETING SUMMARIES ====================
+
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+
+class MeetingSummaryRequest(BaseModel):
+    raw_notes: str
+    meeting_date: Optional[str] = None  # ISO date
+    auto_create_tasks: bool = True  # auto-convert action items into Tasks
+
+@api_router.post("/leads/{lead_id}/ai/meeting-summary")
+async def ai_meeting_summary(
+    lead_id: str,
+    body: MeetingSummaryRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Convert raw meeting notes / call transcript into structured intelligence using Gemini 3 Pro.
+    Stores the summary as a special-typed comment on the lead, posts a structured 'meeting_summary'
+    activity event, and optionally creates Tasks from extracted action items.
+    """
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+
+    if not (body.raw_notes or '').strip():
+        raise HTTPException(status_code=400, detail="raw_notes is required")
+    if len(body.raw_notes) > 25000:
+        raise HTTPException(status_code=400, detail="raw_notes too long (max 25000 chars)")
+
+    from emergentintegrations.llm.chat import LlmChat, UserMessage  # noqa: WPS433
+
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=f"meeting-summary-{lead_id}-{uuid.uuid4()}",
+        system_message=(
+            "You are a sales/CRM intelligence analyst. Given raw meeting notes, call transcripts, "
+            "or voice transcripts, extract structured intelligence. ALWAYS respond with STRICT JSON. "
+            "No prose, no markdown, no code fences. The JSON object MUST have these keys:\n"
+            "- summary (string, 2-3 sentences)\n"
+            "- risks (array of short strings — concerns, blockers, friction)\n"
+            "- opportunities (array of short strings — upsells, expansion, new use cases)\n"
+            "- next_steps (array of short strings — recommended actions for the team)\n"
+            "- action_items (array of {title, owner_hint?, priority? in [low|medium|high], due_in_days?})\n"
+            "- sentiment (string: positive | neutral | negative | mixed)\n"
+            "- key_stakeholders (array of {name, role_hint?})\n\n"
+            "Keep arrays concise (max 5 items each). Be specific and actionable. "
+            "If the notes are too short or unclear, return empty arrays but still produce a summary."
+        )
+    ).with_model("gemini", "gemini-3.1-pro-preview")
+
+    prompt = (
+        f"Lead: {lead.get('title', '')}\n"
+        f"Customer: {lead.get('customer_name', '')} ({lead.get('customer_company', '')})\n"
+        f"Meeting date: {body.meeting_date or 'unknown'}\n\n"
+        f"Raw notes / transcript:\n{body.raw_notes.strip()}\n\n"
+        "Output STRICT JSON only."
+    )
+
+    try:
+        response = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        logger.exception(f"LLM error during meeting summary: {e}")
+        raise HTTPException(status_code=502, detail=f"AI request failed: {str(e)[:120]}")
+
+    raw = (response or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if not m:
+            raise HTTPException(status_code=502, detail="AI returned non-JSON output")
+        try:
+            parsed = json.loads(m.group(0))
+        except Exception:
+            raise HTTPException(status_code=502, detail="AI returned malformed JSON")
+
+    # Normalize structure
+    summary_text = (parsed.get('summary') or '').strip()
+    risks = [str(x).strip() for x in (parsed.get('risks') or []) if str(x).strip()][:5]
+    opportunities = [str(x).strip() for x in (parsed.get('opportunities') or []) if str(x).strip()][:5]
+    next_steps = [str(x).strip() for x in (parsed.get('next_steps') or []) if str(x).strip()][:5]
+    action_items = [a for a in (parsed.get('action_items') or []) if isinstance(a, dict) and a.get('title')][:5]
+    sentiment = (parsed.get('sentiment') or 'neutral').lower()
+    if sentiment not in ('positive', 'neutral', 'negative', 'mixed'):
+        sentiment = 'neutral'
+    stakeholders = [s for s in (parsed.get('key_stakeholders') or []) if isinstance(s, dict) and s.get('name')][:8]
+
+    summary_doc = {
+        "summary": summary_text,
+        "risks": risks,
+        "opportunities": opportunities,
+        "next_steps": next_steps,
+        "action_items": action_items,
+        "sentiment": sentiment,
+        "key_stakeholders": stakeholders,
+        "raw_notes_preview": body.raw_notes[:280],
+        "meeting_date": body.meeting_date,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": current_user['id'],
+        "created_by_name": current_user['name'],
+    }
+
+    # Persist as a structured comment so it shows in the timeline
+    comment_payload = (
+        f"📝 Meeting Summary ({body.meeting_date or 'no date'})\n\n"
+        f"{summary_text}\n\n"
+        + (f"⚠️ Risks: " + " · ".join(risks) + "\n" if risks else '')
+        + (f"💡 Opportunities: " + " · ".join(opportunities) + "\n" if opportunities else '')
+        + (f"➡️ Next steps: " + " · ".join(next_steps) + "\n" if next_steps else '')
+    )
+    comment = {
+        "id": str(uuid.uuid4()),
+        "content": comment_payload.strip(),
+        "user_id": current_user['id'],
+        "user_name": current_user['name'],
+        "user_role": current_user['role'],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "parent_comment_id": None,
+        "meeting_summary": summary_doc,  # embedded structured payload
+    }
+
+    await db.leads.update_one(
+        {"id": lead_id},
+        {
+            "$push": {"comments": comment, "meeting_summaries": summary_doc},
+            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()},
+        }
+    )
+
+    # Optionally create Tasks from action items
+    created_task_ids = []
+    if body.auto_create_tasks and action_items:
+        today = datetime.now(timezone.utc).date()
+        for ai_item in action_items:
+            due = None
+            try:
+                offset = int(ai_item.get('due_in_days') or 0)
+                if offset > 0:
+                    due = (today + timedelta(days=offset)).isoformat()
+            except Exception:
+                due = None
+            priority = (ai_item.get('priority') or 'medium').lower()
+            if priority not in ('low', 'medium', 'high'):
+                priority = 'medium'
+            task = {
+                "id": str(uuid.uuid4()),
+                "title": str(ai_item.get('title', '')).strip()[:200] or 'AI action item',
+                "description": f"From meeting on {body.meeting_date or 'unspecified date'}. Owner hint: {ai_item.get('owner_hint') or '—'}",
+                "assignee_id": current_user['id'],
+                "lead_id": lead_id,
+                "commercial_id": None,
+                "due_date": due,
+                "priority": priority,
+                "status": "todo",
+                "created_by": current_user['id'],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "completed_at": None,
+                "source": "ai_meeting_summary",
+            }
+            await db.tasks.insert_one(task)
+            created_task_ids.append(task['id'])
+
+    return {
+        "summary": summary_doc,
+        "comment_id": comment['id'],
+        "created_task_ids": created_task_ids,
+    }
+
+@api_router.get("/leads/{lead_id}/ai/meeting-summaries")
+async def list_meeting_summaries(lead_id: str, current_user: dict = Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return {"summaries": (lead.get('meeting_summaries') or [])[::-1]}
+
 # ==================== PHASE 1.5: TASKS + DASHBOARD DIGEST ====================
 
 class TaskCreate(BaseModel):
@@ -3922,7 +4106,6 @@ async def delete_task(task_id: str, current_user: dict = Depends(get_current_use
     return {"deleted": True}
 
 # ---------- Dashboard digest ----------
-
 @api_router.get("/dashboard/digest")
 async def dashboard_digest(current_user: dict = Depends(get_current_user)):
     """Single endpoint returning the user's daily collaboration digest counts.

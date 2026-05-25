@@ -5,9 +5,61 @@ import { Button } from '../../components/ui/button';
 import { Separator } from '../../components/ui/separator';
 import { Avatar, AvatarFallback } from '../../components/ui/avatar';
 import { ScrollArea } from '../../components/ui/scroll-area';
-import { MessageSquare, CornerDownRight, Reply, X } from 'lucide-react';
+import { MessageSquare, CornerDownRight, Reply, X, Sparkles, AlertTriangle, Lightbulb, ArrowRight } from 'lucide-react';
 import { formatDateTime, getRoleLabel, getRoleColor } from '../../utils/api';
 import CommentInputWithMentions from '../../components/CommentInputWithMentions';
+
+const SENTIMENT_BADGES = {
+  positive: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+  neutral: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  negative: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
+  mixed: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+};
+
+const MeetingSummaryRender = ({ summary }) => (
+  <div className="mt-2 rounded-lg border border-violet-200 dark:border-violet-900 bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-950/30 dark:to-indigo-950/30 p-3 space-y-2">
+    <div className="flex items-center gap-1.5">
+      <Sparkles className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
+      <span className="text-xs font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">AI Meeting Summary</span>
+      {summary.sentiment && (
+        <Badge className={`text-[10px] ml-auto ${SENTIMENT_BADGES[summary.sentiment] || SENTIMENT_BADGES.neutral}`}>
+          {summary.sentiment}
+        </Badge>
+      )}
+    </div>
+    <p className="text-sm leading-relaxed">{summary.summary}</p>
+    {summary.risks?.length > 0 && (
+      <div className="text-xs">
+        <span className="flex items-center gap-1 font-semibold text-rose-700 dark:text-rose-400 mb-0.5">
+          <AlertTriangle className="w-3 h-3" /> Risks
+        </span>
+        <ul className="pl-3 space-y-0.5 list-disc text-muted-foreground">
+          {summary.risks.map((r, i) => <li key={i}>{r}</li>)}
+        </ul>
+      </div>
+    )}
+    {summary.opportunities?.length > 0 && (
+      <div className="text-xs">
+        <span className="flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-400 mb-0.5">
+          <Lightbulb className="w-3 h-3" /> Opportunities
+        </span>
+        <ul className="pl-3 space-y-0.5 list-disc text-muted-foreground">
+          {summary.opportunities.map((r, i) => <li key={i}>{r}</li>)}
+        </ul>
+      </div>
+    )}
+    {summary.next_steps?.length > 0 && (
+      <div className="text-xs">
+        <span className="flex items-center gap-1 font-semibold text-sky-700 dark:text-sky-400 mb-0.5">
+          <ArrowRight className="w-3 h-3" /> Next steps
+        </span>
+        <ul className="pl-3 space-y-0.5 list-disc text-muted-foreground">
+          {summary.next_steps.map((r, i) => <li key={i}>{r}</li>)}
+        </ul>
+      </div>
+    )}
+  </div>
+);
 
 const renderCommentBody = (text = '') => {
   const parts = text.split(/(@[a-zA-Z][a-zA-Z0-9_.\-]{1,40})/g);
@@ -43,6 +95,7 @@ const CommentItem = (props) => {
           <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
             {renderCommentBody(comment.content)}
           </p>
+          {comment.meeting_summary && <MeetingSummaryRender summary={comment.meeting_summary} />}
           {!isReplying && depth < 3 && (
             <Button
               variant="ghost"
