@@ -45,10 +45,9 @@ import {
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
+import { MeshoraMark, MeshoraLogoOnDark } from './MeshoraLogo';
 
-// Meshora brand artifacts
-const LOGO_DARK_BG_URL = "https://customer-assets.emergentagent.com/job_20ffed07-8ce6-4561-b298-187eb855e18a/artifacts/anlsylap_ChatGPT%20Image%20May%2024%2C%202026%2C%2001_51_27%20PM.png"; // white text on black bg → use on dark sidebar
-const LOGO_LIGHT_BG_URL = "https://customer-assets.emergentagent.com/job_20ffed07-8ce6-4561-b298-187eb855e18a/artifacts/yj2uta2t_ChatGPT%20Image%20May%2024%2C%202026%2C%2001_50_32%20PM.png"; // dark text on white bg → use on light headers
+// Vyapaar small mark for "Powered by" footer
 const VYAPAAR_LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
 
 const Layout = ({ children }) => {
@@ -294,12 +293,12 @@ const Layout = ({ children }) => {
               title="Expand sidebar"
               data-testid="sidebar-expand-btn"
             >
-              <img src={LOGO_DARK_BG_URL} alt="Meshora" className="h-9 w-9 object-contain rounded" style={{ objectPosition: 'center top' }} />
+              <MeshoraMark size={32} />
             </button>
           ) : (
             <>
               <Link to="/dashboard" className="flex items-center" data-testid="sidebar-logo-link">
-                <img src={LOGO_DARK_BG_URL} alt="Meshora" className="h-10 w-auto object-contain" />
+                <MeshoraLogoOnDark size={32} showTagline={false} />
               </Link>
               <Button
                 variant="ghost"
@@ -381,7 +380,7 @@ const Layout = ({ children }) => {
       >
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800">
           <Link to="/dashboard" className="flex items-center gap-2" onClick={() => setMobileMenuOpen(false)}>
-            <img src={LOGO_DARK_BG_URL} alt="Meshora" className="h-10 w-auto object-contain" />
+            <MeshoraLogoOnDark size={32} showTagline={false} />
           </Link>
           <Button
             variant="ghost"
@@ -441,11 +440,7 @@ const Layout = ({ children }) => {
                 <Menu className="w-5 h-5" />
               </Button>
               <div className="lg:hidden">
-                <img
-                  src={theme === 'dark' ? LOGO_DARK_BG_URL : LOGO_LIGHT_BG_URL}
-                  alt="Meshora"
-                  className="h-8 w-auto object-contain"
-                />
+                <MeshoraMark size={32} />
               </div>
             </div>
 

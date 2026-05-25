@@ -187,6 +187,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Mount**: `api_router.include_router(commercials_router)` keeps all existing route paths intact (`/api/commercials/...`).
 - [x] **Smoke tested** all commercials endpoints post-extraction (List, Dashboard, Kanban, Analytics, Renewal scan, Reminder scan, AI suggest, PDF download) — all return 200 / valid responses. Lint clean.
 
+### Phase 17 - Login redesign + new Meshora brand mark (Feb 25, 2026)
+- [x] **New SVG brand mark** — created `MeshoraLogo.jsx` with `MeshoraMark` (purple-violet gradient infinity/M loop) + `MeshoraLogo` (mark + wordmark with gradient text) + `MeshoraLogoOnDark` (mark + white wordmark for dark sidebars). Pure inline SVG, themeable, no raster assets.
+- [x] **Login page redesign** — two-panel layout matching the user's mockup:
+  - Left: dark gradient (#312E81 → #0F172A) with constellation pattern + glow blobs + `MeshoraLogoOnDark` at top + "Connect. Collaborate. Grow Together." hero + 3 feature chips (Stronger Connections / More Opportunities / Better Results) + copyright at bottom
+  - Right: white/dark card with "Welcome back" heading, Email + Password inputs with leading icons, Remember-me + Forgot password row, gradient "Sign in" button with arrow, divider, disabled "Sign in with Google" placeholder, "Don't have an account? Create account" link, security card ("Secure. Reliable. Always.")
+- [x] **Removed demo admin credentials box** from Login page
+- [x] **Layout.jsx sidebar logo** swapped from raster `<img>` to the new `MeshoraLogoOnDark` SVG (desktop + mobile + collapsed states + mobile header)
+- [x] **Mobile-friendly**: small Meshora mark + gradient wordmark in mobile login header; responsive at <lg breakpoints (left panel hides)
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
