@@ -3080,11 +3080,17 @@ async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user))
     
     # Access control
     if current_user['role'] == UserRole.SELLING_PARTNER.value and lead.get('selling_partner_id') != current_user['id']:
-        raise HTTPException(status_code=403, detail="Access denied")
+        # Also allow if they're in assigned_partners (multi-partner)
+        if not any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])):
+            raise HTTPException(status_code=403, detail="Access denied")
     elif current_user['role'] == UserRole.SALES_ASSOCIATE.value and lead.get('sales_associate_id') != current_user['id']:
         raise HTTPException(status_code=403, detail="Access denied")
-    elif current_user['role'] == UserRole.CUSTOMER.value and lead.get('created_by') != current_user['id']:
-        raise HTTPException(status_code=403, detail="Access denied")
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        # Phase 27: also allow the customer whose email matches lead.customer_email (Deal Room access)
+        is_creator = lead.get('created_by') == current_user['id']
+        is_email_match = lead.get('customer_email') and lead.get('customer_email').lower() == (current_user.get('email') or '').lower()
+        if not (is_creator or is_email_match):
+            raise HTTPException(status_code=403, detail="Access denied")
     
     return await enrich_lead(lead)
 

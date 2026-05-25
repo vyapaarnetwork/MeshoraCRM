@@ -54,7 +54,9 @@ const DealRoomTab = ({ leadId, lead, onLeadRefresh }) => {
     try {
       await api.post(`/leads/${leadId}/deal-room/toggle`, { enabled: newEnabled });
       toast.success(newEnabled ? 'Deal Room opened — customer can now collaborate.' : 'Deal Room closed.');
-      onLeadRefresh && onLeadRefresh();
+      // Re-fetch parent lead so the deal_room_enabled flag propagates AND eagerly load the new view.
+      if (onLeadRefresh) await onLeadRefresh();
+      if (newEnabled) await loadDealRoom();
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Toggle failed');
     } finally { setToggling(false); }
