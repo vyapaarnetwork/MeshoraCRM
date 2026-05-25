@@ -25,6 +25,7 @@ import TasksCard from '../components/TasksCard';
 import AIMeetingSummaryDialog from '../components/AIMeetingSummaryDialog';
 import StakeholderCard from '../components/StakeholderCard';
 import AIInsightsCard from '../components/AIInsightsCard';
+import DealRoomTab from './leadDetail/DealRoomTab';
 
 const LeadDetail = () => {
   const { id } = useParams();
@@ -331,6 +332,7 @@ const LeadDetail = () => {
         <div className="lg:col-span-2 space-y-6">
           <LeadOverviewCard lead={lead} />
           <CustomerInfoCard lead={lead} />
+          <DealRoomTab leadId={id} lead={lead} onLeadRefresh={fetchLead} />
           <CommissionBreakdownCard lead={lead} />
           <CommentsCard
             comments={lead.comments || []}

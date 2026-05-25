@@ -1,0 +1,44 @@
+{
+  "summary": "Phase 27 — Collaborative Deal Room. Backend 21/21 pytest PASS (toggle perms, GET curated view + customer-hides-internal, public messages, approvals create/list/respond + admin override + double-respond 400, comments is_public regression + dual-write via /comments visible in /deal-room.public_comments, plus regression on Phases 24/25/26: /auth/login cookie, predictive-forecast, partner-intelligence, partner-commission-analytics). Frontend admin disabled-state card renders correctly with gradient CTA and data-testid='deal-room-disabled-card' + 'deal-room-open-btn'. ISSUES: (1) After admin clicks 'Open Deal Room', backend toggle returns 200 but the UI does NOT flip to the live view — the disabled card still renders. The `data-testid='deal-room-tab'` never appears. Root cause likely in onLeadRefresh propagation — DealRoomTab.jsx line 47-50 useEffect depends on `enabled = !!lead?.deal_room_enabled`, but the parent LeadDetail.jsx is not re-fetching/re-rendering with the new flag. (2) Customer (john@testco.com) cannot reach the Deal Room UI for a lead they don't OWN (created_by) — backend GET /api/leads/{id} returns 403 even though /api/leads/{id}/deal-room would return 200 (customer_email match works for deal-room helper but NOT for the regular lead detail RBAC). This blocks the entire customer-facing flow per spec.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/leads/{id} (GET)", "issue": "Customer cannot access lead detail when only customer_email matches (created_by != customer.id). The /deal-room endpoint uses _can_access_deal_room (which honors customer_email), but the main lead GET does not — so the Deal Room UI is unreachable for customer via /leads/:id route. Either widen lead GET RBAC for the customer_email-match branch, or expose a dedicated customer-facing /deal-room/:lead_id route that doesn't require lead GET access."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DealRoomTab.jsx + parent LeadDetail.jsx", "issue": "After admin clicks 'Open Deal Room' (CTA), backend POST /toggle returns 200 but UI keeps showing the disabled card. The local `lead.deal_room_enabled` prop never flips, so the useEffect at line 47-50 keeps `enabled=false`. onLeadRefresh callback wired in DealRoomTab.toggleDealRoom is either not implemented in the parent or doesn't await/refetch.", "selector": "[data-testid='deal-room-open-btn'] -> expected [data-testid='deal-room-tab']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Customer Deal Room view via /leads/:id", "issue": "Customer login → /leads/{id} returns 403 from GET /api/leads/{id} (RBAC mismatch with deal-room helper). LeadDetail page redirects back to /leads with 'Failed to load lead details' toast. Customer never reaches DealRoomTab.", "affected_selectors": ["[data-testid='deal-room-tab']", "[data-testid^='approve-']", "[data-testid='deal-room-message-input']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase27_deal_room.py",
+    "/app/test_reports/pytest/phase27_results.xml"
+  ],
+  "action_items": [
+    "HIGH (frontend): After successful POST /toggle in DealRoomTab.toggleDealRoom, either (a) optimistically setData/setEnabled locally, or (b) ensure parent LeadDetail.jsx re-fetches the lead in onLeadRefresh and passes the updated `lead` prop down so `enabled` re-evaluates to true. Currently the card stays in disabled state until full page reload.",
+    "HIGH (backend or frontend): Widen customer access to lead detail when lead.customer_email == user.email (mirror the _can_access_deal_room logic). Without this, the entire customer-facing P1 flow (Frontend P1 #3) is non-functional — customer cannot see/post/approve via UI.",
+    "MEDIUM (testing): Tests must disable HTTP cookies on requests.Session — Cloudflare's __cf_bm sticky cookie causes the auth `access_token` cookie to bleed across separate Session objects (different users) when run in rapid sequence. Bearer-only pytest now passes 21/21. Document this in the conftest for future test files."
+  ],
+  "critical_code_review_comments": [
+    "_can_access_deal_room (server.py:4969) correctly mirrors the assignee_role logic but is NOT shared with the normal lead GET RBAC — pulling this into a single resolver would avoid the customer 403 on /leads/{id}.",
+    "POST /deal-room/messages and POST /comments both write to lead.comments; deal-room/messages force-sets is_public=True, /comments respects body. /deal-room.public_comments correctly returns the union — verified by test_comments_is_public_flag_persists.",
+    "Approval respond endpoint correctly enforces pending-only (400 on re-respond), admin override is allowed, and role mismatch returns 403 — all verified.",
+    "Notifications via create_notification fire for new messages and new approvals; failures are caught and logged so the main flow never breaks (good).",
+    "DealRoomTab.toggleDealRoom relies on onLeadRefresh prop to re-render, but parent wiring is the bottleneck causing the UI not to flip after enable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase27_deal_room.py (new — 21 Phase 27 tests + Phase 24/25/26 regression)"
+  ],
+  "success_rate": {"backend": "100% (21/21 pytest)", "frontend": "50% — admin disabled card renders + CTA visible + backend toggle succeeds; but UI doesn't flip to live view, and customer cannot reach the Deal Room at all via /leads/:id route"},
+  "test_credentials": "Used admin@vyapaarnetwork.com/admin123, john@testco.com/test123. Both login OK. Customer cannot navigate to /leads/{id} due to RBAC mismatch — see action_items.",
+  "seed_data_creation": "Created TEST_p27_UI_demo lead (id 59ad1b49-0e02-4689-8cd9-27f1f951b239) with customer_email=john@testco.com for UI test. Multiple TEST_Phase27 leads created by pytest fixtures (module-scope, NOT cleaned up).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 27 backend tests at /app/backend/tests/test_phase27_deal_room.py — 21 tests pass in ~15s. CRITICAL: pytest session helper _login() must use a non-persistent cookie policy (DefaultCookiePolicy that blocks set/return) because Cloudflare's __cf_bm sticky cookie causes the auth cookie to bleed across separate Session objects and the COOKIE-first auth path in server.py:549 then resolves the wrong user. Bearer-only is mandatory for multi-user pytest. Two real bugs to retest after E1 fixes: (a) DealRoomTab not flipping after enable, (b) customer 403 on GET /api/leads/{id} blocking the customer-facing Deal Room route.",
+  "rca of the issue": "(1) UI not flipping after enable: DealRoomTab.toggleDealRoom calls onLeadRefresh but parent LeadDetail does not refetch + propagate the new deal_room_enabled flag to the lead prop, so the child useEffect (deps: [enabled, loadDealRoom]) does not re-run. Fix: either local optimistic update inside DealRoomTab OR a proper refetch+state-update chain in parent. (2) Customer 403 on /leads/{id}: regular lead GET RBAC does NOT consider lead.customer_email == current_user.email — only created_by/assignee. The deal-room helper _can_access_deal_room DOES check customer_email. Fix: widen lead GET RBAC for customer role to also allow the email-match branch (or add a dedicated /deal-room/:id route that doesn't depend on full lead access)."
+}

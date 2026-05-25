@@ -344,6 +344,7 @@ class FollowUpResponse(BaseModel):
 class CommentCreate(BaseModel):
     content: str
     parent_comment_id: Optional[str] = None  # Phase 1: threaded comments
+    is_public: bool = False  # Phase 27: visible inside the customer-facing Deal Room
 
 class CommentResponse(BaseModel):
     id: str
@@ -353,6 +354,7 @@ class CommentResponse(BaseModel):
     user_role: str
     created_at: str
     parent_comment_id: Optional[str] = None
+    is_public: bool = False
 
 class LeadCreate(BaseModel):
     title: str
@@ -3432,6 +3434,7 @@ async def add_comment(lead_id: str, comment_data: CommentCreate, current_user: d
         "user_role": current_user['role'],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "parent_comment_id": comment_data.parent_comment_id,
+        "is_public": bool(comment_data.is_public),
     }
     
     await db.leads.update_one(
@@ -4944,6 +4947,333 @@ async def partner_commission_analytics(
         "category_leaders": category_leaders[:10],
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ==================== PHASE 27: COLLABORATIVE DEAL ROOMS ====================
+
+VALID_APPROVAL_STATUS = {"pending", "approved", "rejected"}
+
+class DealRoomToggle(BaseModel):
+    enabled: bool
+
+class ApprovalCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assignee_role: str = "customer"  # customer | selling_partner | admin
+    due_date: Optional[str] = None
+
+class ApprovalResponse(BaseModel):
+    decision: str  # approved | rejected
+    note: Optional[str] = None
+
+def _can_access_deal_room(lead: dict, user: dict) -> bool:
+    """Decide if the user can see the deal room for this lead.
+    Admin/ops/finance: always. Selling partner: only if assigned. Customer: only if owner.
+    """
+    role = user.get('role')
+    if role == UserRole.SUPER_ADMIN.value:
+        return True
+    if user.get('is_vyapaar_ops'):
+        return True
+    if role == UserRole.SELLING_PARTNER.value:
+        partner_ids = {p.get('partner_id') for p in (lead.get('assigned_partners') or [])}
+        return user['id'] in partner_ids or lead.get('selling_partner_id') == user['id']
+    if role == UserRole.SALES_ASSOCIATE.value:
+        return lead.get('sales_associate_id') == user['id']
+    if role == UserRole.CUSTOMER.value:
+        return lead.get('created_by') == user['id'] or lead.get('customer_email') == user.get('email')
+    return False
+
+@api_router.post("/leads/{lead_id}/deal-room/toggle")
+async def toggle_deal_room(lead_id: str, body: DealRoomToggle, current_user: dict = Depends(get_current_user)):
+    """Enable/disable the customer-facing Deal Room for a lead. Admin or assigned partner only."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    # Permission: only admin/ops or the assigned selling partner can toggle
+    role = current_user.get('role')
+    is_assigned_partner = (
+        role == UserRole.SELLING_PARTNER.value
+        and (current_user['id'] == lead.get('selling_partner_id')
+             or any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])))
+    )
+    if role != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops') and not is_assigned_partner:
+        raise HTTPException(status_code=403, detail="Not authorized to toggle deal room")
+
+    now = datetime.now(timezone.utc).isoformat()
+    update = {"deal_room_enabled": bool(body.enabled), "updated_at": now}
+    if body.enabled and not lead.get('deal_room_opened_at'):
+        update["deal_room_opened_at"] = now
+        update["deal_room_opened_by"] = current_user['id']
+        update["deal_room_opened_by_name"] = current_user['name']
+
+    await db.leads.update_one({"id": lead_id}, {"$set": update})
+    return {"ok": True, "enabled": bool(body.enabled), "opened_at": update.get("deal_room_opened_at") or lead.get('deal_room_opened_at')}
+
+@api_router.get("/leads/{lead_id}/deal-room")
+async def get_deal_room(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Return the curated customer-facing view of a lead.
+    Customers see ONLY public comments + approvals + shared documents + status.
+    Internal users see the full curated view + an `is_internal_viewer` flag.
+    """
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not lead.get('deal_room_enabled'):
+        raise HTTPException(status_code=403, detail="Deal Room is not active for this lead")
+    if not _can_access_deal_room(lead, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for this Deal Room")
+
+    is_customer = current_user.get('role') == UserRole.CUSTOMER.value
+
+    # Public comments only (threaded preserved)
+    public_comments = [c for c in (lead.get('comments') or []) if c.get('is_public')]
+
+    # Status + stage info
+    st = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0}) if lead.get('status_id') else None
+    status_name = (st or {}).get('name', 'Unstaged')
+
+    # Approvals
+    approvals = lead.get('approvals') or []
+    # Customers only see approvals assigned to them or visible to all
+    if is_customer:
+        approvals = [a for a in approvals if a.get('assignee_role') in ('customer', 'all')]
+
+    # Documents — show only the ones marked is_shared_in_deal_room=True (default True for backward compat)
+    docs = [d for d in (lead.get('documents') or []) if d.get('is_shared_in_deal_room', True)]
+    # Strip absolute file path from response
+    safe_docs = [{
+        "id": d.get('id'),
+        "filename": d.get('filename'),
+        "original_filename": d.get('original_filename'),
+        "uploaded_at": d.get('uploaded_at'),
+        "uploaded_by_name": d.get('uploaded_by_name'),
+        "tag": d.get('tag'),
+        "size_kb": d.get('size_kb'),
+        "is_shared_in_deal_room": d.get('is_shared_in_deal_room', True),
+    } for d in docs]
+
+    # Active partners (names only — customers don't see internal user data)
+    active_partners = [
+        {"partner_name": p.get('partner_name'), "company_name": p.get('partner_company')}
+        for p in (lead.get('assigned_partners') or [])
+        if p.get('status') == 'active'
+    ]
+
+    # Commercial summary if exists
+    commercial = await db.commercials.find_one({"lead_id": lead_id}, {"_id": 0})
+    commercial_summary = None
+    if commercial:
+        commercial_summary = {
+            "id": commercial.get('id'),
+            "type": commercial.get('type'),
+            "currency": commercial.get('currency', 'INR'),
+            "project_value": commercial.get('project_value') or commercial.get('total_value'),
+            "billing_cycle": commercial.get('billing_cycle'),
+            "contract_start_date": commercial.get('contract_start_date'),
+            "contract_end_date": commercial.get('contract_end_date'),
+            "milestones_count": len(commercial.get('milestones') or []),
+            "invoices_count": len(commercial.get('invoices') or []),
+            "contract_status": commercial.get('contract_status'),
+        }
+
+    return {
+        "lead": {
+            "id": lead['id'],
+            "title": lead.get('title'),
+            "description": lead.get('description') if not is_customer else None,
+            "customer_name": lead.get('customer_name'),
+            "customer_company": lead.get('customer_company'),
+            "primary_category_name": lead.get('primary_category_name'),
+            "deal_value": lead.get('deal_value') if not is_customer else None,
+            "status_name": status_name,
+            "status_color": (st or {}).get('color', '#6366F1'),
+            "created_at": lead.get('created_at'),
+            "deal_room_enabled": True,
+            "deal_room_opened_at": lead.get('deal_room_opened_at'),
+        },
+        "active_partners": active_partners,
+        "public_comments": public_comments,
+        "approvals": approvals,
+        "documents": safe_docs,
+        "commercial": commercial_summary,
+        "is_internal_viewer": not is_customer,
+        "viewer_role": current_user.get('role'),
+    }
+
+@api_router.post("/leads/{lead_id}/deal-room/messages")
+async def post_deal_room_message(lead_id: str, body: CommentCreate, current_user: dict = Depends(get_current_user)):
+    """Post a public message inside the Deal Room. Anyone with access (incl. customer) can post.
+    This is just an alias for /comments that force-sets is_public=True."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not lead.get('deal_room_enabled'):
+        raise HTTPException(status_code=403, detail="Deal Room is not active for this lead")
+    if not _can_access_deal_room(lead, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for this Deal Room")
+
+    comment = {
+        "id": str(uuid.uuid4()),
+        "content": (body.content or '').strip()[:5000],
+        "user_id": current_user['id'],
+        "user_name": current_user['name'],
+        "user_role": current_user['role'],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "parent_comment_id": body.parent_comment_id,
+        "is_public": True,
+    }
+    if not comment['content']:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$push": {"comments": comment}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+
+    # Notify everyone with deal-room access except the author
+    recipients = set()
+    if lead.get('created_by') and lead['created_by'] != current_user['id']:
+        recipients.add(lead['created_by'])
+    if lead.get('selling_partner_id') and lead['selling_partner_id'] != current_user['id']:
+        recipients.add(lead['selling_partner_id'])
+    for p in (lead.get('assigned_partners') or []):
+        if p.get('status') == 'active' and p.get('partner_id') and p['partner_id'] != current_user['id']:
+            recipients.add(p['partner_id'])
+    for uid in recipients:
+        try:
+            await create_notification(
+                user_id=uid,
+                title=f"New Deal Room message · {lead.get('title','')}",
+                message=f"{current_user['name']}: {comment['content'][:140]}",
+                notification_type=NotificationType.LEAD_MENTION,
+                lead_id=lead_id,
+            )
+        except Exception as e:
+            logger.warning(f"Deal Room notification failed: {e}")
+
+    return comment
+
+@api_router.post("/leads/{lead_id}/approvals")
+async def create_approval(lead_id: str, body: ApprovalCreate, current_user: dict = Depends(get_current_user)):
+    """Create a Deal Room approval request. Admin / ops / assigned partner only."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    role = current_user.get('role')
+    is_assigned_partner = (
+        role == UserRole.SELLING_PARTNER.value
+        and (current_user['id'] == lead.get('selling_partner_id')
+             or any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])))
+    )
+    if role != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops') and not is_assigned_partner:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    if body.assignee_role not in ('customer', 'selling_partner', 'admin', 'all'):
+        raise HTTPException(status_code=400, detail="Invalid assignee_role")
+
+    approval = {
+        "id": str(uuid.uuid4()),
+        "title": body.title.strip()[:200],
+        "description": (body.description or '').strip()[:2000],
+        "assignee_role": body.assignee_role,
+        "due_date": body.due_date,
+        "status": "pending",
+        "created_by": current_user['id'],
+        "created_by_name": current_user['name'],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "responded_at": None,
+        "responded_by": None,
+        "responded_by_name": None,
+        "decision": None,
+        "decision_note": None,
+    }
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$push": {"approvals": approval}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    # Notify the customer if this approval is for them
+    if body.assignee_role in ('customer', 'all') and lead.get('created_by'):
+        try:
+            await create_notification(
+                user_id=lead['created_by'],
+                title=f"Approval requested · {lead.get('title','')}",
+                message=f"{current_user['name']} requested your approval: {approval['title']}",
+                notification_type=NotificationType.LEAD_MENTION,
+                lead_id=lead_id,
+            )
+        except Exception as e:
+            logger.warning(f"Approval notification failed: {e}")
+    return approval
+
+@api_router.get("/leads/{lead_id}/approvals")
+async def list_approvals(lead_id: str, current_user: dict = Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not _can_access_deal_room(lead, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    approvals = lead.get('approvals') or []
+    if current_user.get('role') == UserRole.CUSTOMER.value:
+        approvals = [a for a in approvals if a.get('assignee_role') in ('customer', 'all')]
+    return approvals
+
+@api_router.post("/leads/{lead_id}/approvals/{approval_id}/respond")
+async def respond_to_approval(
+    lead_id: str, approval_id: str, body: ApprovalResponse, current_user: dict = Depends(get_current_user)
+):
+    """Approve or reject an approval. Only the targeted assignee role can respond."""
+    if body.decision not in ('approved', 'rejected'):
+        raise HTTPException(status_code=400, detail="decision must be 'approved' or 'rejected'")
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    approvals = lead.get('approvals') or []
+    target = next((a for a in approvals if a.get('id') == approval_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    if target.get('status') != 'pending':
+        raise HTTPException(status_code=400, detail="Approval already responded to")
+
+    # Permission: assignee role must match the user's role (or admin override)
+    user_role = current_user.get('role')
+    is_admin_like = user_role == UserRole.SUPER_ADMIN.value or current_user.get('is_vyapaar_ops')
+    if target['assignee_role'] != 'all' and not is_admin_like:
+        if target['assignee_role'] == 'customer' and user_role != UserRole.CUSTOMER.value:
+            raise HTTPException(status_code=403, detail="This approval is for the customer to respond to")
+        if target['assignee_role'] == 'selling_partner' and user_role != UserRole.SELLING_PARTNER.value:
+            raise HTTPException(status_code=403, detail="This approval is for the selling partner")
+        if target['assignee_role'] == 'admin' and not is_admin_like:
+            raise HTTPException(status_code=403, detail="This approval is for admin")
+    # Verify deal room access
+    if not _can_access_deal_room(lead, current_user):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    target['status'] = body.decision
+    target['decision'] = body.decision
+    target['decision_note'] = (body.note or '').strip()[:1000]
+    target['responded_at'] = datetime.now(timezone.utc).isoformat()
+    target['responded_by'] = current_user['id']
+    target['responded_by_name'] = current_user['name']
+
+    await db.leads.update_one(
+        {"id": lead_id, "approvals.id": approval_id},
+        {"$set": {"approvals.$": target, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    # Notify the creator
+    creator_id = target.get('created_by')
+    if creator_id and creator_id != current_user['id']:
+        try:
+            await create_notification(
+                user_id=creator_id,
+                title=f"Approval {body.decision} · {target.get('title','')}",
+                message=f"{current_user['name']} {body.decision} your request.",
+                notification_type=NotificationType.LEAD_MENTION,
+                lead_id=lead_id,
+            )
+        except Exception as e:
+            logger.warning(f"Approval response notification failed: {e}")
+    return target
+
 
 
 
