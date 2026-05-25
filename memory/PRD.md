@@ -337,10 +337,28 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 
 ### Phase 28 — In-App Help & Feature Guide (Feb 25, 2026)
 - [x] **Reusable `<FeatureInfo>` component** (`/app/frontend/src/components/FeatureInfo.jsx`) — small `?` or ✨ icon that opens a Shadcn Popover with feature title, description, optional "How to use", and amber "💡 Tip" callout. Supports `ai={true}` for AI-feature accent (gradient violet→indigo).
-- [x] **Central `/help` page** (`Help.jsx`) — categorized feature guide with 5 sections (AI-Powered, Collaborative, Revenue Intelligence, Workflow & Ops, Core CRM), live search, and role-filtered visibility. Each item shows description, "Try these" examples (for AI Command Bar), "How to use" steps, and emerald "Why it helps" callouts. Footer hints at ⌘K shortcut.
-- [x] **Help link** added to topbar user-menu dropdown ("Help & Feature Guide") alongside Settings/Logout.
-- [x] **FeatureInfo sprinkled on**: Predictive Forecast page title, Partner Intelligence page title, Revenue Intelligence page title, Deal Room disabled-state CTA, Approvals card, Invitations card. Each is contextual and explains both what the feature does AND why it helps.
-- [x] **Verified**: `/help` page renders all 5 sections with 19 feature cards. Popover triggers from "?" icons render correctly with full content (description + tip).
+- [x] **Central `/help` page** (`Help.jsx`) — categorized feature guide with 6 sections (Weekly War Room, AI-Powered, Collaborative, Revenue Intelligence, Workflow & Ops, Core CRM), live search, and role-filtered visibility.
+- [x] **Help link** added to topbar user-menu dropdown.
+- [x] **FeatureInfo sprinkled on**: Predictive Forecast title, Partner Intelligence title, Revenue Intelligence title, Deal Room CTA, Approvals card, Invitations card, War Room title.
+
+### Phase 29 — Weekly War Room (Feb 25, 2026)
+- [x] **Smart-bucket Kanban board** (`GET /api/war-room/board`) auto-classifies open leads into 7 computed buckets:
+  - 🔥 **High Priority**: hot/at-risk health + deal_value ≥ ₹1L + recent activity
+  - ⚠️ **Blocked**: explicit `#blocker` in comments OR pending approval older than 3 days
+  - 🟡 **Follow-up Pending**: any overdue follow-up
+  - 💰 **Commercial Pending**: status name contains 'proposal', 'commercial', 'negotiat', or 'quote'
+  - 🤝 **Partner Coordination**: active partner assigned + 7–21 days inactive
+  - 💤 **Inactive**: ≥ 21 days no activity
+  - ✅ **Recently Won**: won within last 14 days
+  - Buckets are computed per-request (no manual drag-drop). Priority order in `_classify_war_room_bucket` ensures one bucket per lead.
+- [x] **Revenue Intelligence Strip**: 5 KPIs at top — total leads, pipeline, weighted, at-risk, inactive value.
+- [x] **Weekly Review Mode**: `POST /api/war-room/sessions/start` creates a session (auto-closes prior open sessions for same user). UI enters 2-column layout (board left, notes panel right + active-lead context card). `PATCH /sessions/{id}/notes` debounced auto-save. `POST /sessions/{id}/discuss` logs each lead clicked.
+- [x] **AI Weekly Review Summary** (`POST /api/war-room/sessions/{id}/end`): Gemini 3 Pro parses notes + discussed leads into structured JSON with 8 sections (Executive Summary, Leads Progressed, High-Risk, Blocked, Revenue Updates, Partner Dependencies, Action Items, Upcoming Follow-ups). Idempotent.
+- [x] **AI Action Item Extraction**: every `action_items[]` entry in the AI output is auto-materialized into a Task in `db.tasks` with `source='war_room_session'`, parsed owner→user lookup, parsed due date (incl. relative "Thursday" → YYYY-MM-DD), and lead hint matching. Cross-user assignees get an in-app notification.
+- [x] **Past Reviews sheet**: history list with executive_summary preview + "N tasks created" badge + click-to-view full summary dialog.
+- [x] **Compute_lead_health hot-fix** — exposed `overdue_count` in the return dict (was previously consumed by classifier and card payload as `health.get('overdue_count')` returning `None`). Found via testing_agent_v3_fork iter_18 — RCA was exact one-line addition. Caught and fixed before user impact.
+- [x] **Testing** — iter_18 backend 19/19 pytest pass (after compute_lead_health fix), frontend 11/12 flows pass. Verified live: 47 leads correctly classified, AI session end creates 2 materialized tasks, summary persists.
+- [x] **RBAC**: customer 403 on `/board`, `/sessions/start`, `/sessions/active`. Admin sees all sessions; partner/associate sees only their own.
 
 
 

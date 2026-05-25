@@ -98,10 +98,14 @@ const WarRoom = () => {
       const r = await api.post(`/war-room/sessions/${activeSession.id}/end`);
       setActiveSession(null);
       toast.success(`Session ended. ${r.data.materialized_task_count || 0} tasks created.`);
-      // Show summary dialog
+      // Stable reference for SummaryDialog before opening it (avoid mount race)
+      window.__currentSummary = r.data;
       setHistory((h) => [r.data, ...h]);
-      setShowHistoryDialog(true);
-      setSummaryOpen(true);
+      // Open dialog on next tick so the data is in place
+      setTimeout(() => {
+        setShowHistoryDialog(true);
+        setSummaryOpen(true);
+      }, 50);
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Failed to end session');
     } finally { setEndingSession(false); }

@@ -3578,6 +3578,7 @@ def compute_lead_health(lead: dict) -> Dict[str, Any]:
 
     # Follow-up completion
     follow_ups = lead.get('follow_ups', []) or []
+    overdue = 0  # Phase 29 fix: initialize outside the if so it's always present in the return dict.
     if follow_ups:
         completed = sum(1 for f in follow_ups if f.get('is_completed'))
         rate = completed / max(len(follow_ups), 1)
@@ -3587,7 +3588,6 @@ def compute_lead_health(lead: dict) -> Dict[str, Any]:
             score -= 10; factors.append({"name": "Weak follow-through", "impact": -10, "detail": f"{int(rate*100)}% follow-ups completed"})
 
         # Overdue follow-ups
-        overdue = 0
         today = datetime.now(timezone.utc).date()
         for f in follow_ups:
             if not f.get('is_completed') and f.get('scheduled_date'):
@@ -3622,6 +3622,7 @@ def compute_lead_health(lead: dict) -> Dict[str, Any]:
         "score": score,
         "band": band,
         "days_inactive": round(days_inactive, 1) if days_inactive is not None else None,
+        "overdue_count": overdue,  # Phase 29 fix: expose for War Room follow-up-pending classifier + card payload
         "factors": factors,
     }
 
