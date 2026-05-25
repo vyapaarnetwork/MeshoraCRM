@@ -224,6 +224,8 @@ class NotificationType(str, Enum):
     COMMERCIAL_BILLING_DUE = "commercial_billing_due"
     # Phase 1 (Revenue OS): collaboration mentions
     LEAD_MENTION = "lead_mention"
+    # Phase 1.5: Task assignments
+    TASK_ASSIGNED = "task_assigned"
 
 class NotificationCreate(BaseModel):
     type: NotificationType
@@ -336,6 +338,7 @@ class FollowUpResponse(BaseModel):
 
 class CommentCreate(BaseModel):
     content: str
+    parent_comment_id: Optional[str] = None  # Phase 1: threaded comments
 
 class CommentResponse(BaseModel):
     id: str
@@ -344,6 +347,7 @@ class CommentResponse(BaseModel):
     user_name: str
     user_role: str
     created_at: str
+    parent_comment_id: Optional[str] = None
 
 class LeadCreate(BaseModel):
     title: str
@@ -3380,7 +3384,8 @@ async def add_comment(lead_id: str, comment_data: CommentCreate, current_user: d
         "user_id": current_user['id'],
         "user_name": current_user['name'],
         "user_role": current_user['role'],
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "parent_comment_id": comment_data.parent_comment_id,
     }
     
     await db.leads.update_one(
@@ -3779,6 +3784,236 @@ async def snooze_follow_up(
     )
     updated = await db.leads.find_one({"id": lead_id}, {"_id": 0})
     return await enrich_lead(updated)
+
+# ==================== PHASE 1.5: TASKS + DASHBOARD DIGEST ====================
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assignee_id: Optional[str] = None  # If None, defaults to creator
+    lead_id: Optional[str] = None
+    commercial_id: Optional[str] = None
+    due_date: Optional[str] = None  # ISO date
+    priority: str = "medium"  # low | medium | high
+    status: str = "todo"  # todo | in_progress | done
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    assignee_id: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+
+async def _enrich_task(task: dict) -> dict:
+    """Attach assignee + creator + lead names to a task doc."""
+    if task.get('assignee_id'):
+        u = await db.users.find_one({"id": task['assignee_id']}, {"_id": 0})
+        task['assignee_name'] = (u or {}).get('name')
+    if task.get('created_by'):
+        u = await db.users.find_one({"id": task['created_by']}, {"_id": 0})
+        task['created_by_name'] = (u or {}).get('name')
+    if task.get('lead_id'):
+        lead = await db.leads.find_one({"id": task['lead_id']}, {"_id": 0})
+        task['lead_title'] = (lead or {}).get('title')
+    return task
+
+@api_router.post("/tasks")
+async def create_task(body: TaskCreate, current_user: dict = Depends(get_current_user)):
+    if body.status not in ("todo", "in_progress", "done"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    if body.priority not in ("low", "medium", "high"):
+        raise HTTPException(status_code=400, detail="Invalid priority")
+
+    task = {
+        "id": str(uuid.uuid4()),
+        "title": body.title.strip(),
+        "description": (body.description or '').strip(),
+        "assignee_id": body.assignee_id or current_user['id'],
+        "lead_id": body.lead_id,
+        "commercial_id": body.commercial_id,
+        "due_date": body.due_date,
+        "priority": body.priority,
+        "status": body.status,
+        "created_by": current_user['id'],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+    }
+    await db.tasks.insert_one(task)
+    task.pop('_id', None)
+
+    # Notify assignee if different from creator
+    if task['assignee_id'] != current_user['id']:
+        try:
+            lead_title = ""
+            if task.get('lead_id'):
+                lead = await db.leads.find_one({"id": task['lead_id']}, {"_id": 0})
+                lead_title = (lead or {}).get('title', '')
+            await create_notification(
+                user_id=task['assignee_id'],
+                notification_type="task_assigned",
+                title=f"New task: {task['title']}",
+                message=(f"On lead \"{lead_title}\" — " if lead_title else "") + (task['description'] or 'No description')[:140],
+                lead_id=task.get('lead_id'),
+                data={"task_id": task['id'], "priority": task['priority']},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to notify task assignee: {e}")
+
+    return await _enrich_task({**task})
+
+@api_router.get("/tasks")
+async def list_tasks(
+    lead_id: Optional[str] = None,
+    assignee_id: Optional[str] = None,
+    status: Optional[str] = None,
+    mine: bool = False,
+    current_user: dict = Depends(get_current_user),
+):
+    query = {}
+    if lead_id:
+        query['lead_id'] = lead_id
+    if assignee_id:
+        query['assignee_id'] = assignee_id
+    if status:
+        query['status'] = status
+    if mine:
+        query['assignee_id'] = current_user['id']
+    # Default scope: non-admins only see tasks they created or are assigned
+    if not (current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_vyapaar_ops')):
+        query = {**query, "$or": [{"assignee_id": current_user['id']}, {"created_by": current_user['id']}]}
+
+    tasks = await db.tasks.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [await _enrich_task(t) for t in tasks]
+
+@api_router.patch("/tasks/{task_id}")
+async def update_task(task_id: str, body: TaskUpdate, current_user: dict = Depends(get_current_user)):
+    task = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    is_admin_like = current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_vyapaar_ops')
+    if not (is_admin_like or task.get('created_by') == current_user['id'] or task.get('assignee_id') == current_user['id']):
+        raise HTTPException(status_code=403, detail="Not authorized to modify this task")
+
+    updates = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
+    if 'status' in updates:
+        if updates['status'] not in ("todo", "in_progress", "done"):
+            raise HTTPException(status_code=400, detail="Invalid status")
+        if updates['status'] == "done" and task.get('status') != "done":
+            updates['completed_at'] = datetime.now(timezone.utc).isoformat()
+        elif updates['status'] != "done":
+            updates['completed_at'] = None
+    updates['updated_at'] = datetime.now(timezone.utc).isoformat()
+
+    await db.tasks.update_one({"id": task_id}, {"$set": updates})
+    new_task = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    return await _enrich_task(new_task)
+
+@api_router.delete("/tasks/{task_id}")
+async def delete_task(task_id: str, current_user: dict = Depends(get_current_user)):
+    task = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    is_admin_like = current_user.get('role') == UserRole.SUPER_ADMIN.value or current_user.get('is_vyapaar_ops')
+    if not (is_admin_like or task.get('created_by') == current_user['id']):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this task")
+    await db.tasks.delete_one({"id": task_id})
+    return {"deleted": True}
+
+# ---------- Dashboard digest ----------
+
+@api_router.get("/dashboard/digest")
+async def dashboard_digest(current_user: dict = Depends(get_current_user)):
+    """Single endpoint returning the user's daily collaboration digest counts.
+    Scope respects role: customers see their own data, partners see their assigned leads, etc.
+    """
+    now = datetime.now(timezone.utc)
+    week_ago_iso = (now - timedelta(days=7)).isoformat()
+    today_iso = now.date().isoformat()
+
+    # Build lead query scoped to current user
+    lead_query = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        lead_query['selling_partner_id'] = current_user['id']
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        lead_query['sales_associate_id'] = current_user['id']
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        lead_query['created_by'] = current_user['id']
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    won_map = {s['id']: bool(s.get('is_won')) for s in statuses}
+
+    leads = await db.leads.find(lead_query, {"_id": 0}).to_list(1000)
+    hot_count = at_risk_count = cold_count = warm_count = 0
+    leads_gone_cold_week = 0
+    overdue_followups = 0
+    upcoming_followups_today = 0
+
+    for lead in leads:
+        lead['active_partners_count'] = len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'])
+        lead['status_is_won'] = won_map.get(lead.get('status_id'), False)
+        h = compute_lead_health(lead)
+        if h['band'] == 'hot': hot_count += 1
+        elif h['band'] == 'warm': warm_count += 1
+        elif h['band'] == 'cold': cold_count += 1
+        elif h['band'] == 'at_risk':
+            at_risk_count += 1
+            # "Gone cold this week" = was recently active, now at risk
+            updated_at = lead.get('updated_at') or lead.get('created_at')
+            if updated_at and updated_at < week_ago_iso and h.get('days_inactive') and h['days_inactive'] <= 10:
+                leads_gone_cold_week += 1
+
+        for f in lead.get('follow_ups') or []:
+            if not f.get('is_completed') and f.get('scheduled_date'):
+                if f['scheduled_date'] < today_iso:
+                    overdue_followups += 1
+                elif f['scheduled_date'] == today_iso:
+                    upcoming_followups_today += 1
+
+    # @mentions for me — unread
+    mentions_for_me = await db.notifications.count_documents({
+        "user_id": current_user['id'],
+        "type": "lead_mention",
+        "read": False,
+    })
+
+    # Tasks
+    my_open_tasks = await db.tasks.count_documents({
+        "assignee_id": current_user['id'],
+        "status": {"$ne": "done"},
+    })
+    overdue_tasks = await db.tasks.count_documents({
+        "assignee_id": current_user['id'],
+        "status": {"$ne": "done"},
+        "due_date": {"$lt": today_iso, "$ne": None},
+    })
+
+    return {
+        "user": {
+            "id": current_user['id'],
+            "name": current_user['name'],
+        },
+        "leads": {
+            "total": len(leads),
+            "hot": hot_count,
+            "warm": warm_count,
+            "cold": cold_count,
+            "at_risk": at_risk_count,
+            "gone_cold_this_week": leads_gone_cold_week,
+        },
+        "follow_ups": {
+            "overdue": overdue_followups,
+            "today": upcoming_followups_today,
+        },
+        "mentions": {
+            "unread": mentions_for_me,
+        },
+        "tasks": {
+            "open": my_open_tasks,
+            "overdue": overdue_tasks,
+        },
+    }
 
 # ==================== BULK IMPORT ====================
 

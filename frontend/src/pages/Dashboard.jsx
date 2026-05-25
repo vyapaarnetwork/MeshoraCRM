@@ -39,6 +39,7 @@ import {
 import api, { formatCurrency, getRoleLabel } from '../utils/api';
 import HealthCheckWidget from '../components/HealthCheckWidget';
 import CommercialsWidget from '../components/CommercialsWidget';
+import DashboardDigest from '../components/DashboardDigest';
 
 const COLORS = ['#4169E1', '#DC143C', '#10B981', '#F59E0B', '#8B5CF6', '#64748B'];
 
@@ -131,6 +132,9 @@ const Dashboard = () => {
           {getRoleLabel(user?.role)}
         </Badge>
       </div>
+
+      {/* Phase 1.5: Daily collaboration digest */}
+      <DashboardDigest />
 
       {/* Date Filter */}
       <Card data-testid="dashboard-date-filter">

@@ -21,6 +21,7 @@ import { FollowUpsCard } from './leadDetail/FollowUpsCard';
 import { HealthScoreBadge, HealthScoreCard } from '../components/HealthScore';
 import NextActionCard from '../components/NextActionCard';
 import ActivityTimeline from '../components/ActivityTimeline';
+import TasksCard from '../components/TasksCard';
 
 const LeadDetail = () => {
   const { id } = useParams();
@@ -198,6 +199,21 @@ const LeadDetail = () => {
     }
   };
 
+  const handleReplyComment = async (replyContent, parentId) => {
+    try {
+      const res = await api.post(`/leads/${id}/comments`, {
+        content: replyContent,
+        parent_comment_id: parentId,
+      });
+      setLead(res.data);
+      toast.success('Reply posted');
+      fetchHealthAndActivity();
+    } catch (err) {
+      toast.error('Failed to post reply');
+      throw err;
+    }
+  };
+
   const handleAddFollowUp = async () => {
     if (!newFollowUp.date) {
       toast.error('Please select a date');
@@ -307,7 +323,9 @@ const LeadDetail = () => {
             setNewComment={setNewComment}
             submitting={submittingComment}
             onSubmit={handleAddComment}
+            onSubmitReply={handleReplyComment}
           />
+          <TasksCard leadId={id} />
           <ActivityTimeline activities={activities} />
           <DocumentsCard
             documents={documents}
