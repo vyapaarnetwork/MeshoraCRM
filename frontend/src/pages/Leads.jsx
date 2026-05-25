@@ -33,6 +33,9 @@ import {
 } from 'lucide-react';
 import api, { formatCurrency, formatDate } from '../utils/api';
 import { toast } from 'sonner';
+import { HealthScoreBadge } from '../components/HealthScore';
+
+const HEALTH_BAND_ORDER = { at_risk: 0, cold: 1, warm: 2, hot: 3 };
 
 const Leads = () => {
   const { user, isAdmin, isCustomer, isSalesAssociate } = useAuth();
@@ -40,7 +43,9 @@ const Leads = () => {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [healthFilter, setHealthFilter] = useState('all');
   const [statuses, setStatuses] = useState([]);
+  const [healthByLead, setHealthByLead] = useState({});
 
   useEffect(() => {
     fetchData();
@@ -48,12 +53,18 @@ const Leads = () => {
 
   const fetchData = async () => {
     try {
-      const [leadsRes, statusesRes] = await Promise.all([
+      const [leadsRes, statusesRes, healthRes] = await Promise.all([
         api.get('/leads'),
-        api.get('/master/lead-status')
+        api.get('/master/lead-status'),
+        api.get('/leads/health-summary').catch(() => ({ data: { results: [] } })),
       ]);
       setLeads(leadsRes.data);
       setStatuses(statusesRes.data);
+      const map = {};
+      for (const r of (healthRes.data?.results || [])) {
+        map[r.id] = { health: r.health, next_action: r.next_action };
+      }
+      setHealthByLead(map);
     } catch (error) {
       console.error('Failed to fetch leads:', error);
       toast.error('Failed to load leads');
@@ -75,10 +86,18 @@ const Leads = () => {
     }
   };
 
-  // Filter by status
-  const filteredLeads = statusFilter === 'all' 
-    ? leads 
-    : leads.filter(lead => lead.status_id === statusFilter);
+  // Filter by status + health band
+  const filteredLeads = leads
+    .filter(lead => statusFilter === 'all' || lead.status_id === statusFilter)
+    .filter(lead => healthFilter === 'all' || healthByLead[lead.id]?.health?.band === healthFilter);
+
+  // Inject health onto each row + helper for sortable health column
+  const leadsWithHealth = filteredLeads.map((l) => ({
+    ...l,
+    _health: healthByLead[l.id]?.health || null,
+    _health_score: healthByLead[l.id]?.health?.score ?? -1,
+    _health_band_rank: HEALTH_BAND_ORDER[healthByLead[l.id]?.health?.band] ?? 99,
+  }));
 
   // Table columns configuration
   const columns = [
@@ -135,6 +154,11 @@ const Leads = () => {
       render: (value) => (
         <span className="font-medium">{formatCurrency(value)}</span>
       )
+    },
+    {
+      key: '_health_score',
+      label: 'Health',
+      render: (_, row) => row._health ? <HealthScoreBadge health={row._health} size="sm" /> : <span className="text-xs text-muted-foreground">—</span>,
     },
     {
       key: 'created_at',
@@ -222,10 +246,10 @@ const Leads = () => {
         )}
       </div>
 
-      {/* Status Filter */}
+      {/* Status + Health Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-[200px]" data-testid="status-filter">
                 <Filter className="w-4 h-4 mr-2" />
@@ -246,9 +270,32 @@ const Leads = () => {
                 ))}
               </SelectContent>
             </Select>
+            <Select value={healthFilter} onValueChange={setHealthFilter}>
+              <SelectTrigger className="w-[180px]" data-testid="health-filter">
+                <Filter className="w-4 h-4 mr-2" />
+                <SelectValue placeholder="Filter by health" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Health</SelectItem>
+                <SelectItem value="at_risk">🚨 At Risk</SelectItem>
+                <SelectItem value="cold">❄️ Cold</SelectItem>
+                <SelectItem value="warm">☀️ Warm</SelectItem>
+                <SelectItem value="hot">🔥 Hot</SelectItem>
+              </SelectContent>
+            </Select>
             <span className="text-sm text-muted-foreground">
               {filteredLeads.length} leads
             </span>
+            {(statusFilter !== 'all' || healthFilter !== 'all') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setStatusFilter('all'); setHealthFilter('all'); }}
+                data-testid="clear-filters-btn"
+              >
+                Clear filters
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -267,13 +314,13 @@ const Leads = () => {
         <CardContent>
           <SortableTable
             columns={columns}
-            data={filteredLeads}
+            data={leadsWithHealth}
             rowKey="id"
             pageSize={15}
             onRowClick={(row) => navigate(`/leads/${row.id}`)}
             emptyMessage={
-              statusFilter !== 'all' 
-                ? 'No leads found with this status. Try adjusting your filter.'
+              statusFilter !== 'all' || healthFilter !== 'all'
+                ? 'No leads match the current filters. Try clearing them.'
                 : 'No leads found. Create your first lead to get started.'
             }
           />

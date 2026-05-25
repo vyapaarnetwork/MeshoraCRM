@@ -2973,6 +2973,53 @@ async def list_leads(
     
     return await enrich_leads_bulk(leads)
 
+@api_router.get("/leads/health-summary")
+async def list_leads_health_summary(
+    status_id: Optional[str] = None,
+    primary_category_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Phase 1 (Revenue OS): Batch-compute lead health for the current user's visible leads.
+
+    Returns: {results: [{id, health: {score, band, days_inactive}, next_action: {label, urgency}}]}
+    Heuristics are computed in-process; no extra DB roundtrips per lead.
+    """
+    query = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        query['selling_partner_id'] = current_user['id']
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        query['sales_associate_id'] = current_user['id']
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        query['created_by'] = current_user['id']
+    if status_id:
+        query['status_id'] = status_id
+    if primary_category_id:
+        query['primary_category_id'] = primary_category_id
+
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    won_map = {s['id']: bool(s.get('is_won')) for s in statuses}
+
+    leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    results = []
+    for lead in leads:
+        lead['active_partners_count'] = len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'])
+        lead['status_is_won'] = won_map.get(lead.get('status_id'), False)
+        health = compute_lead_health(lead)
+        next_action = compute_next_action(lead, health)
+        results.append({
+            "id": lead['id'],
+            "health": {
+                "score": health['score'],
+                "band": health['band'],
+                "days_inactive": health.get('days_inactive'),
+            },
+            "next_action": {
+                "label": next_action['label'],
+                "urgency": next_action['urgency'],
+            },
+        })
+    return {"results": results}
+
 @api_router.get("/leads/{lead_id}", response_model=LeadResponse)
 async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user)):
     lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
