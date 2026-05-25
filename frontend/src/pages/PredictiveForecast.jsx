@@ -138,7 +138,7 @@ const PredictiveForecast = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="h-96" style={{ minHeight: 360 }}>
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={320} debounce={50}>
             <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
               <XAxis dataKey="month" fontSize={11} interval={0} angle={-25} textAnchor="end" height={60} />
@@ -166,30 +166,32 @@ const PredictiveForecast = () => {
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-muted-foreground border-b">
-                <tr>
-                  <th className="text-left py-2 px-2">Month</th>
-                  <th className="text-right py-2 px-2">Statistical</th>
-                  <th className="text-right py-2 px-2">Pipeline-weighted</th>
-                  <th className="text-right py-2 px-2">Combined</th>
-                  <th className="text-right py-2 px-2">Range (low – high)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {forecast.map((f) => (
-                  <tr key={f.month_iso} className="border-b last:border-b-0 hover:bg-muted/40">
-                    <td className="py-2 px-2 font-medium">{f.month}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{formatCurrency(f.stat_forecast)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{formatCurrency(f.pipeline_forecast)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums font-semibold text-violet-700 dark:text-violet-300">{formatCurrency(f.combined)}</td>
-                    <td className="py-2 px-2 text-right text-xs text-muted-foreground tabular-nums">
-                      {formatCurrency(f.low)} – {formatCurrency(f.high)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="min-w-[640px]">
+              {/* header row */}
+              <div className="grid grid-cols-5 gap-3 text-xs text-muted-foreground border-b pb-2 mb-1">
+                <div className="text-left">Month</div>
+                <div className="text-right">Statistical</div>
+                <div className="text-right">Pipeline-weighted</div>
+                <div className="text-right">Combined</div>
+                <div className="text-right">Range (low – high)</div>
+              </div>
+              {/* data rows */}
+              {forecast.map((f) => (
+                <div
+                  key={f.month_iso}
+                  className="grid grid-cols-5 gap-3 text-sm border-b last:border-b-0 hover:bg-muted/40 py-2"
+                  data-testid={`forecast-row-${f.month_iso}`}
+                >
+                  <div className="font-medium">{f.month}</div>
+                  <div className="text-right tabular-nums text-muted-foreground">{formatCurrency(f.stat_forecast)}</div>
+                  <div className="text-right tabular-nums text-muted-foreground">{formatCurrency(f.pipeline_forecast)}</div>
+                  <div className="text-right tabular-nums font-semibold text-violet-700 dark:text-violet-300">{formatCurrency(f.combined)}</div>
+                  <div className="text-right text-xs text-muted-foreground tabular-nums">
+                    {formatCurrency(f.low)} – {formatCurrency(f.high)}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </CardContent>
       </Card>
