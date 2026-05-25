@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import {
   Swords, Play, Square, RefreshCw, Flame, AlertTriangle, Clock, DollarSign, Users,
   Moon, Trophy, Activity, MessageSquare, Calendar, ExternalLink, Sparkles, FileText,
-  ChevronRight, TrendingDown, CheckCircle2, History, Heart, ClipboardList,
+  ChevronRight, TrendingDown, CheckCircle2, History, Heart, ClipboardList, Pin,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api, { formatCurrency } from '../utils/api';
@@ -47,6 +47,46 @@ const WarRoom = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const notesTimer = useRef(null);
+  // Phase 29.1: drag-and-drop state
+  const [draggingLeadId, setDraggingLeadId] = useState(null);
+  const [dragOverBucket, setDragOverBucket] = useState(null);
+
+  const moveLeadToBucket = async (leadId, targetBucket, sourceBucket) => {
+    if (!leadId || sourceBucket === targetBucket) return;
+    // Optimistic move
+    setBoard((prev) => {
+      if (!prev) return prev;
+      const buckets = prev.buckets.map((b) => ({ ...b, leads: [...b.leads] }));
+      let card = null;
+      for (const b of buckets) {
+        const idx = b.leads.findIndex((l) => l.id === leadId);
+        if (idx >= 0) { card = b.leads.splice(idx, 1)[0]; b.count = b.leads.length; b.total_value = b.leads.reduce((s,l)=>s+(l.deal_value||0),0); break; }
+      }
+      if (card) {
+        const t = buckets.find((b) => b.id === targetBucket);
+        if (t) { t.leads.unshift({ ...card, is_manual_override: true }); t.count = t.leads.length; t.total_value = t.leads.reduce((s,l)=>s+(l.deal_value||0),0); }
+      }
+      return { ...prev, buckets };
+    });
+    try {
+      await api.patch(`/war-room/leads/${leadId}/bucket`, { bucket: targetBucket });
+      toast.success('Pinned to ' + targetBucket.replace(/_/g, ' '));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Move failed — reverting');
+      await loadBoard();
+    }
+  };
+
+  const unpinLead = async (leadId, e) => {
+    e?.stopPropagation();
+    try {
+      await api.patch(`/war-room/leads/${leadId}/bucket`, { bucket: null });
+      toast.success('Unpinned — auto-classifier resumed');
+      await loadBoard();
+    } catch (err) {
+      toast.error('Failed to unpin');
+    }
+  };
 
   const loadBoard = useCallback(async () => {
     try {
@@ -158,9 +198,9 @@ const WarRoom = () => {
             <FeatureInfo
               size="lg"
               title="What is the War Room?"
-              description="A live operations board that auto-sorts your open leads into 7 smart buckets based on what they need this week — not by pipeline stage. Replaces spreadsheet-based weekly reviews with focus, intelligence, and one-click AI summaries."
+              description="A live operations board that auto-sorts your open leads into 7 smart buckets based on what they need this week — not by pipeline stage. Drag any card to a different bucket to manually pin it (great for overriding the AI when you know something it doesn't)."
               howTo="Start a Weekly Review session, click cards to discuss them (they get logged), jot notes in the side panel. End the session — AI generates a structured summary and converts action items into Tasks automatically."
-              tip="Mention #blocker in any comment to force a lead into the Blocked bucket — useful for things AI can't infer."
+              tip="Drag a card between buckets to pin it. Click the 📌 'pinned' badge to clear and resume auto-classification. Mention #blocker in any comment to force a lead into the Blocked bucket."
             />
           </h1>
           <p className="text-muted-foreground text-sm mt-1">Collaboration that converts — your weekly business operating board.</p>
@@ -220,23 +260,47 @@ const WarRoom = () => {
             {board.buckets.map((bucket) => {
               const Icon = BUCKET_ICONS[bucket.id] || Activity;
               return (
-                <div key={bucket.id} className="w-[300px] shrink-0" data-testid={`bucket-${bucket.id}`}>
-                  <div className="rounded-t-lg p-2.5 flex items-center gap-2" style={{ background: bucket.color + '14', borderTop: `3px solid ${bucket.color}` }}>
+                <div
+                  key={bucket.id}
+                  className="w-[300px] shrink-0"
+                  data-testid={`bucket-${bucket.id}`}
+                  onDragOver={(e) => { e.preventDefault(); setDragOverBucket(bucket.id); }}
+                  onDragLeave={() => setDragOverBucket((b) => b === bucket.id ? null : b)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const fromBucket = e.dataTransfer.getData('source-bucket');
+                    const leadId = e.dataTransfer.getData('lead-id');
+                    setDragOverBucket(null);
+                    setDraggingLeadId(null);
+                    if (leadId) moveLeadToBucket(leadId, bucket.id, fromBucket);
+                  }}
+                >
+                  <div className={`rounded-t-lg p-2.5 flex items-center gap-2 transition-all ${dragOverBucket === bucket.id ? 'ring-2 ring-violet-500 ring-offset-1' : ''}`} style={{ background: bucket.color + '14', borderTop: `3px solid ${bucket.color}` }}>
                     <Icon className="w-4 h-4" style={{ color: bucket.color }} />
                     <span className="text-sm font-semibold">{bucket.label.replace(/^[^\s]+\s/, '')}</span>
                     <Badge variant="outline" className="text-[10px] ml-auto">{bucket.count}</Badge>
                   </div>
-                  <div className="bg-muted/30 rounded-b-lg p-2 space-y-2 max-h-[680px] overflow-y-auto">
+                  <div className={`bg-muted/30 rounded-b-lg p-2 space-y-2 max-h-[680px] overflow-y-auto transition-colors ${dragOverBucket === bucket.id ? 'bg-violet-100/40 dark:bg-violet-950/30' : ''}`}>
                     {bucket.leads.length === 0 && (
-                      <p className="text-[11px] text-muted-foreground text-center py-6 italic">No leads in this bucket.</p>
+                      <p className="text-[11px] text-muted-foreground text-center py-6 italic">{dragOverBucket === bucket.id ? 'Drop here to pin' : 'No leads in this bucket.'}</p>
                     )}
                     {bucket.leads.map((lead) => (
                       <LeadCard
                         key={lead.id}
                         lead={lead}
                         bucketColor={bucket.color}
+                        bucketId={bucket.id}
                         reviewMode={isReviewMode}
                         discussed={discussed.has(lead.id)}
+                        isDragging={draggingLeadId === lead.id}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('lead-id', lead.id);
+                          e.dataTransfer.setData('source-bucket', bucket.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setDraggingLeadId(lead.id);
+                        }}
+                        onDragEnd={() => { setDraggingLeadId(null); setDragOverBucket(null); }}
+                        onUnpin={(e) => unpinLead(lead.id, e)}
                         onClick={() => {
                           if (isReviewMode) {
                             setActiveLeadCard(lead);
@@ -366,17 +430,31 @@ const WarRoom = () => {
   );
 };
 
-const LeadCard = ({ lead, bucketColor, reviewMode, discussed, onClick, onOpenLead }) => {
+const LeadCard = ({ lead, bucketColor, bucketId, reviewMode, discussed, isDragging, onClick, onOpenLead, onDragStart, onDragEnd, onUnpin }) => {
   const HealthIcon = lead.health_band === 'hot' ? Flame : lead.health_band === 'at_risk' ? AlertTriangle : Heart;
   return (
     <div
-      className={`bg-white dark:bg-slate-900 rounded-md p-2.5 border-l-2 hover:shadow-md transition-all cursor-pointer ${discussed ? 'opacity-60' : ''}`}
+      className={`group relative bg-white dark:bg-slate-900 rounded-md p-2.5 border-l-2 hover:shadow-md transition-all cursor-grab active:cursor-grabbing ${discussed ? 'opacity-60' : ''} ${isDragging ? 'opacity-40 scale-95' : ''}`}
       style={{ borderLeftColor: bucketColor }}
       onClick={onClick}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       data-testid={`war-room-card-${lead.id}`}
     >
+      {lead.is_manual_override && (
+        <button
+          type="button"
+          onClick={onUnpin}
+          title="Manually pinned — click to unpin & resume auto-classification"
+          className="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 hover:bg-violet-200 dark:hover:bg-violet-900/60 transition-colors flex items-center gap-0.5 z-10"
+          data-testid={`unpin-${lead.id}`}
+        >
+          <Pin className="w-2.5 h-2.5" /> pinned
+        </button>
+      )}
       <div className="flex items-start gap-2 mb-1">
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pr-12">
           <h4 className="text-sm font-medium leading-tight line-clamp-2">{lead.title}</h4>
           {lead.customer_company && (
             <p className="text-[11px] text-muted-foreground truncate">{lead.customer_company}</p>

@@ -5667,9 +5667,20 @@ WAR_ROOM_BUCKETS = [
 
 def _classify_war_room_bucket(lead: dict, health: dict, today: date) -> str:
     """Decide which War Room bucket a lead belongs to. Priority order matters —
-    a lead can only be in one bucket; we pick the most actionable."""
+    a lead can only be in one bucket; we pick the most actionable.
+
+    Phase 29.1: a manual `war_room_bucket_override` on the lead doc takes precedence
+    over the computed bucket — UNLESS the lead has just been won/lost (we auto-clear
+    overrides for terminal states so won deals always land in 'recently_won')."""
     status_is_won = bool(lead.get('status_is_won'))
     status_is_lost = bool(lead.get('status_is_lost'))
+
+    override = lead.get('war_room_bucket_override')
+    valid_bucket_ids = {b['id'] for b in WAR_ROOM_BUCKETS}
+    if (override in valid_bucket_ids
+        and not status_is_won
+        and not status_is_lost):
+        return override
 
     # 1) Recently Won — within last 14 days (gives admin reason to celebrate)
     if status_is_won:
@@ -5855,6 +5866,8 @@ async def war_room_board(
             "expected_revenue": round(deal_value * (_probability_for(st.get('name', ''), False) / 100), 0),
             "deal_room_enabled": bool(lead.get('deal_room_enabled')),
             "updated_at": lead.get('updated_at'),
+            # Phase 29.1: flag manually-overridden cards so the UI can show a "📌 pinned" indicator
+            "is_manual_override": bool(lead.get('war_room_bucket_override')) and not lead['status_is_won'] and not lead['status_is_lost'],
         }
         bucket_map[bucket].append(card)
 
@@ -5881,6 +5894,59 @@ async def war_room_board(
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+# ----- WEEKLY REVIEW SESSIONS -----
+
+# Phase 29.1: manual bucket override via drag-and-drop
+class WarRoomBucketOverride(BaseModel):
+    bucket: Optional[str] = None  # one of WAR_ROOM_BUCKETS ids, or None to clear
+
+@api_router.patch("/war-room/leads/{lead_id}/bucket")
+async def override_war_room_bucket(
+    lead_id: str, body: WarRoomBucketOverride, current_user: dict = Depends(get_current_user)
+):
+    """Manually pin a lead to a specific War Room bucket (e.g. via drag-and-drop).
+    Pass bucket=None to clear the override and let the auto-classifier take over again.
+    Honored by `_classify_war_room_bucket` unless the lead is won/lost."""
+    if current_user['role'] == UserRole.CUSTOMER.value:
+        raise HTTPException(status_code=403, detail="Not available for customers")
+
+    valid_bucket_ids = {b['id'] for b in WAR_ROOM_BUCKETS}
+    if body.bucket is not None and body.bucket not in valid_bucket_ids:
+        raise HTTPException(status_code=400, detail=f"Invalid bucket id. Allowed: {sorted(valid_bucket_ids)}")
+
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Lead-level RBAC: same rules as get_lead
+    role = current_user.get('role')
+    if role == UserRole.SELLING_PARTNER.value:
+        if (lead.get('selling_partner_id') != current_user['id']
+            and not any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or []))):
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif role == UserRole.SALES_ASSOCIATE.value and lead.get('sales_associate_id') != current_user['id']:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    now = datetime.now(timezone.utc).isoformat()
+    if body.bucket is None:
+        await db.leads.update_one(
+            {"id": lead_id},
+            {"$unset": {"war_room_bucket_override": "", "war_room_bucket_override_at": "", "war_room_bucket_override_by": ""},
+             "$set": {"updated_at": now}}
+        )
+        return {"ok": True, "bucket": None, "cleared": True}
+
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$set": {
+            "war_room_bucket_override": body.bucket,
+            "war_room_bucket_override_at": now,
+            "war_room_bucket_override_by": current_user['id'],
+            "updated_at": now,
+        }}
+    )
+    return {"ok": True, "bucket": body.bucket, "lead_id": lead_id}
 
 # ----- WEEKLY REVIEW SESSIONS -----
 
