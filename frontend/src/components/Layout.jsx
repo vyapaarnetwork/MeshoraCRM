@@ -42,12 +42,14 @@ import {
   Sun,
   Moon,
   Briefcase,
-  TrendingUp
+  TrendingUp,
+  Sparkles
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
 import { MeshoraMark, MeshoraLogoOnDark } from './MeshoraLogo';
 import RoleContextBanner from './RoleContextBanner';
+import CommandBar from './CommandBar';
 
 // Vyapaar small mark for "Powered by" footer
 const VYAPAAR_LOGO_URL = "https://customer-assets.emergentagent.com/job_209b3ec1-0b0e-469f-a49b-80bce3fa5de7/artifacts/8t9iukb4_Vyapaar-Logo.png";
@@ -64,6 +66,7 @@ const Layout = ({ children }) => {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
 
   // Fetch notifications
   const fetchNotifications = useCallback(async () => {
@@ -85,6 +88,18 @@ const Layout = ({ children }) => {
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, [fetchNotifications]);
+
+  // Phase 3: Cmd+K / Ctrl+K opens the AI command bar
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -463,6 +478,28 @@ const Layout = ({ children }) => {
             <div className="flex items-center gap-2">
               {/* Theme Toggle */}
               <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCommandOpen(true)}
+                className="hidden md:inline-flex gap-2 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                data-testid="ai-command-btn"
+                title="AI Command Bar (Cmd+K)"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                <span className="text-xs">Ask Meshora…</span>
+                <kbd className="ml-1 px-1.5 py-0.5 rounded bg-muted text-[9px] uppercase">⌘K</kbd>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setCommandOpen(true)}
+                className="md:hidden text-slate-600 dark:text-slate-300"
+                data-testid="ai-command-btn-mobile"
+                aria-label="AI Command"
+              >
+                <Sparkles className="w-5 h-5 text-violet-500" />
+              </Button>
+              <Button
                 variant="ghost"
                 size="icon"
                 onClick={toggleTheme}
@@ -574,6 +611,9 @@ const Layout = ({ children }) => {
         {/* Phase 18: Role context banner for Vyapaar Operations / Finance users */}
         {user?.role === 'vyapaar_ops' && <RoleContextBanner role="vyapaar_ops" />}
         {user?.role === 'vyapaar_finance' && <RoleContextBanner role="vyapaar_finance" />}
+
+        {/* Phase 3: AI Command Bar */}
+        <CommandBar open={commandOpen} onOpenChange={setCommandOpen} />
 
         {/* Page Content */}
         <main className="flex-1 p-4 lg:p-6">

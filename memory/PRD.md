@@ -244,6 +244,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Frontend `AIInsightsCard.jsx`** — single card on Lead Detail sidebar with two tabs (Risk / Next Move). Risk view: severity-colored header card (bar + closure probability), top risk factors with severity badges, stakeholder gaps, numbered mitigations, "Re-analyze" button. Suggestion view: recommended action card with channel icon (Mail/Phone/MessageCircle/Calendar/Hash), timing badge, conversation starter in a copy-able code-style box (Copy → toast), proposal recommendation, questions to ask, loop-in chips, "Regenerate" button.
 - [x] **Live test with Gemini:** sample lead with the Acme Corp meeting summary returned Risk 45/medium, 80% confidence, 65% closure probability, identified missing technical champion + legal/security reviewer, recommended tiered pricing + Okta SAML timeline. Follow-up suggestion recommended "Send comprehensive expansion proposal", channel=email, timing=tomorrow morning, conversation starter mentioning Priya by name and the pilot-to-250-reps story.
 
+### Phase 23 — AI Command Bar (Feb 25, 2026)
+- [x] **`POST /api/ai/command`** — natural-language CRM query endpoint. Gemini 3 Pro receives the user prompt + a grounding block (list of actual statuses, categories, partner names in the system) and emits STRICT JSON with `intent` (search_leads/get_at_risk/top_partners/stats/help) and a `filters` spec from a whitelisted schema (status_name_contains, primary_category_contains, partner_name_contains, customer_name_contains, customer_company_contains, health_bands array, min/max_deal_value, days_inactive_min/max, is_won, is_lost, limit). The LLM NEVER touches raw Mongo — we apply the structured filter server-side with `re.escape()` for safety.
+- [x] **Role-scoped results** — Selling Partner sees only assigned leads, Sales Associate only their leads, Customer only their leads; admin/ops sees all.
+- [x] **Post-filter by health band + days_inactive** computed via `compute_lead_health()` per lead so AI can ask for "hot leads inactive 5+ days" without needing to materialize health on every lead.
+- [x] **Returns** `{intent, filters, summary, suggested_followups, results, count}` with up to 50 rows per query.
+- [x] **Frontend `CommandBar.jsx`** — Dialog-based command palette. Cmd+K / Ctrl+K global keyboard shortcut from anywhere in the app (Layout.jsx). Header has an "Ask Meshora…" button (with ⌘K hint kbd) on desktop, sparkle icon button on mobile. Empty state shows 5 sample queries as clickable shortcuts. Result rows show health-band icon, status badge with color, customer/company/category/partner subline, deal value. Click a result row → navigate to lead detail. Suggested follow-up chips below results re-run the bar with the new query.
+- [x] **Verified live:** Query "Show me at-risk leads" → returned 20 at-risk leads with proper styling. Query "Big deals worth more than 1 lakh" → 5 results. Query "Hot leads inactive more than 5 days" → 0 (correctly empty since most hot leads are active). Cmd+K toggle confirmed working.
+
+
 
 
 

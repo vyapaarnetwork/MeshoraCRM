@@ -4780,6 +4780,172 @@ async def ai_followup_suggestion(lead_id: str, current_user: dict = Depends(get_
         result['channel'] = 'email'
     return result
 
+# ==================== PHASE 3: AI COMMAND BAR ====================
+
+class CommandQueryRequest(BaseModel):
+    query: str
+
+@api_router.post("/ai/command")
+async def ai_command_bar(body: CommandQueryRequest, current_user: dict = Depends(get_current_user)):
+    """Natural-language CRM query. Gemini converts the prompt to a structured filter spec
+    (whitelisted fields), then we apply it server-side. The LLM NEVER touches raw Mongo.
+    """
+    q = (body.query or '').strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Query is required")
+    if len(q) > 500:
+        raise HTTPException(status_code=400, detail="Query too long")
+
+    # First — list available statuses + categories + partners so the AI can ground its filters
+    statuses = await db.lead_statuses.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
+    primary_cats = await db.primary_categories.find({}, {"_id": 0, "name": 1}).to_list(100)
+    partners = await db.users.find({"role": "selling_partner", "is_active": True}, {"_id": 0, "name": 1, "company_name": 1}).to_list(200)
+
+    grounding = (
+        "Available lead statuses: " + ", ".join([s['name'] for s in statuses][:30]) + "\n"
+        "Available categories: " + ", ".join([c['name'] for c in primary_cats][:30]) + "\n"
+        "Sample selling partners: " + ", ".join([p['name'] for p in partners][:15])
+    )
+
+    system_msg = (
+        "You are a CRM query parser. Convert the user's natural-language question into a STRICT JSON filter spec. "
+        "Return ONLY the JSON object, no prose, no markdown, no code fences.\n"
+        "Schema:\n"
+        "{\n"
+        '  "intent": one of [search_leads, get_at_risk, top_partners, stats, help, unknown],\n'
+        '  "filters": {\n'
+        '    "status_name_contains": optional string,\n'
+        '    "primary_category_contains": optional string,\n'
+        '    "partner_name_contains": optional string,\n'
+        '    "customer_name_contains": optional string,\n'
+        '    "customer_company_contains": optional string,\n'
+        '    "health_bands": optional array (subset of [hot, warm, cold, at_risk]),\n'
+        '    "min_deal_value": optional number,\n'
+        '    "max_deal_value": optional number,\n'
+        '    "days_inactive_min": optional number,\n'
+        '    "days_inactive_max": optional number,\n'
+        '    "is_won": optional boolean,\n'
+        '    "is_lost": optional boolean,\n'
+        '    "limit": integer default 20 max 50\n'
+        '  },\n'
+        '  "summary": string (1 sentence describing what we will show),\n'
+        '  "suggested_followups": array of up to 3 strings (other queries the user might want)\n'
+        "}\n"
+        "Use null or omit fields the user did not specify. Map words to filters:\n"
+        "  'hot/warm/cold/at risk' → health_bands; 'won deals' → is_won=true; 'lost' → is_lost=true; "
+        "'big/large/high-value' → min_deal_value=100000 (1 lakh); 'inactive/stale/cold for X days' → days_inactive_min=X.\n"
+        f"Grounding (use these EXACT strings if matched in the user query):\n{grounding}"
+    )
+
+    parsed = await _ai_lead_chat("command-" + str(uuid.uuid4())[:8], system_msg, f"User query: {q}\n\nReturn STRICT JSON only.")
+
+    filters = parsed.get('filters') or {}
+    intent = (parsed.get('intent') or 'search_leads').lower()
+    if intent not in ('search_leads', 'get_at_risk', 'top_partners', 'stats', 'help', 'unknown'):
+        intent = 'search_leads'
+    summary = str(parsed.get('summary') or '').strip()[:300]
+    suggested = [str(x) for x in (parsed.get('suggested_followups') or [])][:3]
+    limit = int(filters.get('limit') or 20)
+    limit = max(1, min(50, limit))
+
+    # Apply server-side filtering against the leads collection (role-scoped)
+    lead_query: Dict[str, Any] = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        lead_query['selling_partner_id'] = current_user['id']
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        lead_query['sales_associate_id'] = current_user['id']
+    elif current_user['role'] == UserRole.CUSTOMER.value:
+        lead_query['created_by'] = current_user['id']
+
+    def _ci_regex(val: str) -> Dict[str, str]:
+        return {"$regex": re.escape(val.strip()), "$options": "i"}
+
+    if filters.get('customer_name_contains'):
+        lead_query['customer_name'] = _ci_regex(filters['customer_name_contains'])
+    if filters.get('customer_company_contains'):
+        lead_query['customer_company'] = _ci_regex(filters['customer_company_contains'])
+    if filters.get('partner_name_contains'):
+        lead_query['selling_partner_name'] = _ci_regex(filters['partner_name_contains'])
+    if filters.get('primary_category_contains'):
+        lead_query['primary_category_name'] = _ci_regex(filters['primary_category_contains'])
+
+    # Status filter — match name
+    if filters.get('status_name_contains'):
+        matched = [s['id'] for s in statuses if filters['status_name_contains'].lower() in (s.get('name') or '').lower()]
+        if matched:
+            lead_query['status_id'] = {"$in": matched}
+
+    # is_won / is_lost via status_map
+    if filters.get('is_won') is True:
+        won_ids = []
+        all_st = await db.lead_statuses.find({"is_won": True}, {"_id": 0, "id": 1}).to_list(50)
+        won_ids = [s['id'] for s in all_st]
+        if won_ids:
+            lead_query['status_id'] = {"$in": won_ids}
+    elif filters.get('is_lost') is True:
+        all_st = await db.lead_statuses.find({"is_lost": True}, {"_id": 0, "id": 1}).to_list(50)
+        lost_ids = [s['id'] for s in all_st]
+        if lost_ids:
+            lead_query['status_id'] = {"$in": lost_ids}
+
+    # Deal value bounds
+    if filters.get('min_deal_value') is not None or filters.get('max_deal_value') is not None:
+        cond = {}
+        if filters.get('min_deal_value') is not None:
+            cond["$gte"] = float(filters['min_deal_value'])
+        if filters.get('max_deal_value') is not None:
+            cond["$lte"] = float(filters['max_deal_value'])
+        lead_query['deal_value'] = cond
+
+    raw_leads = await db.leads.find(lead_query, {"_id": 0}).sort("updated_at", -1).to_list(500)
+
+    # Post-filter by health band + days_inactive (computed in Python)
+    health_bands_filter = set([str(x).lower() for x in (filters.get('health_bands') or [])])
+    days_min = filters.get('days_inactive_min')
+    days_max = filters.get('days_inactive_max')
+
+    status_full = await db.lead_statuses.find({}, {"_id": 0}).to_list(200)
+    status_map_full = {s['id']: s for s in status_full}
+
+    results = []
+    for lead in raw_leads:
+        st = status_map_full.get(lead.get('status_id') or '') or {}
+        lead['active_partners_count'] = len([p for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'])
+        lead['status_is_won'] = bool(st.get('is_won'))
+        h = compute_lead_health(lead)
+        if health_bands_filter and h['band'] not in health_bands_filter:
+            continue
+        di = h.get('days_inactive')
+        if days_min is not None and (di is None or di < float(days_min)):
+            continue
+        if days_max is not None and (di is None or di > float(days_max)):
+            continue
+        if intent == 'get_at_risk' and h['band'] != 'at_risk':
+            continue
+        results.append({
+            "id": lead['id'],
+            "title": lead.get('title'),
+            "customer_name": lead.get('customer_name'),
+            "customer_company": lead.get('customer_company'),
+            "status_name": st.get('name'),
+            "status_color": st.get('color', '#6366F1'),
+            "deal_value": lead.get('deal_value') or 0,
+            "primary_category_name": lead.get('primary_category_name'),
+            "selling_partner_name": lead.get('selling_partner_name'),
+            "health": {"score": h['score'], "band": h['band'], "days_inactive": h.get('days_inactive')},
+        })
+        if len(results) >= limit:
+            break
+
+    return {
+        "intent": intent,
+        "filters": filters,
+        "summary": summary or f"Found {len(results)} lead(s) matching your query",
+        "suggested_followups": suggested,
+        "results": results,
+        "count": len(results),
+    }
+
 # ==================== BULK IMPORT ====================
 
 @api_router.get("/leads/import/template")
