@@ -307,6 +307,23 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
   - Admin "Open Deal Room" measured 200ms end-to-end flip.
   - Customer flow verified: access via email match, redacted fields confirmed (deal_value=0, description=None, non-public comments filtered), Deal Room live, public message post successful.
 
+### Phase 27.5 — Customer-only Layout + Magic-Link Invitations (Feb 25, 2026)
+- [x] **Customer-only LeadDetail layout**: `LeadDetail.jsx` early-returns a stripped view when `user.role === 'customer'` — back button + lead title + status badge + DealRoomTab. No sidebar (AI Insights, Follow-ups, Commission Breakdown, Tasks, Stakeholders, Assigned Partners all hidden). Clean focus on the collaboration surface.
+- [x] **Magic-link invitations** for external stakeholders (e.g. customer's CFO, legal counsel) who don't have a Meshora account:
+  - `POST /api/leads/{id}/deal-room/invites` (admin/ops/assigned-partner) — generates a `secrets.token_urlsafe(32)` token, configurable permissions (`view` / `comment` / `approve`), expiry (1–90 days, default 14). Returns `{token, magic_link, expires_at, use_count}`.
+  - `GET /api/leads/{id}/deal-room/invites` — list (raw tokens omitted from list view).
+  - `DELETE /api/leads/{id}/deal-room/invites/{invite_id}` — revoke (immediate).
+  - **Public/anonymous endpoints** (no auth required):
+    - `GET /api/deal-room/access/{token}` — full deal room view, bumps `use_count` + `last_used_at`.
+    - `POST /api/deal-room/access/{token}/messages` — guest posts public message stamped with `user_name="<Name> (Guest)"`, `user_role="guest"`. Requires `comment` permission.
+    - `POST /api/deal-room/access/{token}/approvals/{aid}/respond` — guest approves/rejects customer-targeted approvals. Requires `approve` permission.
+- [x] **`GuestDealRoom.jsx`** — public page at `/deal-room/:token` (no auth, no Layout shell). Uses raw axios (not the shared `api` instance with `withCredentials`). Renders gradient hero, partners, approvals (with role-gated Approve/Reject), shared documents, conversation thread with ⌘+Enter send. Graceful error card when token is invalid/expired/revoked.
+- [x] **`InvitesCard` sub-component** inside DealRoomTab (canManage roles only): create dialog with name/email/permissions/expiry/note → success step shows the full URL + Copy button + mailto: link. List view with Active/Expired/Revoked badges, permissions, expiry, use count, and revoke button.
+- [x] **`/app/frontend/src/utils/api.js`** 401 interceptor whitelist extended: paths starting with `/deal-room/` are now exempt from the auto-redirect to `/login`. This fixed the iter_17 blocker (guest magic links no longer bounce anonymous users to login).
+- [x] **Testing** — testing_agent_v3_fork iter_17 + main-agent screenshot verification:
+  - Backend: 17/17 new Phase 27.5 pytest tests PASS; all 27 Phase 27 regression tests still PASS.
+  - Frontend: customer-only layout ✅, invite create+copy+revoke ✅, guest magic link page renders gradient hero + approvals + conversation, guest message post works, guest approve works (verified via live screenshot — see Sarah CFO message + TEST_phase27_5 approved by Sarah Test (Guest)).
+
 
 
 

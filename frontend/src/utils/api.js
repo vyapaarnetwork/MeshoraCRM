@@ -22,7 +22,10 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       // Drop legacy token if present (one-time cleanup) and bounce to login
       try { localStorage.removeItem('token'); } catch (e) { /* ignore */ }
-      if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+      // Public paths that should NOT redirect on 401 (Phase 27.5: guest magic link)
+      const p = window.location.pathname;
+      const isPublicPath = p === '/login' || p === '/register' || p.startsWith('/deal-room/');
+      if (!isPublicPath) {
         window.location.href = '/login';
       }
     }
