@@ -1,0 +1,44 @@
+{
+  "summary": "Phase 27.5 end-to-end test. BACKEND: 17/17 new Phase 27.5 tests PASS, all 27 Phase 27 regression tests still PASS, 1 skip (unrelated env-limited). FRONTEND Test 1 (customer-only LeadDetail) PASS — [data-testid='lead-detail-customer'] renders for john@testco.com on lead 59ad1b49-…, NO sidebar (AI Insights / Follow-ups / Commission / Tasks / Stakeholders / Partners absent), Deal Room tab shown. FRONTEND Test 2 (admin invite create) PASS — generate-link flow shows full URL (https://…/deal-room/<token>), Copy button present, invite row appears with Active badge + permissions + 'Used 0x' + expiry, Revoke button visible. FRONTEND Test 3 (guest magic link) **FAIL — CRITICAL**: visiting /deal-room/<token> in a fresh context immediately redirects to /login. Backend public endpoints return 200 to anonymous curl, so the regression is purely client-side: the shared axios interceptor in /app/frontend/src/utils/api.js (lines 22–28) catches the 401 from AuthProvider's /auth/me bootstrap and force-navigates ANY non-/login,/register path (including /deal-room/*) to /login. GuestDealRoom never gets to render. This makes the entire magic-link UX unusable in a browser even though the API layer is correct.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Guest magic link (/deal-room/:token)",
+        "issue": "Global axios 401 interceptor in /app/frontend/src/utils/api.js (lines 22–28) redirects guests to /login because AuthProvider calls /auth/me on mount. The interceptor only excludes /login and /register from the redirect. Fix: also exclude paths starting with /deal-room/ (and any other future public routes). Verified via curl that the public backend endpoint returns 200 — the regression is 100% client-side. Without this fix, the entire Phase 27.5 magic-link feature is unusable end-to-end in a browser.",
+        "affected_selectors": ["[data-testid='guest-deal-room']", "[data-testid='guest-deal-room-error']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase27_5_invites.py",
+    "/app/test_reports/pytest/phase27_5_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL/P0: Patch /app/frontend/src/utils/api.js — update the 401 interceptor to also skip the redirect when window.location.pathname.startsWith('/deal-room/'). One-line change: replace `if (window.location.pathname !== '/login' && window.location.pathname !== '/register')` with `const p = window.location.pathname; if (p !== '/login' && p !== '/register' && !p.startsWith('/deal-room/'))`. After fix, retest GuestDealRoom render, guest message post, and guest approval respond."
+  ],
+  "critical_code_review_comments": [
+    "Backend Phase 27.5 (server.py 5308–5615) is clean: clear RBAC for create/list/revoke; expires/revoked/use_count semantics correct; tokens use secrets.token_urlsafe(32); list endpoint correctly projects {_id:0, token:0}; public endpoints gated by both _find_active_invite + deal_room_enabled check; guest comments stamped user_role='guest' and user_name='<Name> (Guest)'; approvals constrained to assignee_role IN ('customer','all') and to status='pending'. No issues found in implementation.",
+    "Magic-link URL builder at server.py:5393–5394 falls back to a relative '/deal-room/<token>' when FRONTEND_PUBLIC_URL/BACKEND_PUBLIC_URL env vars are missing. In practice the env doesn't set either, but the frontend InvitesCard already prepends window.location.origin when receiving a relative link, so the user experience is fine. Optional hardening: also accept REACT_APP_BACKEND_URL host or rely on Request.url origin for a richer default.",
+    "Frontend api.js interceptor is the SOLE point that breaks the public route. Recommend a `PUBLIC_PATH_PREFIXES = ['/login','/register','/deal-room/']` constant for clarity and future-proofing.",
+    "Frontend GuestDealRoom uses raw axios (correct — bypasses withCredentials cookie) and correctly handles the error state with [data-testid='guest-deal-room-error']. Once the api.js interceptor is patched, this page will render correctly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase27_5_invites.py (NEW — 17 pytest cases covering create/list/revoke RBAC, all 3 public endpoints, permission gating, expiry/revoke gating, deal_room_enabled gating, use_count bump, regression on LeadResponse.deal_room_enabled)"
+  ],
+  "success_rate": {
+    "backend": "100% — 17/17 new + 27/28 regression (1 unrelated skip)",
+    "frontend": "67% — 2/3 flows PASS (customer-only layout, admin invite create). 1/3 BROKEN (guest magic link redirects to /login due to global 401 interceptor)."
+  },
+  "test_credentials": "admin@vyapaarnetwork.com/admin123, john@testco.com/test123 — both work",
+  "seed_data_creation": "Created and revoked several test invites on canonical lead 59ad1b49-0e02-4689-8cd9-27f1f951b239 (TEST_stakeholder1@example.com, TEST_view_only@example.com, TEST_ui_invite@example.com). Created and approved a TEST_phase27_5 guest-targeted approval. All test data prefixed with TEST_ or auto-revoked at end. Deal Room re-enabled after toggle-off tests.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 27.5 backend is fully verified — pytest at /app/backend/tests/test_phase27_5_invites.py covers all 6 new endpoints (3 admin + 3 public) plus regression. ONE blocker remains: frontend api.js 401 interceptor at lines 22–28 must whitelist '/deal-room/' to allow the magic-link page to render. Until then, anonymous browser users cannot reach GuestDealRoom even though the backend works. After main agent applies the one-line fix, retest by: (1) admin creates an invite on lead 59ad1b49…; (2) open the magic_link in fresh context; (3) assert [data-testid='guest-deal-room'] renders, post a message via guest-message-input + guest-send-btn, and click any guest-approve-<id> for a customer-targeted pending approval. Use REACT_APP_BACKEND_URL env when running pytest manually.",
+  "rca of the issue": "RCA — /deal-room/:token route correctly defined in App.js:92 OUTSIDE ProtectedRoute. GuestDealRoom uses raw axios (good — no withCredentials cookie). HOWEVER, the AuthProvider that wraps the entire app runs `api.get('/auth/me')` on mount. The shared `api` instance has a 401 response interceptor (utils/api.js:19–31) that calls `window.location.href = '/login'` unless the current path is exactly '/login' or '/register'. For an anonymous guest, /auth/me returns 401 → interceptor fires → redirect to /login. The fix is a one-line guard: also skip the redirect when `window.location.pathname.startsWith('/deal-room/')`. Reproduction: open https://vyapaar-preview-1.preview.emergentagent.com/deal-room/<any-valid-token> in a fresh incognito → URL ends up at /login. Verified directly with curl that the same token returns 200 from /api/deal-room/access/<token> with full payload."
+}

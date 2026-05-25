@@ -285,6 +285,28 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Verified end-to-end via curl** — login sets cookie, `/auth/me` works with cookie-only, `/auth/logout` clears it, post-logout `/auth/me` returns 401, Bearer header path also still works (backward compat).
 - [x] **React Hook deps** — fixed 4 production-build warnings (GridReport.fetchReport via useCallback, Reports.fetchReports via useCallback, LeadForm useEffect with eslint-disable comment for id-only deps, RevenueIntelligence.fetch via useCallback). Frontend now builds cleanly with `CI=true yarn build` — zero warnings.
 
+### Phase 27 — Collaborative Deal Rooms (Feb 25, 2026)
+- [x] **Concept**: per-lead shared workspace where the customer, selling partner(s), and Meshora team can collaborate on the same activity, public messages, approvals, and documents. Sales-side internal data (deal value, commission, internal comments) remains hidden from the customer.
+- [x] **Backend endpoints**:
+  - `POST /api/leads/{id}/deal-room/toggle` — admin/ops/assigned-partner only. Sets `lead.deal_room_enabled`, records `deal_room_opened_at` + `deal_room_opened_by`.
+  - `GET /api/leads/{id}/deal-room` — returns curated `{lead, active_partners, public_comments, approvals, documents, commercial, is_internal_viewer, viewer_role}`. Customer view hides `description` + `deal_value`. Approvals filtered to assignee_role IN ('customer','all') for customer.
+  - `POST /api/leads/{id}/deal-room/messages` — alias for `/comments` that force-sets `is_public=true`. Fires in-app notifications to all deal-room participants except the author.
+  - `POST/GET /api/leads/{id}/approvals` — approval requests with `assignee_role` (customer/selling_partner/admin/all), `due_date`, status flow pending→approved/rejected.
+  - `POST /api/leads/{id}/approvals/{aid}/respond` — only the assignee role (or admin override) can respond; double-respond → 400.
+- [x] **Comments model**: new `is_public` boolean (default false). Public comments flow into the Deal Room conversation thread; private ones stay on the internal `CommentsCard`.
+- [x] **Customer access**: `GET /api/leads/{id}` RBAC widened — customer can read the lead via `created_by` OR `customer_email` match (mirrors `_can_access_deal_room`). When access is granted via email-match only, the response is **redacted server-side**: `deal_value=0`, `description=None`, `commission_breakdown=None`, `sales_associate_*=None`, `referred_by_*=None`, and non-public comments filtered out.
+- [x] **`LeadResponse` model** updated with `deal_room_enabled` + `deal_room_opened_at`; `enrich_lead()` passes them through.
+- [x] **Selling partner access**: `GET /api/leads/{id}` also accepts `assigned_partners` membership (multi-partner concurrent assignment) — not just the legacy `selling_partner_id`.
+- [x] **Frontend `DealRoomTab.jsx`** (mounted in `LeadDetail.jsx` above CommissionBreakdownCard):
+  - Disabled state: gradient violet→indigo CTA card with "Open Deal Room" button (manage-roles only) or a Lock hint for view-only roles.
+  - Live state: gradient header strip with LIVE badge + toggle switch, Project Summary card, Commercial Agreement card (if commercial exists), Approvals card with "Request Approval" dialog, Shared Documents card, Conversation card (public messages + textarea with ⌘+Enter shortcut).
+  - **Optimistic state** (`localEnabled`): UI flips to live view in <200ms after a successful toggle, independent of parent re-fetch latency.
+  - Approve/Reject buttons appear only for the targeted assignee role.
+- [x] **Testing** — testing_agent_v3_fork iter_14→15→16:
+  - 27/28 pytest backend tests PASS (1 environmental skip).
+  - Admin "Open Deal Room" measured 200ms end-to-end flip.
+  - Customer flow verified: access via email match, redacted fields confirmed (deal_value=0, description=None, non-public comments filtered), Deal Room live, public message post successful.
+
 
 
 

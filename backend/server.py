@@ -5305,6 +5305,317 @@ async def respond_to_approval(
             logger.warning(f"Approval response notification failed: {e}")
     return target
 
+# ==================== PHASE 27.5: DEAL ROOM MAGIC LINK INVITATIONS ====================
+
+VALID_INVITE_PERMISSIONS = {"view", "comment", "approve"}
+
+class DealRoomInviteCreate(BaseModel):
+    email: EmailStr
+    name: str
+    permissions: List[str] = ["view", "comment"]  # subset of view/comment/approve
+    expires_in_days: int = 14
+    note: Optional[str] = None
+
+class DealRoomGuestMessage(BaseModel):
+    content: str
+
+class DealRoomGuestApprovalResponse(BaseModel):
+    decision: str  # approved | rejected
+    note: Optional[str] = None
+
+def _generate_invite_token() -> str:
+    """Generate a URL-safe 32-byte random token."""
+    import secrets
+    return secrets.token_urlsafe(32)
+
+async def _find_active_invite(token: str) -> Optional[dict]:
+    """Fetch an invite by token. Returns None if missing / revoked / expired."""
+    invite = await db.deal_room_invites.find_one({"token": token}, {"_id": 0})
+    if not invite:
+        return None
+    if invite.get('revoked'):
+        return None
+    expires_at = invite.get('expires_at')
+    if expires_at:
+        try:
+            exp_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            if exp_dt < datetime.now(timezone.utc):
+                return None
+        except Exception:
+            pass
+    return invite
+
+@api_router.post("/leads/{lead_id}/deal-room/invites")
+async def create_deal_room_invite(
+    lead_id: str, body: DealRoomInviteCreate, current_user: dict = Depends(get_current_user)
+):
+    """Generate a magic-link invite for an external stakeholder. Admin/ops/assigned-partner only."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not lead.get('deal_room_enabled'):
+        raise HTTPException(status_code=400, detail="Open the Deal Room before sending invites")
+
+    role = current_user.get('role')
+    is_assigned_partner = (
+        role == UserRole.SELLING_PARTNER.value
+        and (current_user['id'] == lead.get('selling_partner_id')
+             or any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])))
+    )
+    if role != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops') and not is_assigned_partner:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    perms = [p for p in (body.permissions or []) if p in VALID_INVITE_PERMISSIONS]
+    if not perms:
+        perms = ["view", "comment"]
+
+    expires_in = max(1, min(90, int(body.expires_in_days or 14)))
+    token = _generate_invite_token()
+    invite = {
+        "id": str(uuid.uuid4()),
+        "lead_id": lead_id,
+        "email": body.email.lower(),
+        "name": body.name.strip()[:100],
+        "permissions": perms,
+        "token": token,
+        "note": (body.note or '').strip()[:300],
+        "created_by": current_user['id'],
+        "created_by_name": current_user['name'],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=expires_in)).isoformat(),
+        "revoked": False,
+        "last_used_at": None,
+        "use_count": 0,
+    }
+    await db.deal_room_invites.insert_one(invite)
+
+    # Build the magic link using the same external URL the frontend uses
+    base_url = os.environ.get("FRONTEND_PUBLIC_URL") or os.environ.get("BACKEND_PUBLIC_URL") or ""
+    magic_link = f"{base_url.rstrip('/')}/deal-room/{token}" if base_url else f"/deal-room/{token}"
+
+    return {
+        "id": invite['id'],
+        "email": invite['email'],
+        "name": invite['name'],
+        "permissions": perms,
+        "token": token,
+        "magic_link": magic_link,
+        "expires_at": invite['expires_at'],
+        "use_count": 0,
+    }
+
+@api_router.get("/leads/{lead_id}/deal-room/invites")
+async def list_deal_room_invites(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """List all invites for this lead. Admin/ops/partner only."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    role = current_user.get('role')
+    is_assigned_partner = (
+        role == UserRole.SELLING_PARTNER.value
+        and (current_user['id'] == lead.get('selling_partner_id')
+             or any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])))
+    )
+    if role != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops') and not is_assigned_partner:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    invites = await db.deal_room_invites.find({"lead_id": lead_id}, {"_id": 0, "token": 0}).sort("created_at", -1).to_list(50)
+    # Don't return raw tokens in list view; only return after creation
+    return invites
+
+@api_router.delete("/leads/{lead_id}/deal-room/invites/{invite_id}")
+async def revoke_deal_room_invite(lead_id: str, invite_id: str, current_user: dict = Depends(get_current_user)):
+    """Revoke an invite. Admin/ops/partner only."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    role = current_user.get('role')
+    is_assigned_partner = (
+        role == UserRole.SELLING_PARTNER.value
+        and (current_user['id'] == lead.get('selling_partner_id')
+             or any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])))
+    )
+    if role != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops') and not is_assigned_partner:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    res = await db.deal_room_invites.update_one(
+        {"id": invite_id, "lead_id": lead_id},
+        {"$set": {"revoked": True, "revoked_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    return {"revoked": True}
+
+# ----- PUBLIC magic-link endpoints (no auth required) -----
+
+async def _resolve_invite_or_404(token: str) -> tuple:
+    invite = await _find_active_invite(token)
+    if not invite:
+        raise HTTPException(status_code=403, detail="Invite is invalid, expired, or revoked")
+    lead = await db.leads.find_one({"id": invite['lead_id']}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not lead.get('deal_room_enabled'):
+        raise HTTPException(status_code=403, detail="Deal Room is no longer active for this lead")
+    return invite, lead
+
+@api_router.get("/deal-room/access/{token}")
+async def guest_view_deal_room(token: str):
+    """Public endpoint — guest views the Deal Room via magic link. No auth required."""
+    invite, lead = await _resolve_invite_or_404(token)
+
+    # Bump usage tracker (fire-and-forget)
+    try:
+        await db.deal_room_invites.update_one(
+            {"id": invite['id']},
+            {"$set": {"last_used_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"use_count": 1}}
+        )
+    except Exception:
+        pass
+
+    st = await db.lead_statuses.find_one({"id": lead.get('status_id')}, {"_id": 0}) if lead.get('status_id') else None
+    public_comments = [c for c in (lead.get('comments') or []) if c.get('is_public')]
+    # Guest sees approvals targeted at customer or all (same as customer view)
+    approvals = [a for a in (lead.get('approvals') or []) if a.get('assignee_role') in ('customer', 'all')]
+    docs = [d for d in (lead.get('documents') or []) if d.get('is_shared_in_deal_room', True)]
+    safe_docs = [{
+        "id": d.get('id'), "filename": d.get('filename'), "original_filename": d.get('original_filename'),
+        "uploaded_at": d.get('uploaded_at'), "uploaded_by_name": d.get('uploaded_by_name'),
+        "tag": d.get('tag'), "size_kb": d.get('size_kb'),
+    } for d in docs]
+    active_partners = [
+        {"partner_name": p.get('partner_name'), "company_name": p.get('partner_company')}
+        for p in (lead.get('assigned_partners') or []) if p.get('status') == 'active'
+    ]
+
+    return {
+        "invite": {
+            "name": invite['name'],
+            "email": invite['email'],
+            "permissions": invite['permissions'],
+            "expires_at": invite['expires_at'],
+            "invited_by_name": invite.get('created_by_name'),
+        },
+        "lead": {
+            "id": lead['id'],
+            "title": lead.get('title'),
+            "customer_name": lead.get('customer_name'),
+            "customer_company": lead.get('customer_company'),
+            "primary_category_name": lead.get('primary_category_name'),
+            "status_name": (st or {}).get('name', 'Unstaged'),
+            "status_color": (st or {}).get('color', '#6366F1'),
+        },
+        "active_partners": active_partners,
+        "public_comments": public_comments,
+        "approvals": approvals,
+        "documents": safe_docs,
+    }
+
+@api_router.post("/deal-room/access/{token}/messages")
+async def guest_post_message(token: str, body: DealRoomGuestMessage):
+    """Guest posts a public message via magic link. Requires `comment` permission."""
+    invite, lead = await _resolve_invite_or_404(token)
+    if 'comment' not in (invite.get('permissions') or []):
+        raise HTTPException(status_code=403, detail="This invite does not allow posting messages")
+    content = (body.content or '').strip()[:5000]
+    if not content:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    comment = {
+        "id": str(uuid.uuid4()),
+        "content": content,
+        "user_id": f"guest:{invite['id']}",
+        "user_name": f"{invite['name']} (Guest)",
+        "user_role": "guest",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "parent_comment_id": None,
+        "is_public": True,
+        "guest_invite_id": invite['id'],
+    }
+    await db.leads.update_one(
+        {"id": lead['id']},
+        {"$push": {"comments": comment}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    # Notify lead participants
+    recipients = set()
+    if lead.get('created_by'):
+        recipients.add(lead['created_by'])
+    if lead.get('selling_partner_id'):
+        recipients.add(lead['selling_partner_id'])
+    for p in (lead.get('assigned_partners') or []):
+        if p.get('status') == 'active' and p.get('partner_id'):
+            recipients.add(p['partner_id'])
+    for uid in recipients:
+        try:
+            await create_notification(
+                user_id=uid,
+                title=f"Guest message · {lead.get('title','')}",
+                message=f"{invite['name']} (guest): {content[:140]}",
+                notification_type=NotificationType.LEAD_MENTION,
+                lead_id=lead['id'],
+            )
+        except Exception as e:
+            logger.warning(f"Guest msg notification failed: {e}")
+    # Bump invite usage
+    try:
+        await db.deal_room_invites.update_one(
+            {"id": invite['id']},
+            {"$set": {"last_used_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"use_count": 1}}
+        )
+    except Exception:
+        pass
+    return comment
+
+@api_router.post("/deal-room/access/{token}/approvals/{approval_id}/respond")
+async def guest_respond_to_approval(
+    token: str, approval_id: str, body: DealRoomGuestApprovalResponse
+):
+    """Guest responds to an approval via magic link. Requires `approve` permission."""
+    if body.decision not in ('approved', 'rejected'):
+        raise HTTPException(status_code=400, detail="decision must be 'approved' or 'rejected'")
+    invite, lead = await _resolve_invite_or_404(token)
+    if 'approve' not in (invite.get('permissions') or []):
+        raise HTTPException(status_code=403, detail="This invite does not allow responding to approvals")
+    approvals = lead.get('approvals') or []
+    target = next((a for a in approvals if a.get('id') == approval_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    if target.get('status') != 'pending':
+        raise HTTPException(status_code=400, detail="Approval already responded to")
+    if target.get('assignee_role') not in ('customer', 'all'):
+        raise HTTPException(status_code=403, detail="This approval is not for external stakeholders")
+
+    target['status'] = body.decision
+    target['decision'] = body.decision
+    target['decision_note'] = (body.note or '').strip()[:1000]
+    target['responded_at'] = datetime.now(timezone.utc).isoformat()
+    target['responded_by'] = f"guest:{invite['id']}"
+    target['responded_by_name'] = f"{invite['name']} (Guest)"
+    await db.leads.update_one(
+        {"id": lead['id'], "approvals.id": approval_id},
+        {"$set": {"approvals.$": target, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    creator_id = target.get('created_by')
+    if creator_id:
+        try:
+            await create_notification(
+                user_id=creator_id,
+                title=f"Approval {body.decision} by guest · {target.get('title','')}",
+                message=f"{invite['name']} (guest) {body.decision} your request.",
+                notification_type=NotificationType.LEAD_MENTION,
+                lead_id=lead['id'],
+            )
+        except Exception as e:
+            logger.warning(f"Guest approval notif failed: {e}")
+    try:
+        await db.deal_room_invites.update_one(
+            {"id": invite['id']},
+            {"$set": {"last_used_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"use_count": 1}}
+        )
+    except Exception:
+        pass
+    return target
+
+
+
 
 
 

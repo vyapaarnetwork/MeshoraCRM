@@ -30,7 +30,7 @@ import DealRoomTab from './leadDetail/DealRoomTab';
 const LeadDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAdmin, isSalesAssociate, canEditLeadsCompanies, canAccessCommercials } = useAuth();
+  const { isAdmin, isSalesAssociate, isCustomer, canEditLeadsCompanies, canAccessCommercials } = useAuth();
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -291,6 +291,26 @@ const LeadDetail = () => {
 
   if (loading) return <LeadDetailSkeleton />;
   if (!lead) return null;
+
+  // Phase 27.5: Customer-only stripped layout — focus on the Deal Room.
+  if (isCustomer) {
+    return (
+      <div className="space-y-6" data-testid="lead-detail-customer">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" onClick={() => navigate('/leads')} data-testid="back-btn">
+            <ArrowLeft className="w-4 h-4 mr-2" /> Back
+          </Button>
+          <div className="flex-1">
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">{lead.title}</h1>
+            <p className="text-xs text-muted-foreground">
+              {lead.primary_category_name || 'Project'} · Status: <span className="font-medium" style={{ color: lead.status_color || '#6366F1' }}>{lead.status_name || 'In progress'}</span>
+            </p>
+          </div>
+        </div>
+        <DealRoomTab leadId={id} lead={lead} onLeadRefresh={fetchLead} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6" data-testid="lead-detail-page">

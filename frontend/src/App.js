@@ -19,6 +19,7 @@ import Reports from './pages/Reports';
 import RevenueIntelligence from './pages/RevenueIntelligence';
 import PredictiveForecast from './pages/PredictiveForecast';
 import PartnerIntelligence from './pages/PartnerIntelligence';
+import GuestDealRoom from './pages/GuestDealRoom';
 import GridReport from './pages/GridReport';
 import Users from './pages/Users';
 import Companies from './pages/Companies';
@@ -86,6 +87,9 @@ function AppRoutes() {
       {/* Public Routes */}
       <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+
+      {/* Phase 27.5: Guest Deal Room via magic link — no auth required */}
+      <Route path="/deal-room/:token" element={<GuestDealRoom />} />
 
       {/* Protected Routes - All Roles */}
       <Route path="/dashboard" element={
