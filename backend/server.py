@@ -222,6 +222,8 @@ class NotificationType(str, Enum):
     COMMERCIAL_INVOICE_OVERDUE = "commercial_invoice_overdue"
     COMMERCIAL_RENEWAL_WINDOW = "commercial_renewal_window"
     COMMERCIAL_BILLING_DUE = "commercial_billing_due"
+    # Phase 1 (Revenue OS): collaboration mentions
+    LEAD_MENTION = "lead_mention"
 
 class NotificationCreate(BaseModel):
     type: NotificationType
@@ -3341,9 +3343,395 @@ async def add_comment(lead_id: str, comment_data: CommentCreate, current_user: d
             "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
         }
     )
-    
+
+    # Phase 1: parse @mentions and notify mentioned users
+    try:
+        await _notify_mentions(comment_data.content, lead_id, lead.get('title', ''), current_user)
+    except Exception as e:
+        logger.warning(f"@mention notification failed: {e}")
+
     updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
     return await enrich_lead(updated_lead)
+
+# ==================== PHASE 1: ACTIVITY TIMELINE, HEALTH SCORE, NEXT ACTION, @MENTIONS ====================
+
+def _parse_mentions(content: str) -> List[str]:
+    """Extract @mentioned usernames from comment content. Returns lowercased name fragments."""
+    return [m.lower() for m in re.findall(r'@([a-zA-Z][a-zA-Z0-9_.\-]{1,40})', content or '')]
+
+async def _notify_mentions(content: str, lead_id: str, lead_title: str, author: dict):
+    """Resolve @mentions in a comment and emit in-app notifications to matched users."""
+    mentions = _parse_mentions(content)
+    if not mentions:
+        return
+    # Match by case-insensitive name OR email-local-part. Limit to active users.
+    notified_user_ids = set()
+    for token in mentions:
+        if not token:
+            continue
+        cursor = db.users.find({
+            "is_active": True,
+            "$or": [
+                {"name": {"$regex": f"^{re.escape(token)}", "$options": "i"}},
+                {"email": {"$regex": f"^{re.escape(token)}@", "$options": "i"}},
+            ]
+        }, {"_id": 0})
+        async for u in cursor:
+            uid = u.get('id')
+            if not uid or uid == author.get('id') or uid in notified_user_ids:
+                continue
+            notified_user_ids.add(uid)
+            try:
+                await create_notification(
+                    user_id=uid,
+                    notification_type="lead_mention",
+                    title=f"{author.get('name', 'Someone')} mentioned you",
+                    message=f"On lead \"{lead_title}\": {content[:140]}",
+                    lead_id=lead_id,
+                    data={"author_id": author.get('id'), "author_name": author.get('name')}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send mention notification to {uid}: {e}")
+
+def _days_since(iso_string: Optional[str]) -> Optional[float]:
+    if not iso_string:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_string.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0
+    except Exception:
+        return None
+
+def compute_lead_health(lead: dict) -> Dict[str, Any]:
+    """Heuristic Lead Health Score → returns {score: 0-100, band: hot/warm/cold/at_risk, factors: [...]}.
+
+    Factors weighted:
+      - Recent activity (40 pts): days since last comment/follow-up/status change
+      - Follow-up completion rate (20 pts)
+      - Stage progression (20 pts): does the lead have a status set + is it 'won'/'lost' or progressing?
+      - Deal value tier (10 pts): bigger deals get priority weight
+      - Created-by recency (10 pts): newer leads start neutral
+    """
+    factors = []
+    score = 50  # neutral starting point
+
+    # Most recent activity timestamp
+    last_activity_times = [lead.get('updated_at'), lead.get('created_at')]
+    for c in lead.get('comments', []) or []:
+        last_activity_times.append(c.get('created_at'))
+    for f in lead.get('follow_ups', []) or []:
+        last_activity_times.append(f.get('created_at'))
+        if f.get('completed_at'):
+            last_activity_times.append(f.get('completed_at'))
+    last_activity_times = [t for t in last_activity_times if t]
+    days_inactive = None
+    if last_activity_times:
+        days_inactive = min([_days_since(t) for t in last_activity_times if _days_since(t) is not None] or [None])
+
+    if days_inactive is None:
+        factors.append({"name": "Activity", "impact": 0, "detail": "No activity data"})
+    elif days_inactive <= 2:
+        score += 25; factors.append({"name": "Recent activity", "impact": +25, "detail": f"Last touched {days_inactive:.0f}d ago"})
+    elif days_inactive <= 7:
+        score += 10; factors.append({"name": "Some activity", "impact": +10, "detail": f"Last touched {days_inactive:.0f}d ago"})
+    elif days_inactive <= 21:
+        score -= 10; factors.append({"name": "Slowing down", "impact": -10, "detail": f"No activity for {days_inactive:.0f}d"})
+    else:
+        score -= 25; factors.append({"name": "Stale", "impact": -25, "detail": f"No activity for {days_inactive:.0f}d"})
+
+    # Follow-up completion
+    follow_ups = lead.get('follow_ups', []) or []
+    if follow_ups:
+        completed = sum(1 for f in follow_ups if f.get('is_completed'))
+        rate = completed / max(len(follow_ups), 1)
+        if rate >= 0.7:
+            score += 10; factors.append({"name": "Strong follow-through", "impact": +10, "detail": f"{int(rate*100)}% follow-ups completed"})
+        elif rate <= 0.3:
+            score -= 10; factors.append({"name": "Weak follow-through", "impact": -10, "detail": f"{int(rate*100)}% follow-ups completed"})
+
+        # Overdue follow-ups
+        overdue = 0
+        today = datetime.now(timezone.utc).date()
+        for f in follow_ups:
+            if not f.get('is_completed') and f.get('scheduled_date'):
+                try:
+                    if datetime.fromisoformat(f['scheduled_date']).date() < today:
+                        overdue += 1
+                except Exception:
+                    pass
+        if overdue:
+            score -= min(15, overdue * 5)
+            factors.append({"name": "Overdue follow-ups", "impact": -min(15, overdue * 5), "detail": f"{overdue} overdue"})
+
+    # Deal value priority
+    deal_value = float(lead.get('deal_value') or 0)
+    if deal_value >= 1_000_000:
+        score += 10; factors.append({"name": "Large deal", "impact": +10, "detail": "Deal ≥ ₹10L"})
+    elif deal_value >= 100_000:
+        score += 5; factors.append({"name": "Mid-size deal", "impact": +5, "detail": "Deal ≥ ₹1L"})
+
+    # Cap and band
+    score = max(0, min(100, int(score)))
+    if score >= 75:
+        band = "hot"
+    elif score >= 55:
+        band = "warm"
+    elif score >= 35:
+        band = "cold"
+    else:
+        band = "at_risk"
+
+    return {
+        "score": score,
+        "band": band,
+        "days_inactive": round(days_inactive, 1) if days_inactive is not None else None,
+        "factors": factors,
+    }
+
+def compute_next_action(lead: dict, health: Dict[str, Any]) -> Dict[str, Any]:
+    """Rules-engine next-action recommendation. Returns {label, reason, urgency, action_type}."""
+    today = datetime.now(timezone.utc).date()
+    follow_ups = lead.get('follow_ups', []) or []
+
+    # 1. Overdue follow-ups beat everything
+    for f in follow_ups:
+        if not f.get('is_completed') and f.get('scheduled_date'):
+            try:
+                d = datetime.fromisoformat(f['scheduled_date']).date()
+                if d < today:
+                    return {
+                        "label": "Complete overdue follow-up",
+                        "reason": f"Scheduled for {f['scheduled_date']} — already past due",
+                        "urgency": "critical",
+                        "action_type": "complete_followup",
+                        "ref_id": f.get('id'),
+                    }
+            except Exception:
+                pass
+
+    # 2. Won status but no commercial set up
+    if lead.get('status_is_won'):
+        return {
+            "label": "Set up commercials",
+            "reason": "Lead marked Won — configure project milestones or recurring contract",
+            "urgency": "high",
+            "action_type": "setup_commercials",
+        }
+
+    # 3. No follow-up scheduled at all
+    if not any(not f.get('is_completed') for f in follow_ups):
+        return {
+            "label": "Schedule next follow-up",
+            "reason": "No pending follow-ups on this lead",
+            "urgency": "high" if health['band'] in ("cold", "at_risk") else "medium",
+            "action_type": "schedule_followup",
+        }
+
+    # 4. No partner assigned
+    if not lead.get('active_partners_count') and not lead.get('selling_partner_id'):
+        return {
+            "label": "Assign a selling partner",
+            "reason": "Lead has no active partner working on it",
+            "urgency": "high",
+            "action_type": "assign_partner",
+        }
+
+    # 5. Health is critical
+    if health['band'] == "at_risk":
+        return {
+            "label": "Re-engage stakeholder",
+            "reason": f"Lead has gone quiet ({health.get('days_inactive')}d). Reach out to the customer.",
+            "urgency": "high",
+            "action_type": "reengage",
+        }
+
+    # 6. Default — touch base
+    return {
+        "label": "Touch base with customer",
+        "reason": "Keep momentum by checking in",
+        "urgency": "low",
+        "action_type": "touch_base",
+    }
+
+@api_router.get("/leads/{lead_id}/health")
+async def get_lead_health(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Return health score + next action for a lead."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    # also pull active_partners_count from doc
+    lead['active_partners_count'] = len([p for p in lead.get('assigned_partners', []) if p.get('status') == 'active'])
+    # is_won flag
+    status_is_won = False
+    if lead.get('status_id'):
+        st = await db.lead_statuses.find_one({"id": lead['status_id']}, {"_id": 0})
+        status_is_won = bool(st and st.get('is_won'))
+    lead['status_is_won'] = status_is_won
+
+    health = compute_lead_health(lead)
+    next_action = compute_next_action(lead, health)
+    return {"health": health, "next_action": next_action}
+
+@api_router.get("/leads/{lead_id}/activity")
+async def get_lead_activity(lead_id: str, current_user: dict = Depends(get_current_user)):
+    """Unified chronological activity timeline aggregated from:
+    - Lead creation
+    - Status changes (inferred from updated_at + status_name)
+    - Comments
+    - Follow-ups (scheduled + completed)
+    - Partner assignments (active/won/lost)
+    - Commercial activity (if linked)
+    """
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    events: List[Dict[str, Any]] = []
+
+    # Lead creation
+    creator = await db.users.find_one({"id": lead.get('created_by')}, {"_id": 0})
+    events.append({
+        "id": f"create-{lead['id']}",
+        "type": "lead_created",
+        "title": "Lead created",
+        "description": lead.get('title', ''),
+        "user_name": (creator or {}).get('name', 'Unknown'),
+        "user_id": lead.get('created_by'),
+        "timestamp": lead.get('created_at'),
+        "icon": "Sparkles",
+    })
+
+    # Comments
+    for c in lead.get('comments', []) or []:
+        events.append({
+            "id": f"comment-{c.get('id')}",
+            "type": "comment",
+            "title": f"Comment by {c.get('user_name')}",
+            "description": c.get('content', ''),
+            "user_name": c.get('user_name'),
+            "user_id": c.get('user_id'),
+            "user_role": c.get('user_role'),
+            "timestamp": c.get('created_at'),
+            "icon": "MessageSquare",
+        })
+
+    # Follow-ups: scheduled
+    for f in lead.get('follow_ups', []) or []:
+        events.append({
+            "id": f"followup-create-{f.get('id')}",
+            "type": "followup_scheduled",
+            "title": f"Follow-up scheduled for {f.get('scheduled_date')}",
+            "description": f.get('notes') or '',
+            "user_name": None,
+            "timestamp": f.get('created_at'),
+            "icon": "Calendar",
+            "metadata": {"pending_with": f.get('pending_with')},
+        })
+        if f.get('is_completed') and f.get('completed_at'):
+            events.append({
+                "id": f"followup-complete-{f.get('id')}",
+                "type": "followup_completed",
+                "title": "Follow-up completed",
+                "description": f.get('completion_notes') or '',
+                "timestamp": f.get('completed_at'),
+                "icon": "CheckCircle",
+            })
+
+    # Partner assignments
+    for p in lead.get('assigned_partners', []) or []:
+        events.append({
+            "id": f"partner-assigned-{p.get('partner_id')}-{p.get('assigned_at', '')}",
+            "type": "partner_assigned",
+            "title": f"Partner {p.get('partner_name') or 'Unknown'} assigned",
+            "description": p.get('notes') or '',
+            "user_name": p.get('assigned_by_name'),
+            "timestamp": p.get('assigned_at'),
+            "icon": "UserPlus",
+        })
+        if p.get('won_at'):
+            events.append({
+                "id": f"partner-won-{p.get('partner_id')}",
+                "type": "partner_won",
+                "title": f"{p.get('partner_name')} marked as winner",
+                "timestamp": p.get('won_at'),
+                "icon": "Trophy",
+            })
+        if p.get('lost_at'):
+            events.append({
+                "id": f"partner-lost-{p.get('partner_id')}",
+                "type": "partner_lost",
+                "title": f"{p.get('partner_name')} marked as lost",
+                "timestamp": p.get('lost_at'),
+                "icon": "UserMinus",
+            })
+
+    # Commercial activity (if linked)
+    commercial = await db.commercials.find_one({"lead_id": lead_id}, {"_id": 0})
+    if commercial:
+        for a in (commercial.get('activity') or [])[-50:]:  # last 50 events
+            events.append({
+                "id": f"commercial-{a.get('id', uuid.uuid4())}",
+                "type": f"commercial_{a.get('event_type', 'update')}",
+                "title": a.get('description') or a.get('event_type', 'Commercial update'),
+                "description": _json_dumps_safe(a.get('metadata')),
+                "user_name": a.get('user_name'),
+                "timestamp": a.get('timestamp') or a.get('created_at'),
+                "icon": "Briefcase",
+            })
+
+    # Sort reverse-chronological, filter out events with no timestamp
+    events = [e for e in events if e.get('timestamp')]
+    events.sort(key=lambda e: e['timestamp'], reverse=True)
+
+    return {"activities": events, "count": len(events)}
+
+def _json_dumps_safe(obj):
+    """Stringify metadata for activity descriptions; returns '' for None/empty."""
+    if not obj:
+        return ''
+    try:
+        import json as _j
+        return _j.dumps(obj, default=str)[:200]
+    except Exception:
+        return str(obj)[:200]
+
+# --- Smart follow-ups: snooze + recurrence support ---
+
+class FollowUpSnoozeRequest(BaseModel):
+    new_scheduled_date: str
+
+@api_router.patch("/leads/{lead_id}/follow-ups/{followup_id}/snooze", response_model=LeadResponse)
+async def snooze_follow_up(
+    lead_id: str,
+    followup_id: str,
+    body: FollowUpSnoozeRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Reschedule a pending follow-up to a new date (snooze)."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    follow_ups = lead.get('follow_ups', [])
+    found = False
+    for fu in follow_ups:
+        if fu['id'] == followup_id:
+            if fu.get('is_completed'):
+                raise HTTPException(status_code=400, detail="Cannot snooze a completed follow-up")
+            fu['scheduled_date'] = body.new_scheduled_date
+            fu['snoozed_at'] = datetime.now(timezone.utc).isoformat()
+            fu['snoozed_by'] = current_user['id']
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    await db.leads.update_one(
+        {"id": lead_id},
+        {"$set": {"follow_ups": follow_ups, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    updated = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    return await enrich_lead(updated)
 
 # ==================== BULK IMPORT ====================
 

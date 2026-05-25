@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
@@ -18,6 +18,9 @@ import { CommentsCard } from './leadDetail/CommentsCard';
 import { AssignedPartnersCard, AssignPartnerDialog } from './leadDetail/AssignedPartners';
 import { DocumentsCard } from './leadDetail/DocumentsCard';
 import { FollowUpsCard } from './leadDetail/FollowUpsCard';
+import { HealthScoreBadge, HealthScoreCard } from '../components/HealthScore';
+import NextActionCard from '../components/NextActionCard';
+import ActivityTimeline from '../components/ActivityTimeline';
 
 const LeadDetail = () => {
   const { id } = useParams();
@@ -25,6 +28,11 @@ const LeadDetail = () => {
   const { isAdmin, isSalesAssociate, canEditLeadsCompanies, canAccessCommercials } = useAuth();
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Phase 1: Health, Next Action, Activity Timeline
+  const [health, setHealth] = useState(null);
+  const [nextAction, setNextAction] = useState(null);
+  const [activities, setActivities] = useState([]);
 
   // Comments
   const [newComment, setNewComment] = useState('');
@@ -49,10 +57,23 @@ const LeadDetail = () => {
   const [showCommercialsWizard, setShowCommercialsWizard] = useState(false);
   const [wizardAutoOpenedForLead, setWizardAutoOpenedForLead] = useState(null);
 
+  const fetchHealthAndActivity = useCallback(async () => {
+    try {
+      const [h, a] = await Promise.all([
+        api.get(`/leads/${id}/health`),
+        api.get(`/leads/${id}/activity`),
+      ]);
+      setHealth(h.data.health);
+      setNextAction(h.data.next_action);
+      setActivities(a.data.activities || []);
+    } catch (e) { /* non-fatal */ }
+  }, [id]);
+
   useEffect(() => {
     fetchLead();
     fetchDocuments();
     fetchDocumentTags();
+    fetchHealthAndActivity();
     if (canEditLeadsCompanies) fetchPartners();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, canEditLeadsCompanies]);
@@ -169,6 +190,7 @@ const LeadDetail = () => {
       setLead(res.data);
       setNewComment('');
       toast.success('Comment added');
+      fetchHealthAndActivity();
     } catch (err) {
       toast.error('Failed to add comment');
     } finally {
@@ -191,6 +213,7 @@ const LeadDetail = () => {
       setNewFollowUp({ date: null, notes: '', pending_with: '' });
       setShowFollowUpForm(false);
       toast.success('Follow-up scheduled');
+      fetchHealthAndActivity();
     } catch (e) {
       toast.error('Failed to schedule follow-up');
     }
@@ -201,8 +224,45 @@ const LeadDetail = () => {
       const res = await api.put(`/leads/${id}/follow-ups/${fid}/complete`);
       setLead(res.data);
       toast.success('Follow-up marked as complete');
+      fetchHealthAndActivity();
     } catch (e) {
       toast.error('Failed to update follow-up');
+    }
+  };
+
+  const handleSnoozeFollowUp = async (fid, dateObj) => {
+    try {
+      const res = await api.patch(`/leads/${id}/follow-ups/${fid}/snooze`, {
+        new_scheduled_date: format(dateObj, 'yyyy-MM-dd'),
+      });
+      setLead(res.data);
+      toast.success(`Snoozed to ${format(dateObj, 'PPP')}`);
+      fetchHealthAndActivity();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to snooze follow-up');
+    }
+  };
+
+  const handleNextAction = (action) => {
+    switch (action?.action_type) {
+      case 'schedule_followup':
+        setShowFollowUpForm(true);
+        document.querySelector('[data-testid="followups-section"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        break;
+      case 'complete_followup':
+        if (action.ref_id) handleCompleteFollowUp(action.ref_id);
+        break;
+      case 'setup_commercials':
+        setShowCommercialsWizard(true);
+        break;
+      case 'assign_partner':
+        setShowAssignPartnerDialog(true);
+        break;
+      case 'reengage':
+      case 'touch_base':
+      default:
+        document.querySelector('[data-testid="comments-section"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.querySelector('[data-testid="comment-input"]')?.focus();
     }
   };
 
@@ -216,6 +276,7 @@ const LeadDetail = () => {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Leads
         </Button>
+        {health && <HealthScoreBadge health={health} />}
         <div className="flex-1" />
         {(isAdmin || canAccessCommercials) && (
           <Button
@@ -247,6 +308,7 @@ const LeadDetail = () => {
             submitting={submittingComment}
             onSubmit={handleAddComment}
           />
+          <ActivityTimeline activities={activities} />
           <DocumentsCard
             documents={documents}
             canDelete={canEditLeadsCompanies}
@@ -264,6 +326,8 @@ const LeadDetail = () => {
         </div>
 
         <div className="space-y-6">
+          <NextActionCard nextAction={nextAction} onAction={handleNextAction} />
+          <HealthScoreCard health={health} />
           <FollowUpsCard
             followUps={lead.follow_ups || []}
             showFollowUpForm={showFollowUpForm}
@@ -272,6 +336,7 @@ const LeadDetail = () => {
             setNewFollowUp={setNewFollowUp}
             onAdd={handleAddFollowUp}
             onComplete={handleCompleteFollowUp}
+            onSnooze={handleSnoozeFollowUp}
           />
         </div>
       </div>
