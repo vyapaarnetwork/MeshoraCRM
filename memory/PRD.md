@@ -333,7 +333,14 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **`/app/frontend/src/utils/api.js`** 401 interceptor whitelist extended: paths starting with `/deal-room/` are now exempt from the auto-redirect to `/login`. This fixed the iter_17 blocker (guest magic links no longer bounce anonymous users to login).
 - [x] **Testing** — testing_agent_v3_fork iter_17 + main-agent screenshot verification:
   - Backend: 17/17 new Phase 27.5 pytest tests PASS; all 27 Phase 27 regression tests still PASS.
-  - Frontend: customer-only layout ✅, invite create+copy+revoke ✅, guest magic link page renders gradient hero + approvals + conversation, guest message post works, guest approve works (verified via live screenshot — see Sarah CFO message + TEST_phase27_5 approved by Sarah Test (Guest)).
+  - Frontend: customer-only layout ✅, invite create+copy+revoke ✅, guest magic link page renders gradient hero + approvals + conversation, guest message post works, guest approve works.
+
+### Phase 28 — In-App Help & Feature Guide (Feb 25, 2026)
+- [x] **Reusable `<FeatureInfo>` component** (`/app/frontend/src/components/FeatureInfo.jsx`) — small `?` or ✨ icon that opens a Shadcn Popover with feature title, description, optional "How to use", and amber "💡 Tip" callout. Supports `ai={true}` for AI-feature accent (gradient violet→indigo).
+- [x] **Central `/help` page** (`Help.jsx`) — categorized feature guide with 5 sections (AI-Powered, Collaborative, Revenue Intelligence, Workflow & Ops, Core CRM), live search, and role-filtered visibility. Each item shows description, "Try these" examples (for AI Command Bar), "How to use" steps, and emerald "Why it helps" callouts. Footer hints at ⌘K shortcut.
+- [x] **Help link** added to topbar user-menu dropdown ("Help & Feature Guide") alongside Settings/Logout.
+- [x] **FeatureInfo sprinkled on**: Predictive Forecast page title, Partner Intelligence page title, Revenue Intelligence page title, Deal Room disabled-state CTA, Approvals card, Invitations card. Each is contextual and explains both what the feature does AND why it helps.
+- [x] **Verified**: `/help` page renders all 5 sections with 19 feature cards. Popover triggers from "?" icons render correctly with full content (description + tip).
 
 
 

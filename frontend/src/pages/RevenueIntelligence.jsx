@@ -14,6 +14,7 @@ import {
   Activity, Briefcase, Repeat, CalendarRange, Sparkles,
 } from 'lucide-react';
 import api, { formatCurrency } from '../utils/api';
+import FeatureInfo from '../components/FeatureInfo';
 import { toast } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -58,6 +59,12 @@ const RevenueIntelligence = () => {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
             <TrendingUp className="w-7 h-7 text-violet-600" />
             Revenue Intelligence
+            <FeatureInfo
+              size="lg"
+              title="What this dashboard shows"
+              description="Real-time view of your funnel: open pipeline value, weighted pipeline (probability-adjusted), trended monthly revenue, conversion rate by stage, partner contribution, and category mix. Use the date range filter to drill into a specific quarter."
+              tip="For a forward-looking projection (next 6–12 months), check Predictive Forecast in the sidebar."
+            />
           </h1>
           <p className="text-muted-foreground mt-1">
             Boardroom-ready view of pipeline, forecasted revenue, win rates, and partner performance.

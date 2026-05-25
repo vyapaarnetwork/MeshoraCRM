@@ -44,7 +44,8 @@ import {
   Briefcase,
   TrendingUp,
   Sparkles,
-  Trophy
+  Trophy,
+  HelpCircle
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
@@ -613,6 +614,10 @@ const Layout = ({ children }) => {
                   <DropdownMenuItem onClick={() => navigate('/settings')} data-testid="settings-menu-item">
                     <Settings className="w-4 h-4 mr-2" />
                     Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate('/help')} data-testid="help-menu-item">
+                    <HelpCircle className="w-4 h-4 mr-2" />
+                    Help & Feature Guide
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} className="text-destructive" data-testid="logout-btn">

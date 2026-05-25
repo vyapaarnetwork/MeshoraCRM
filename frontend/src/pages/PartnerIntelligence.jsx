@@ -13,6 +13,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import api, { formatCurrency } from '../utils/api';
 import { toast } from 'sonner';
+import FeatureInfo from '../components/FeatureInfo';
 
 const PartnerIntelligence = () => {
   const [data, setData] = useState(null);
@@ -59,6 +60,12 @@ const PartnerIntelligence = () => {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
             <Trophy className="w-7 h-7 text-amber-500" />
             Partner Intelligence
+            <FeatureInfo
+              size="lg"
+              title="How partners are scored"
+              description="Composite score (0-100) blending 40% revenue contribution, 30% win-rate, 20% engagement (recent activity), and 10% speed (avg days-to-close). Each row also exposes referral conversion, top category, and an AI Coach dialog that generates personalized strengths/weaknesses/training recommendations via Gemini."
+              tip="Click 'AI Coach' on any partner row to generate a coaching brief in <10 seconds — great for prep before a 1:1."
+            />
           </h1>
           <p className="text-muted-foreground mt-1">
             Ranked performance + AI coaching for your selling partner network.

@@ -20,6 +20,7 @@ import RevenueIntelligence from './pages/RevenueIntelligence';
 import PredictiveForecast from './pages/PredictiveForecast';
 import PartnerIntelligence from './pages/PartnerIntelligence';
 import GuestDealRoom from './pages/GuestDealRoom';
+import Help from './pages/Help';
 import GridReport from './pages/GridReport';
 import Users from './pages/Users';
 import Companies from './pages/Companies';
@@ -239,6 +240,13 @@ function AppRoutes() {
       <Route path="/partner-intelligence" element={
         <ProtectedRoute allowedRoles={['super_admin', 'selling_partner']}>
           <PartnerIntelligence />
+        </ProtectedRoute>
+      } />
+
+      {/* Help & Feature Guide - all authenticated users */}
+      <Route path="/help" element={
+        <ProtectedRoute>
+          <Help />
         </ProtectedRoute>
       } />
 

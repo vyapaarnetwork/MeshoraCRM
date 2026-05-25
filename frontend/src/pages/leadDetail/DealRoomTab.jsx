@@ -20,6 +20,7 @@ import {
 import api, { formatCurrency, formatDateTime } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
+import FeatureInfo from '../../components/FeatureInfo';
 
 const DealRoomTab = ({ leadId, lead, onLeadRefresh }) => {
   const { user, isAdmin, isVyapaarOps, isSellingPartner, isCustomer } = useAuth();
@@ -119,6 +120,12 @@ const DealRoomTab = ({ leadId, lead, onLeadRefresh }) => {
           <div>
             <h3 className="text-lg font-semibold flex items-center gap-2 justify-center">
               <Sparkles className="w-4 h-4 text-violet-600" /> Collaborative Deal Room
+              <FeatureInfo
+                title="What is a Deal Room?"
+                description="A shared workspace for this lead where the customer, your selling partner(s), and Meshora ops team see the same activity, approvals, and documents — but each with the right level of access. Customer sees no internal deal value or commission."
+                howTo="Click 'Open Deal Room' below. The customer (matched by email) instantly gets a stripped, focused view of just the collaboration surface."
+                tip="Use Deal Room messages instead of email for everything customer-facing. Internal comments stay on the lead's main thread."
+              />
             </h3>
             <p className="text-sm text-muted-foreground mt-1 max-w-md">
               Open a shared workspace where the customer, selling partner, and Meshora team can chat, approve milestones, and review documents — all in one place.
@@ -234,6 +241,11 @@ const DealRoomTab = ({ leadId, lead, onLeadRefresh }) => {
           <div>
             <CardTitle className="text-base flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Approvals
+              <FeatureInfo
+                title="Approvals"
+                description="Request formal sign-off from the customer, the selling partner, or 'Anyone'. Each approval has a title, optional due date, and visible Approve/Reject buttons for the assignee."
+                tip="Use these instead of asking for sign-off over email — every decision is timestamped and attributed, giving you a clean audit trail."
+              />
               {approvals.filter(a => a.status === 'pending').length > 0 && (
                 <Badge className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 ml-1">
                   {approvals.filter(a => a.status === 'pending').length} pending
@@ -471,6 +483,12 @@ const InvitesCard = ({ leadId }) => {
         <div>
           <CardTitle className="text-base flex items-center gap-2">
             <Link2 className="w-4 h-4 text-indigo-600" /> Stakeholder Invitations
+            <FeatureInfo
+              title="Magic Link Invitations"
+              description="Invite people who don't have a Meshora account — e.g. the customer's CFO, legal counsel, or a procurement officer. They get a secure, expiring link they can open in any browser."
+              howTo="Click 'Invite Stakeholder', set name + email, pick permissions (view / comment / approve), and choose an expiry. The success step gives you a copy-paste link plus a mailto: shortcut."
+              tip="Set 'approve' permission only when you actually want them to sign off — most stakeholders should be view + comment."
+            />
             {invites.length > 0 && (
               <Badge variant="outline" className="text-[10px] ml-1">{invites.filter(i => !i.revoked).length} active</Badge>
             )}

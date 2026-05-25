@@ -15,6 +15,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import api, { formatCurrency } from '../utils/api';
 import { toast } from 'sonner';
+import FeatureInfo from '../components/FeatureInfo';
 
 const PredictiveForecast = () => {
   const [data, setData] = useState(null);
@@ -77,6 +78,13 @@ const PredictiveForecast = () => {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
             <Sparkles className="w-7 h-7 text-violet-600" />
             Predictive Revenue Forecasting
+            <FeatureInfo
+              ai
+              size="lg"
+              title="How the forecast works"
+              description="Blends two signals: (1) a statistical baseline (linear regression + EMA on the last 12 months of won revenue) and (2) a pipeline-weighted projection (per-deal probability = stage × health × recency × stage-velocity offset). The combined forecast is the weighted sum (55% pipeline, 45% statistical), with a widening confidence band as horizon grows."
+              tip="The AI executive summary at the top is one-click boardroom-ready language explaining your trend, biggest opportunity month, and top risk."
+            />
           </h1>
           <p className="text-muted-foreground mt-1">
             Hybrid statistical + pipeline-weighted forecast, with AI-generated executive narrative.
