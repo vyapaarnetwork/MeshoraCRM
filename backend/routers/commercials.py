@@ -1316,24 +1316,35 @@ async def replace_milestones(commercial_id: str, payload: MilestonesBulkInput, c
     await _ensure_commercial_access(commercial, current_user, write=True)
     if commercial.get('type') != 'one_time':
         raise HTTPException(status_code=400, detail="Milestones are only supported on one-time projects")
-    # Validate totals
+    # Validate totals.
+    # Amounts are the source of truth when a project total_value is set:
+    # if amounts sum to the project value, the breakdown is mathematically valid
+    # regardless of any per-row 2-decimal display rounding on percentages.
     total_amount = sum(m.amount for m in payload.milestones)
     total_pct = sum(m.percentage for m in payload.milestones)
     target_total = float(commercial.get('total_value') or 0)
     if target_total > 0:
-        if round(total_amount, 2) != round(target_total, 2):
+        if payload.milestones and round(total_amount, 2) != round(target_total, 2):
             raise HTTPException(status_code=400, detail=f"Sum of milestone amounts ({total_amount}) must equal total project value ({target_total})")
-    if payload.milestones and round(total_pct, 2) != 100.0:
-        raise HTTPException(status_code=400, detail=f"Sum of milestone percentages must equal 100 (got {total_pct})")
+    elif payload.milestones and abs(total_pct - 100) > 0.5:
+        # No project value set — percentages are the source of truth.
+        # Allow up to 0.5% drift to accommodate per-row 2-decimal rounding.
+        raise HTTPException(status_code=400, detail=f"Sum of milestone percentages must equal 100 (got {round(total_pct, 2)})")
     serialised = []
     for idx, m in enumerate(payload.milestones):
+        # When project total_value is set, recompute each percentage from the
+        # amount to keep stored data exact (avoids per-row rounding drift).
+        if target_total > 0:
+            pct = round((m.amount / target_total) * 100, 4)
+        else:
+            pct = m.percentage
         serialised.append({
             "id": m.id or str(uuid.uuid4()),
             "name": m.name,
             "description": m.description,
             "delivery_date": m.delivery_date,
             "amount": m.amount,
-            "percentage": m.percentage,
+            "percentage": pct,
             "invoice_due_date": m.invoice_due_date,
             "status": m.status.value,
             "order": idx,

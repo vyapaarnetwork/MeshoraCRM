@@ -202,7 +202,13 @@ const CommercialDetail = () => {
   );
   const totalValue = Number(commercial?.total_value || 0);
   const amountValid = totalValue === 0 || Math.abs(totals.amount - totalValue) < 0.01;
-  const pctValid = milestones.length === 0 || Math.abs(totals.percentage - 100) < 0.01;
+  // Amounts are the source of truth when a project value is set — if amounts
+  // match, the percentage breakdown is valid regardless of per-row 2-decimal
+  // display rounding (e.g. 3 × 33.33% = 99.99%). Without a project value,
+  // allow a small 0.5% tolerance for per-row rounding drift.
+  const pctValid =
+    milestones.length === 0 ||
+    (totalValue > 0 ? amountValid : Math.abs(totals.percentage - 100) <= 0.5);
 
   const saveMilestones = async () => {
     if (!amountValid) {
