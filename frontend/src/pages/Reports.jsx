@@ -95,9 +95,17 @@ const Reports = () => {
       if (isSellingPartner) {
         const reportRes = await api.get(`/reports/selling-partner/${user.id}/detailed`, { params });
         setPartnerReport(reportRes.data);
-      } else if (isSalesAssociate) {
-        const reportRes = await api.get(`/reports/sales-associate/${user.id}/detailed`, { params });
-        setAssociateReport(reportRes.data);
+      }
+      if (isSalesAssociate || isSellingPartner) {
+        // Referrer earnings report (covers both Sales Associates and Selling
+        // Partners — anyone set as a lead's referrer accrues earnings here).
+        try {
+          const reportRes = await api.get(`/reports/sales-associate/${user.id}/detailed`, { params });
+          setAssociateReport(reportRes.data);
+        } catch (err) {
+          // If user has no referrals, endpoint may 404 — silently ignore.
+          setAssociateReport(null);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch reports:', error);
@@ -634,8 +642,9 @@ const Reports = () => {
         </div>
       )}
 
-      {/* Sales Associate Report */}
-      {isSalesAssociate && associateReport && (
+      {/* Referrer Earnings Report — shown to Sales Associates AND Selling
+          Partners who have been set as a lead's referrer. */}
+      {(isSalesAssociate || isSellingPartner) && associateReport && (associateReport.summary?.total_referrals > 0 || isSalesAssociate) && (
         <div className="space-y-6">
           <Card className="bg-gradient-to-br from-purple-50 to-blue-50">
             <CardContent className="pt-6">
@@ -644,8 +653,8 @@ const Reports = () => {
                   <Users className="w-8 h-8 text-purple-600" />
                 </div>
                 <div className="text-center sm:text-left flex-1">
-                  <h2 className="text-xl font-bold">{associateReport.associate_info.name}</h2>
-                  <p className="text-muted-foreground">{associateReport.associate_info.email}</p>
+                  <h2 className="text-xl font-bold">Referral Earnings — {associateReport.associate_info.name}</h2>
+                  <p className="text-muted-foreground">Earnings from leads you referred (Sales Associate or Selling Partner)</p>
                 </div>
                 <div className="text-center sm:text-right">
                   <p className="text-sm text-muted-foreground">Lifetime Earnings</p>
@@ -698,7 +707,7 @@ const Reports = () => {
           <Card>
             <CardHeader>
               <CardTitle>Your Referrals</CardTitle>
-              <CardDescription>Deals you referred and their earnings</CardDescription>
+              <CardDescription>Deals you referred and the commission you earn on each</CardDescription>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[400px]">

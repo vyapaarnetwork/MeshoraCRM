@@ -523,7 +523,7 @@ const LeadForm = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="sales_associate_commission">
-                    Sales Associate Commission (% of Vyapaar share)
+                    Referrer Commission (% of Vyapaar share)
                   </Label>
                   <Input
                     id="sales_associate_commission"
@@ -538,7 +538,7 @@ const LeadForm = () => {
                     data-testid="sa-commission-input"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Percentage of Vyapaar's share paid to sales associate
+                    Percentage of Vyapaar's share paid to the referrer (Sales Associate or Selling Partner)
                   </p>
                 </div>
               </CardContent>

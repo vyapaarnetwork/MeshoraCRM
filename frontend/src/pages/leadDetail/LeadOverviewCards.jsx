@@ -110,7 +110,7 @@ export const CommissionBreakdownCard = ({ lead }) => {
           {c.sales_associate_share && (
             <div className="flex justify-between items-center py-2">
               <span className="text-muted-foreground">
-                Sales Associate ({c.sales_associate_percentage}% of Vyapaar share)
+                Referrer ({c.sales_associate_percentage}% of Vyapaar share)
               </span>
               <span className="font-medium text-purple-600">{formatCurrency(c.sales_associate_share)}</span>
             </div>

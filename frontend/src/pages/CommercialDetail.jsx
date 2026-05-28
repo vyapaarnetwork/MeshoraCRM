@@ -12,7 +12,8 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
-import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '../components/ui/dropdown-menu';
+import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const MILESTONE_STATUS_STYLES = {
@@ -194,6 +195,60 @@ const CommercialDetail = () => {
       next[idx] = m;
       return next;
     });
+  };
+
+  // Auto-distribute helpers.
+  // mode = 'evenly'    -> overwrite all amounts, splitting project value across all rows.
+  // mode = 'remaining' -> only fill rows whose amount is 0/empty with the unallocated balance.
+  // The last targeted row absorbs the rounding remainder so amounts sum EXACTLY to total_value.
+  const autoDistribute = (mode) => {
+    const total = Number(commercial?.total_value) || 0;
+    if (total <= 0) {
+      toast.error('Set a project value first before auto-distributing.');
+      return;
+    }
+    if (milestones.length === 0) {
+      toast.error('Add at least one milestone row first.');
+      return;
+    }
+    setMilestones((prev) => {
+      const next = prev.map((m) => ({ ...m }));
+      let targetIndices = [];
+      let allocatable = total;
+      if (mode === 'remaining') {
+        const allocated = next.reduce(
+          (s, m) => s + (Number(m.amount) > 0 ? Number(m.amount) : 0),
+          0,
+        );
+        allocatable = Math.max(0, Number((total - allocated).toFixed(2)));
+        targetIndices = next
+          .map((m, i) => (Number(m.amount) > 0 ? -1 : i))
+          .filter((i) => i >= 0);
+        if (targetIndices.length === 0) {
+          toast.info('No empty milestones to fill. Use "Split evenly" to re-distribute all rows.');
+          return prev;
+        }
+        if (allocatable <= 0) {
+          toast.info('No remaining amount left to allocate.');
+          return prev;
+        }
+      } else {
+        targetIndices = next.map((_, i) => i);
+      }
+      const n = targetIndices.length;
+      // Distribute to 2-decimal precision, last row absorbs the remainder.
+      const perRow = Math.floor((allocatable / n) * 100) / 100;
+      let remainder = Number((allocatable - perRow * n).toFixed(2));
+      targetIndices.forEach((idx, k) => {
+        const isLast = k === targetIndices.length - 1;
+        const amt = isLast ? Number((perRow + remainder).toFixed(2)) : perRow;
+        next[idx].amount = amt;
+        next[idx].percentage = Number(((amt / total) * 100).toFixed(2));
+      });
+      return next;
+    });
+    const verb = mode === 'remaining' ? 'Remaining amount distributed' : 'Project value split evenly';
+    toast.success(`${verb} across milestones.`);
   };
 
   const totals = milestones.reduce(
@@ -689,6 +744,43 @@ const CommercialDetail = () => {
                     <CardDescription>Total amounts must equal project value; percentages must total 100%.</CardDescription>
                   </div>
                   <div className="flex gap-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!totalValue || milestones.length === 0}
+                          data-testid="auto-distribute-btn"
+                        >
+                          <Wand2 className="w-4 h-4 mr-1" />
+                          Auto-distribute
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-64">
+                        <DropdownMenuLabel className="text-xs">
+                          Split {milestones.length} milestone{milestones.length === 1 ? '' : 's'}
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => autoDistribute('evenly')}
+                          data-testid="auto-distribute-evenly"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-medium">Split evenly across all</span>
+                            <span className="text-xs text-muted-foreground">Overwrites all amounts</span>
+                          </div>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => autoDistribute('remaining')}
+                          data-testid="auto-distribute-remaining"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-medium">Split remaining into empty rows</span>
+                            <span className="text-xs text-muted-foreground">Keeps existing amounts</span>
+                          </div>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <Button onClick={requestAiMilestones} size="sm" variant="outline" disabled={aiBusy} data-testid="ai-milestones-btn">
                       <Sparkles className={`w-4 h-4 mr-1 ${aiBusy ? 'animate-pulse' : ''}`} />
                       {aiBusy ? 'Thinking…' : 'AI suggest'}

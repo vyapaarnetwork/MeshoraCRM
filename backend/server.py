@@ -8238,11 +8238,13 @@ async def get_detailed_associate_report(
     period: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
-    """Detailed Sales Associate Earnings Report with lifetime view"""
-    if current_user['role'] not in [UserRole.SUPER_ADMIN.value, UserRole.SALES_ASSOCIATE.value]:
+    """Detailed referrer earnings report (covers both Sales Associates and
+    Selling Partners who were set as the lead's referrer via sales_associate_id).
+    Lifetime + period filtered view."""
+    if current_user['role'] not in [UserRole.SUPER_ADMIN.value, UserRole.SALES_ASSOCIATE.value, UserRole.SELLING_PARTNER.value]:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    if current_user['role'] == UserRole.SALES_ASSOCIATE.value and current_user['id'] != associate_id:
+    if current_user['role'] in [UserRole.SALES_ASSOCIATE.value, UserRole.SELLING_PARTNER.value] and current_user['id'] != associate_id:
         raise HTTPException(status_code=403, detail="Access denied")
     
     query = {"sales_associate_id": associate_id}

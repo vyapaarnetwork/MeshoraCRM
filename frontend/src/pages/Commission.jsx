@@ -126,7 +126,7 @@ const Commission = () => {
               <p className="text-sm text-muted-foreground">
                 Commission templates define the percentage Vyapaar Network earns from each deal. 
                 These templates can be applied to selling partners, and can be overridden at the individual lead level.
-                Sales Associates earn a percentage of Vyapaar's share when they refer a lead.
+                Sales Associates or Selling Partners can be set as the lead's referrer, and earn a percentage of Vyapaar's share when they refer a lead.
               </p>
             </div>
           </div>
