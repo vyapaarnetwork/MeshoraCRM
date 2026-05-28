@@ -103,7 +103,7 @@ const LeadForm = () => {
         api.get('/master/lead-status'),
         api.get('/master/primary-categories'),
         api.get('/master/secondary-categories'),
-        api.get('/users/sales-associates').catch(() => ({ data: [] }))
+        api.get('/users/referrers').catch(() => ({ data: [] }))
       ]);
 
       setOptions(prev => ({
@@ -462,22 +462,31 @@ const LeadForm = () => {
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="sales_associate_id">Sales Associate (Referral)</Label>
+                    <Label htmlFor="sales_associate_id">Referred By (Sales Associate / Selling Partner)</Label>
                     <Select 
                       value={formData.sales_associate_id} 
                       onValueChange={(v) => handleSelectChange('sales_associate_id', v)}
                     >
                       <SelectTrigger data-testid="sales-associate-select">
-                        <SelectValue placeholder="Select associate" />
+                        <SelectValue placeholder="Select referrer" />
                       </SelectTrigger>
                       <SelectContent>
-                        {options.salesAssociates.map((associate) => (
-                          <SelectItem key={associate.id} value={associate.id}>
-                            {associate.name}
-                          </SelectItem>
-                        ))}
+                        {options.salesAssociates.map((associate) => {
+                          const roleLabel = associate.role === 'selling_partner' ? 'Selling Partner' : 'Sales Associate';
+                          const suffix = associate.role === 'selling_partner' && associate.company_name
+                            ? ` (${associate.company_name})`
+                            : '';
+                          return (
+                            <SelectItem key={associate.id} value={associate.id}>
+                              {associate.name} — {roleLabel}{suffix}
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground">
+                      A lead can be referred by either a Sales Associate or a Selling Partner.
+                    </p>
                   </div>
                 </>
               )}

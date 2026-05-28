@@ -50,7 +50,7 @@ export const LeadOverviewCard = ({ lead }) => (
           <InfoItem icon={Building2} label="Selling Partner" value={lead.selling_partner_name} />
         )}
         {lead.sales_associate_name && (
-          <InfoItem icon={User} label="Sales Associate" value={lead.sales_associate_name} />
+          <InfoItem icon={User} label="Referred By" value={lead.sales_associate_name} />
         )}
       </div>
     </CardContent>

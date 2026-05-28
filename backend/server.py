@@ -1100,6 +1100,40 @@ async def list_sales_associates(current_user: dict = Depends(get_current_user)):
     
     return result
 
+@api_router.get("/users/referrers", response_model=List[UserResponse])
+async def list_referrers(current_user: dict = Depends(get_current_user)):
+    """Returns users who can be assigned as a lead referrer — both sales associates
+    and selling partners. Used by the Edit Lead "Referred By" dropdown since a lead
+    can be referred by either persona."""
+    users = await db.users.find(
+        {
+            "role": {"$in": [UserRole.SALES_ASSOCIATE.value, UserRole.SELLING_PARTNER.value]},
+            "is_active": {"$ne": False},
+        },
+        {"_id": 0, "password": 0},
+    ).sort("name", 1).to_list(2000)
+
+    company_ids = list({u['company_id'] for u in users if u.get('company_id')})
+    company_map = {}
+    if company_ids:
+        companies = await db.companies.find({"id": {"$in": company_ids}}, {"_id": 0}).to_list(len(company_ids))
+        company_map = {c['id']: c.get('name') for c in companies}
+
+    result = []
+    for user in users:
+        result.append(UserResponse(
+            id=user['id'],
+            email=user['email'],
+            name=user['name'],
+            role=UserRole(user['role']),
+            company_id=user.get('company_id'),
+            company_name=company_map.get(user.get('company_id')),
+            phone=user.get('phone'),
+            is_active=user.get('is_active', True),
+            created_at=user['created_at'],
+        ))
+    return result
+
 @api_router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """Get single user details"""
