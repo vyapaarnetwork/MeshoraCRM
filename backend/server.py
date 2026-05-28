@@ -7484,7 +7484,7 @@ async def get_dashboard_stats(
             total_revenue += deal_value
             
             # Calculate commission
-            vyapaar_pct = lead.get('commission_override', 15.0)
+            vyapaar_pct = lead.get('commission_override') or 15.0
             commission = deal_value * (vyapaar_pct / 100)
             if lead.get('sales_associate_commission'):
                 sa_commission = commission * (lead['sales_associate_commission'] / 100)
@@ -7733,6 +7733,20 @@ async def get_vyapaar_revenue_report(
     # Get users
     users = await db.users.find({}, {"_id": 0, "password": 0}).to_list(1000)
     user_map = {u['id']: u['name'] for u in users}
+    # Enriched info for referrer leaderboard (role + company name for partners).
+    company_ids = list({u.get('company_id') for u in users if u.get('company_id')})
+    company_name_map = {}
+    if company_ids:
+        cmps = await db.companies.find({"id": {"$in": company_ids}}, {"_id": 0}).to_list(len(company_ids))
+        company_name_map = {c['id']: c.get('name') for c in cmps}
+    user_info_map = {
+        u['id']: {
+            "name": u['name'],
+            "role": u.get('role'),
+            "company_name": company_name_map.get(u.get('company_id')),
+        }
+        for u in users
+    }
     
     total_gross_commission = 0
     total_sa_payouts = 0
@@ -7740,6 +7754,7 @@ async def get_vyapaar_revenue_report(
     partner_wise = {}
     category_wise = {}
     period_wise = {}
+    referrer_wise = {}
     won_deals = []
     
     for lead in leads:
@@ -7814,6 +7829,26 @@ async def get_vyapaar_revenue_report(
             period_wise[period_key]['sa_payouts'] += sa_payout
             period_wise[period_key]['net_revenue'] += vyapaar_net
             
+            # Referrer-wise (Sales Associate OR Selling Partner who was set as
+            # the lead's referrer via sales_associate_id). Used for the admin
+            # "Top Referrers" leaderboard.
+            referrer_id = lead.get('sales_associate_id')
+            if referrer_id:
+                if referrer_id not in referrer_wise:
+                    info = user_info_map.get(referrer_id, {})
+                    referrer_wise[referrer_id] = {
+                        "id": referrer_id,
+                        "name": info.get('name') or "Unknown",
+                        "role": info.get('role') or "unknown",
+                        "company_name": info.get('company_name'),
+                        "referred_deals": 0,
+                        "referred_deal_value": 0,
+                        "earnings": 0,
+                    }
+                referrer_wise[referrer_id]['referred_deals'] += 1
+                referrer_wise[referrer_id]['referred_deal_value'] += deal_value
+                referrer_wise[referrer_id]['earnings'] += sa_payout
+
             # Add to won deals list
             won_deals.append({
                 "id": lead['id'],
@@ -7838,6 +7873,10 @@ async def get_vyapaar_revenue_report(
         "partner_profitability": sorted(partner_wise.values(), key=lambda x: x['vyapaar_commission'], reverse=True),
         "category_contribution": sorted(category_wise.values(), key=lambda x: x['commission'], reverse=True),
         "period_breakdown": sorted(period_wise.values(), key=lambda x: x['period']),
+        "top_referrers": [
+            {**r, "referred_deal_value": round(r['referred_deal_value'], 2), "earnings": round(r['earnings'], 2)}
+            for r in sorted(referrer_wise.values(), key=lambda x: x['earnings'], reverse=True)[:10]
+        ],
         "deals": won_deals
     }
 

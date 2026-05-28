@@ -31,7 +31,8 @@ import {
   FileText,
   Building2,
   Percent,
-  PieChart
+  PieChart,
+  Trophy
 } from 'lucide-react';
 import {
   BarChart,
@@ -491,6 +492,72 @@ const Reports = () => {
                     </CardContent>
                   </Card>
                 </div>
+
+                {/* Top Referrers Leaderboard */}
+                {vyapaarReport.top_referrers?.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Trophy className="w-5 h-5 text-amber-500" />
+                        Top Referrers
+                      </CardTitle>
+                      <CardDescription>
+                        Top 10 channel partners by referrer commission earned on closed-won deals. Includes both Sales Associates and Selling Partners.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ScrollArea className="h-[360px]">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-12">#</TableHead>
+                              <TableHead>Referrer</TableHead>
+                              <TableHead>Role</TableHead>
+                              <TableHead className="text-right">Deals</TableHead>
+                              <TableHead className="text-right">Influenced Value</TableHead>
+                              <TableHead className="text-right">Earnings</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {vyapaarReport.top_referrers.map((r, idx) => {
+                              const rank = idx + 1;
+                              const medal =
+                                rank === 1 ? 'bg-amber-100 text-amber-700' :
+                                rank === 2 ? 'bg-slate-100 text-slate-700' :
+                                rank === 3 ? 'bg-orange-100 text-orange-700' :
+                                'bg-muted text-muted-foreground';
+                              return (
+                                <TableRow key={r.id} data-testid={`top-referrer-row-${idx}`}>
+                                  <TableCell>
+                                    <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${medal}`}>
+                                      {rank}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <div className="font-medium">{r.name}</div>
+                                    {r.company_name && (
+                                      <div className="text-xs text-muted-foreground">{r.company_name}</div>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge variant={r.role === 'selling_partner' ? 'default' : 'secondary'}>
+                                      {r.role === 'selling_partner' ? 'Selling Partner' : 'Sales Associate'}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-right">{r.referred_deals}</TableCell>
+                                  <TableCell className="text-right">{formatCurrency(r.referred_deal_value)}</TableCell>
+                                  <TableCell className="text-right font-semibold text-purple-600">
+                                    {formatCurrency(r.earnings)}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </ScrollArea>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* Deals Table */}
                 <Card>
