@@ -18,6 +18,7 @@ import {
 import { ArrowLeft, Loader2, Save, AlertCircle } from 'lucide-react';
 import api from '../utils/api';
 import { toast } from 'sonner';
+import SearchableUserSelect from '../components/SearchableUserSelect';
 
 const LeadForm = () => {
   const { id } = useParams();
@@ -416,33 +417,29 @@ const LeadForm = () => {
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="selling_partner_id">Selling Partner</Label>
-                    <Select 
-                      value={formData.selling_partner_id} 
-                      onValueChange={(v) => handleSelectChange('selling_partner_id', v)}
+                    <SearchableUserSelect
+                      value={formData.selling_partner_id}
+                      onChange={(v) => handleSelectChange('selling_partner_id', v)}
+                      users={options.sellingPartners}
                       disabled={!formData.secondary_category_id || loadingPartners}
-                    >
-                      <SelectTrigger data-testid="selling-partner-select">
-                        <SelectValue placeholder={
-                          !formData.secondary_category_id
-                            ? 'Select sub-category first'
-                            : loadingPartners
-                              ? 'Loading partners...'
-                              : options.sellingPartners.length === 0
-                                ? 'No partners for this sub-category'
-                                : 'Select partner'
-                        } />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {options.sellingPartners.map((partner) => (
-                          <SelectItem key={partner.id} value={partner.id}>
-                            {partner.name} {partner.company_name && `(${partner.company_name})`}
-                            {partner._unmapped && (
-                              <span className="ml-1 text-xs text-amber-600">[not mapped]</span>
-                            )}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      placeholder={
+                        !formData.secondary_category_id
+                          ? 'Select sub-category first'
+                          : loadingPartners
+                            ? 'Loading partners...'
+                            : options.sellingPartners.length === 0
+                              ? 'No partners for this sub-category'
+                              : 'Search and select partner...'
+                      }
+                      emptyText="No matching partners."
+                      testId="selling-partner-select"
+                      secondaryRender={(p) => {
+                        const parts = [];
+                        if (p.company_name) parts.push(p.company_name);
+                        if (p._unmapped) parts.push('not mapped to this sub-category');
+                        return parts.join(' · ');
+                      }}
+                    />
                     {formData.secondary_category_id && !loadingPartners && options.sellingPartners.length === 0 && (
                       <p className="text-xs text-muted-foreground" data-testid="no-partners-msg">
                         No active selling partners for this sub-category. Either no companies are mapped to it,
@@ -463,27 +460,14 @@ const LeadForm = () => {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="sales_associate_id">Referred By (Sales Associate / Selling Partner)</Label>
-                    <Select 
-                      value={formData.sales_associate_id} 
-                      onValueChange={(v) => handleSelectChange('sales_associate_id', v)}
-                    >
-                      <SelectTrigger data-testid="sales-associate-select">
-                        <SelectValue placeholder="Select referrer" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {options.salesAssociates.map((associate) => {
-                          const roleLabel = associate.role === 'selling_partner' ? 'Selling Partner' : 'Sales Associate';
-                          const suffix = associate.role === 'selling_partner' && associate.company_name
-                            ? ` (${associate.company_name})`
-                            : '';
-                          return (
-                            <SelectItem key={associate.id} value={associate.id}>
-                              {associate.name} — {roleLabel}{suffix}
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
+                    <SearchableUserSelect
+                      value={formData.sales_associate_id}
+                      onChange={(v) => handleSelectChange('sales_associate_id', v)}
+                      users={options.salesAssociates}
+                      placeholder="Search and select referrer..."
+                      emptyText="No matching referrers."
+                      testId="sales-associate-select"
+                    />
                     <p className="text-xs text-muted-foreground">
                       A lead can be referred by either a Sales Associate or a Selling Partner.
                     </p>

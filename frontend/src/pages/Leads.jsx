@@ -127,6 +127,22 @@ const Leads = () => {
       )
     },
     {
+      key: 'customer_company',
+      label: 'Company',
+      render: (value) => (
+        <div className="text-sm">
+          {value ? (
+            <span className="inline-flex items-center gap-1">
+              <Building2 className="w-3 h-3 text-muted-foreground" />
+              {value}
+            </span>
+          ) : (
+            <span className="text-muted-foreground text-xs">—</span>
+          )}
+        </div>
+      )
+    },
+    {
       key: 'primary_category_name',
       label: 'Category',
       render: (value) => (

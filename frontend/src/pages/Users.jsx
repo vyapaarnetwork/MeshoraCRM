@@ -42,6 +42,7 @@ import {
 import { Search, Users, Filter, Mail, Phone, Building2, Calendar, Plus, Loader2, UserPlus, Edit, Trash2 } from 'lucide-react';
 import api, { formatDate, getRoleLabel, getRoleColor } from '../utils/api';
 import { toast } from 'sonner';
+import NotificationPreferences from '../components/NotificationPreferences';
 
 const UsersList = () => {
   const { isAdmin, user: currentUser } = useAuth();
@@ -65,7 +66,9 @@ const UsersList = () => {
     phone: '',
     is_finance: false,
     is_delivery: false,
-    is_vyapaar_ops: false
+    is_vyapaar_ops: false,
+    company_role: '',
+    notification_preferences: null,
   });
 
   // Delete confirmation state
@@ -160,7 +163,9 @@ const UsersList = () => {
           company_id: formData.company_id || null,
           is_finance: formData.is_finance,
           is_delivery: formData.is_delivery,
-          is_vyapaar_ops: formData.is_vyapaar_ops
+          is_vyapaar_ops: formData.is_vyapaar_ops,
+          company_role: formData.company_role || null,
+          notification_preferences: formData.notification_preferences || {},
         };
         if (formData.password) {
           payload.password = formData.password;
@@ -179,7 +184,9 @@ const UsersList = () => {
           company_name: formData.company_id ? null : formData.company_name || null,
           is_finance: formData.is_finance,
           is_delivery: formData.is_delivery,
-          is_vyapaar_ops: formData.is_vyapaar_ops
+          is_vyapaar_ops: formData.is_vyapaar_ops,
+          company_role: formData.company_role || null,
+          notification_preferences: formData.notification_preferences || {},
         };
         await api.post('/users', payload);
         toast.success('User created successfully');
@@ -562,8 +569,43 @@ const UsersList = () => {
                     </p>
                   </div>
                 )}
+
+                {/* Phase 30: Company sub-role (Founder/Sales/Operations/Finance).
+                    Only for Customer or Selling Partner roles. */}
+                {['selling_partner', 'customer'].includes(formData.role) && (
+                  <div className="space-y-2">
+                    <Label>Profile within Company</Label>
+                    <Select
+                      value={formData.company_role || '__unset__'}
+                      onValueChange={(v) => setFormData({ ...formData, company_role: v === '__unset__' ? '' : v })}
+                    >
+                      <SelectTrigger data-testid="user-company-role-select">
+                        <SelectValue placeholder="Select profile" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__unset__">Not specified</SelectItem>
+                        <SelectItem value="founder">Founder / CXO — full access to everything in the company</SelectItem>
+                        <SelectItem value="sales">Sales — leads, war room, deal rooms</SelectItem>
+                        <SelectItem value="operations">Operations — post-closure leads, follow-ups, delivery</SelectItem>
+                        <SelectItem value="finance">Finance — commercials, invoices, payments</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Sub-role controls what menus &amp; data this user can access inside their company. Founder = unrestricted.
+                    </p>
+                  </div>
+                )}
               </>
             )}
+
+            {/* Phase 30: Notification preferences */}
+            <div className="pt-2 border-t">
+              <NotificationPreferences
+                value={formData.notification_preferences || {}}
+                onChange={(next) => setFormData({ ...formData, notification_preferences: next })}
+                testIdPrefix="user-notif"
+              />
+            </div>
           </div>
 
           <DialogFooter>

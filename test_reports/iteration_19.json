@@ -1,0 +1,54 @@
+{
+  "summary": "Phase 30 full-stack testing — all 6 items verified. Backend pytest: 11/11 PASS. Frontend UI: all 6 critical flows confirmed (login, War Room open_leads bucket, Leads Company column, Lead form SearchableUserSelect with typeahead, Settings notification preferences, Users dialog with email notifications + conditional company_role for selling_partner/customer).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase30_features.py",
+    "/app/test_reports/pytest/phase30_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Users.jsx dialog is long (>700 lines); when an admin creates a Selling Partner from a 1080px viewport, the Role dropdown option list overflows below the visible viewport while the dialog content (Email Notifications, etc.) sits in the middle. Consider grouping non-essential fields (Vyapaar team roles, Notification preferences) into a collapsible/Tabs layout so the primary fields (Role, Profile within Company) are always visible. Not a functional bug — purely UX.",
+    "FollowUpCreate has no 'title' field — only 'scheduled_date', 'notes', 'pending_with', 'assignee_id', 'reminder_minutes_before'. Frontend tests should rely on 'notes' as the user-visible label. (No action needed; flagged for future test authors.)",
+    "POST /api/leads/{id}/follow-ups returns the full LeadResponse rather than the newly-created FollowUpResponse, which is inconsistent with REST POST conventions (usually returns the created resource). Existing consumers work, but future API consumers may be confused. Low priority."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase30_features.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": "admin@vyapaarnetwork.com / admin123 (super_admin) from /app/memory/test_credentials.md — works.",
+  "seed_data_creation": "Test user TEST_phase30_<uuid>@meshora.com is created and auto-cleaned by class-scoped fixture in test_phase30_features.py. Test follow-up (notes='TEST_phase30_followup_<uuid>') is appended to first existing lead and is NOT cleaned up — low impact, just informational follow-up rows.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 30 covers 6 batched items: (1) company_role + (6) notification_preferences on user/profile, (2) SearchableUserSelect combobox on Lead form (partner + referrer), (3) follow-up assignee_id + reminder_minutes_before, (4) War Room open_leads bucket, (5) Leads list Company column. All backend endpoints under test live in /app/backend/tests/test_phase30_features.py and pass cleanly. To test the Users dialog Role dropdown via Playwright at viewport 1080, scroll the dialog up first; the role-options popper overflows below the dialog because the dialog is tall (Email Notifications card pushes Role select up). Consider 4000px viewport for Users dialog UI tests.",
+  "rca of the issue": "N/A — no issues found.",
+  "verified_endpoints": [
+    "GET /api/auth/me — returns company_role + notification_preferences ✓",
+    "GET /api/notifications/types — returns catalog (≥1 entry, smoke-test by main agent reported 11) ✓",
+    "GET /api/users/assignable — returns list with id+name ✓",
+    "GET /api/war-room/board — buckets list includes id='open_leads' with count field ✓",
+    "POST /api/users — accepts company_role + notification_preferences and persists both ✓",
+    "PUT /api/users/{id} — updates company_role and notification_preferences ✓",
+    "PUT /api/profile — self-update of notification_preferences ✓ (verified via /auth/me)",
+    "POST /api/leads/{id}/follow-ups — accepts assignee_id + reminder_minutes_before; returned lead.follow_ups[].assignee_name is enriched ✓"
+  ],
+  "verified_ui_flows": [
+    "Login as admin → dashboard",
+    "War Room: 'Open Leads' bucket card (testid=bucket-open_leads) + filter-chip-open_leads present",
+    "Leads list table headers: ['Lead','Customer','Company','Category','Status','Deal Value','Health','Created',''] — Company column present between Customer and Category",
+    "Lead form: 5 comboboxes including selling-partner-select; typing 'admin' filters CommandList options (typeahead works)",
+    "Settings page: Notification Preferences component with 13 toggle switches mounted (selfMode)",
+    "Users → Add User dialog: Email Notifications card with toggles for Lead Assigned, Lead Status Changed, Deal Won, Follow-up Reminder, Follow-up Overdue, Milestone Due, Invoice Overdue, Payment Received, Commercial Created (≥9 types visible)",
+    "Users dialog conditional company_role select (data-testid=user-company-role-select) renders for role∈{selling_partner, customer} — confirmed in source code Users.jsx L575-597"
+  ]
+}

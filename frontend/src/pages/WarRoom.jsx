@@ -24,7 +24,8 @@ import FeatureInfo from '../components/FeatureInfo';
 
 const BUCKET_ICONS = {
   high_priority: Flame, blocked: AlertTriangle, followup_pending: Clock,
-  commercial_pending: DollarSign, partner_coordination: Users, inactive: Moon, recently_won: Trophy,
+  commercial_pending: DollarSign, partner_coordination: Users,
+  open_leads: Activity, inactive: Moon, recently_won: Trophy,
 };
 
 const HEALTH_CLS = {

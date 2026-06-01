@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import api, { getRoleLabel, getRoleColor, formatDate } from '../utils/api';
 import { toast } from 'sonner';
+import NotificationPreferences from '../components/NotificationPreferences';
 
 const Settings = () => {
   const { user } = useAuth();
@@ -299,6 +300,13 @@ const Settings = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Notification Preferences (Phase 30) */}
+      <NotificationPreferences
+        selfMode
+        initialFromUser={user?.notification_preferences || null}
+        testIdPrefix="profile-notif"
+      />
 
       {/* Account Details */}
       <Card>

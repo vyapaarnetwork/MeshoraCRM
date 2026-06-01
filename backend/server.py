@@ -87,6 +87,11 @@ class UserCreate(BaseModel):
     role: UserRole
     company_name: Optional[str] = None
     phone: Optional[str] = None
+    # Phase 30: sub-role inside a Customer / Selling-Partner company
+    # (founder | sales | operations | finance). Ignored for vyapaar-side roles.
+    company_role: Optional[str] = None
+    # Phase 30: email notification opt-ins (dict of {notification_type: bool}).
+    notification_preferences: Optional[Dict[str, bool]] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -106,6 +111,8 @@ class UserResponse(BaseModel):
     is_finance: bool = False  # Phase 2 commercials: can raise invoices / record payments
     is_delivery: bool = False  # Phase 2 commercials: can update milestone delivery status
     is_vyapaar_ops: bool = False  # Phase 17: Vyapaar Operations — full app access except user/company/category creation
+    company_role: Optional[str] = None  # Phase 30: founder | sales | operations | finance
+    notification_preferences: Optional[Dict[str, bool]] = None  # Phase 30
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -116,6 +123,7 @@ class TokenResponse(BaseModel):
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
+    notification_preferences: Optional[Dict[str, bool]] = None  # Phase 30: user-managed
 
 class PasswordChange(BaseModel):
     current_password: str
@@ -182,6 +190,8 @@ class AdminUserCreate(BaseModel):
     is_finance: bool = False
     is_delivery: bool = False
     is_vyapaar_ops: bool = False
+    company_role: Optional[str] = None  # Phase 30
+    notification_preferences: Optional[Dict[str, bool]] = None  # Phase 30
 
 # Admin User Update Model
 class AdminUserUpdate(BaseModel):
@@ -195,6 +205,8 @@ class AdminUserUpdate(BaseModel):
     is_finance: Optional[bool] = None
     is_delivery: Optional[bool] = None
     is_vyapaar_ops: Optional[bool] = None
+    company_role: Optional[str] = None  # Phase 30: founder/sales/operations/finance
+    notification_preferences: Optional[Dict[str, bool]] = None  # Phase 30
 
 # Lead Referral Model (for Selling Partners)
 class LeadReferralCreate(BaseModel):
@@ -330,12 +342,17 @@ class FollowUpCreate(BaseModel):
     scheduled_date: str
     notes: Optional[str] = None
     pending_with: Optional[str] = None  # "selling_partner" or "customer"
+    assignee_id: Optional[str] = None  # Phase 30: who is responsible for this follow-up
+    reminder_minutes_before: Optional[int] = 120  # Phase 30: lead-time for the reminder
 
 class FollowUpResponse(BaseModel):
     id: str
     scheduled_date: str
     notes: Optional[str] = None
     pending_with: Optional[str] = None
+    assignee_id: Optional[str] = None
+    assignee_name: Optional[str] = None
+    reminder_minutes_before: Optional[int] = None
     is_completed: bool
     completed_at: Optional[str] = None
     completion_notes: Optional[str] = None
@@ -776,6 +793,8 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         is_vyapaar_ops=(actual_role == UserRole.VYAPAAR_OPS.value) or bool(
             current_user.get('is_vyapaar_ops', False) and actual_role != UserRole.VYAPAAR_FINANCE.value
         ),
+        company_role=current_user.get('company_role'),
+        notification_preferences=current_user.get('notification_preferences'),
         created_at=current_user['created_at']
     )
 
@@ -816,6 +835,8 @@ async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depen
         is_finance=updated_user.get('is_finance', False),
         is_delivery=updated_user.get('is_delivery', False),
         is_vyapaar_ops=updated_user.get('is_vyapaar_ops', False),
+        company_role=updated_user.get('company_role'),
+        notification_preferences=updated_user.get('notification_preferences'),
         created_at=updated_user['created_at']
     )
 
@@ -1012,6 +1033,8 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         "is_finance": user_data.is_finance,
         "is_delivery": user_data.is_delivery,
         "is_vyapaar_ops": user_data.is_vyapaar_ops,
+        "company_role": user_data.company_role,
+        "notification_preferences": user_data.notification_preferences,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
@@ -1029,6 +1052,8 @@ async def create_user(user_data: AdminUserCreate, current_user: dict = Depends(g
         is_finance=user_data.is_finance,
         is_delivery=user_data.is_delivery,
         is_vyapaar_ops=user_data.is_vyapaar_ops,
+        company_role=user_data.company_role,
+        notification_preferences=user_data.notification_preferences,
         created_at=user_doc['created_at']
     )
 
@@ -1134,6 +1159,65 @@ async def list_referrers(current_user: dict = Depends(get_current_user)):
         ))
     return result
 
+# Phase 30 — Notification preference catalog
+NOTIFICATION_TYPE_CATALOG = [
+    {"key": "lead_assigned", "label": "Lead Assigned", "description": "When a new lead is assigned to you"},
+    {"key": "lead_status_changed", "label": "Lead Status Changed", "description": "When status of a lead you own changes"},
+    {"key": "lead_won", "label": "Deal Won", "description": "When a deal in your pipeline is marked Won"},
+    {"key": "follow_up_reminder", "label": "Follow-up Reminder", "description": "Reminder ahead of a scheduled follow-up"},
+    {"key": "follow_up_overdue", "label": "Follow-up Overdue", "description": "When a follow-up has passed its scheduled date"},
+    {"key": "milestone_due", "label": "Milestone Due", "description": "When a commercial milestone is approaching its due date"},
+    {"key": "invoice_overdue", "label": "Invoice Overdue", "description": "When an invoice you raised is past due"},
+    {"key": "payment_received", "label": "Payment Received", "description": "When a payment is recorded against your deal"},
+    {"key": "commercial_created", "label": "Commercial Created", "description": "When commercials are set up for your deal"},
+    {"key": "comment_mention", "label": "Mention in Comment", "description": "When someone @mentions you in a lead/deal comment"},
+    {"key": "weekly_war_room_digest", "label": "Weekly War Room Digest", "description": "Monday summary of what's hot, blocked, and at risk"},
+]
+
+@api_router.get("/notifications/types")
+async def list_notification_types(current_user: dict = Depends(get_current_user)):
+    """Phase 30: Returns the catalog of notification types users can opt in/out of."""
+    return NOTIFICATION_TYPE_CATALOG
+
+@api_router.get("/users/assignable", response_model=List[UserResponse])
+async def list_assignable_users(
+    company_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Phase 30: Users who can be picked as a follow-up assignee.
+    Defaults to the caller's company peers; super_admin can pass any company_id."""
+    if current_user['role'] == UserRole.SUPER_ADMIN.value:
+        target_company = company_id
+    else:
+        target_company = current_user.get('company_id')
+
+    query: Dict[str, Any] = {"is_active": {"$ne": False}}
+    if target_company:
+        query["company_id"] = target_company
+    elif current_user['role'] != UserRole.SUPER_ADMIN.value:
+        # Caller has no company — return only themselves so the UI doesn't break.
+        query["id"] = current_user['id']
+
+    users = await db.users.find(query, {"_id": 0, "password": 0}).sort("name", 1).to_list(500)
+    cids = list({u.get('company_id') for u in users if u.get('company_id')})
+    cmap: Dict[str, str] = {}
+    if cids:
+        cmps = await db.companies.find({"id": {"$in": cids}}, {"_id": 0}).to_list(len(cids))
+        cmap = {c['id']: c.get('name') for c in cmps}
+    return [
+        UserResponse(
+            id=u['id'], email=u['email'], name=u['name'], role=UserRole(u['role']),
+            company_id=u.get('company_id'), company_name=cmap.get(u.get('company_id')),
+            phone=u.get('phone'), is_active=u.get('is_active', True),
+            is_finance=u.get('is_finance', False), is_delivery=u.get('is_delivery', False),
+            is_vyapaar_ops=u.get('is_vyapaar_ops', False),
+            company_role=u.get('company_role'),
+            notification_preferences=u.get('notification_preferences'),
+            created_at=u['created_at'],
+        )
+        for u in users
+    ]
+
 @api_router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """Get single user details"""
@@ -1162,6 +1246,8 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
         is_finance=user.get('is_finance', False),
         is_delivery=user.get('is_delivery', False),
         is_vyapaar_ops=user.get('is_vyapaar_ops', False),
+        company_role=user.get('company_role'),
+        notification_preferences=user.get('notification_preferences'),
         created_at=user['created_at']
     )
 
@@ -1222,6 +1308,8 @@ async def update_user(user_id: str, user_data: AdminUserUpdate, current_user: di
         is_finance=updated_user.get('is_finance', False),
         is_delivery=updated_user.get('is_delivery', False),
         is_vyapaar_ops=updated_user.get('is_vyapaar_ops', False),
+        company_role=updated_user.get('company_role'),
+        notification_preferences=updated_user.get('notification_preferences'),
         created_at=updated_user['created_at']
     )
 
@@ -1277,6 +1365,8 @@ async def list_users(role: Optional[str] = None, current_user: dict = Depends(ge
             is_finance=user.get('is_finance', False),
             is_delivery=user.get('is_delivery', False),
             is_vyapaar_ops=user.get('is_vyapaar_ops', False),
+            company_role=user.get('company_role'),
+            notification_preferences=user.get('notification_preferences'),
             created_at=user['created_at']
         ))
     
@@ -2572,6 +2662,46 @@ async def get_entity_documents(entity_type: str, entity_id: str, current_user: d
 
 # ==================== LEAD ROUTES ====================
 
+async def _enrich_followups(followups: List[dict], users_map: Optional[Dict[str, Any]] = None) -> List[FollowUpResponse]:
+    """Phase 30: turn raw follow-up dicts into FollowUpResponse with assignee_name resolved.
+    `users_map` may be {id: name_string} OR {id: full_user_dict} — both are accepted."""
+    if not followups:
+        return []
+
+    def _name_from(entry):
+        if entry is None:
+            return None
+        if isinstance(entry, str):
+            return entry
+        if isinstance(entry, dict):
+            return entry.get('name')
+        return None
+
+    if users_map is None:
+        # Lazy-load only the assignee_ids we actually need
+        assignee_ids = list({f.get('assignee_id') for f in followups if f.get('assignee_id')})
+        users_map = {}
+        if assignee_ids:
+            users = await db.users.find({"id": {"$in": assignee_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(assignee_ids))
+            users_map = {u['id']: u.get('name') for u in users}
+    out = []
+    for f in followups:
+        aid = f.get('assignee_id')
+        out.append(FollowUpResponse(
+            id=f['id'],
+            scheduled_date=f['scheduled_date'],
+            notes=f.get('notes'),
+            pending_with=f.get('pending_with'),
+            assignee_id=aid,
+            assignee_name=_name_from(users_map.get(aid)) if aid else None,
+            reminder_minutes_before=f.get('reminder_minutes_before'),
+            is_completed=bool(f.get('is_completed', False)),
+            completed_at=f.get('completed_at'),
+            completion_notes=f.get('completion_notes'),
+            created_at=f['created_at'],
+        ))
+    return out
+
 async def enrich_lead(lead: dict) -> LeadResponse:
     """Enrich a single lead with related data - used for single lead fetch"""
     # Get related data
@@ -2670,7 +2800,7 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         status_name=status['name'] if status else None,
         status_color=status['color'] if status else None,
         status_is_won=bool(status.get('is_won')) if status else False,
-        follow_ups=[FollowUpResponse(**f) for f in lead.get('follow_ups', [])],
+        follow_ups=await _enrich_followups(lead.get('follow_ups', [])),
         comments=[CommentResponse(**c) for c in lead.get('comments', [])],
         documents=doc_responses,
         assigned_partners=[PartnerAssignment(**p) for p in lead.get('assigned_partners', [])],
@@ -2839,7 +2969,7 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             status_name=status['name'] if status else None,
             status_color=status['color'] if status else None,
             status_is_won=bool(status.get('is_won')) if status else False,
-            follow_ups=[FollowUpResponse(**f) for f in lead.get('follow_ups', [])],
+            follow_ups=await _enrich_followups(lead.get('follow_ups', []), users_map=users_map),
             comments=[CommentResponse(**c) for c in lead.get('comments', [])],
             documents=doc_responses,
             assigned_partners=[PartnerAssignment(**p) for p in lead.get('assigned_partners', [])],
@@ -3434,6 +3564,8 @@ async def add_follow_up(lead_id: str, followup_data: FollowUpCreate, background_
         "scheduled_date": followup_data.scheduled_date,
         "notes": followup_data.notes,
         "pending_with": followup_data.pending_with,  # "selling_partner" or "customer"
+        "assignee_id": followup_data.assignee_id,  # Phase 30
+        "reminder_minutes_before": followup_data.reminder_minutes_before or 120,  # Phase 30
         "is_completed": False,
         "completed_at": None,
         "completion_notes": None,
@@ -5695,6 +5827,7 @@ WAR_ROOM_BUCKETS = [
     {"id": "followup_pending", "label": "🟡 Follow-up Pending", "color": "#EAB308"},
     {"id": "commercial_pending", "label": "💰 Commercial Pending", "color": "#10B981"},
     {"id": "partner_coordination", "label": "🤝 Partner Coordination", "color": "#8B5CF6"},
+    {"id": "open_leads", "label": "📋 Open Leads", "color": "#3B82F6"},
     {"id": "inactive", "label": "💤 Inactive", "color": "#64748B"},
     {"id": "recently_won", "label": "✅ Recently Won", "color": "#22C55E"},
 ]
@@ -5777,10 +5910,12 @@ def _classify_war_room_bucket(lead: dict, health: dict, today: date) -> str:
     if has_active_partners and 7 <= days_inactive <= 21:
         return "partner_coordination"
 
-    # Default — no urgent bucket needed. Show in inactive if 14+ days, else skip.
+    # Default — any non-won/lost lead that didn't match a specific urgency bucket
+    # lands here. Previously these were dropped (causing the "30 open / 0 cards"
+    # discrepancy users saw in the header KPI).
     if days_inactive >= 14:
         return "inactive"
-    return None
+    return "open_leads"
 
 @api_router.get("/war-room/board")
 async def war_room_board(

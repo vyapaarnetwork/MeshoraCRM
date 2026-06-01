@@ -302,7 +302,28 @@ const Layout = ({ children }) => {
       }
     }
 
-    return items.filter(item => item.roles.includes(user?.role));
+    return items.filter(item => {
+      if (!item.roles.includes(user?.role)) return false;
+      // Phase 30: enforce company_role gating for Customer & Selling Partner
+      // sub-profiles. Founder = unrestricted; others see only relevant menus.
+      const sub = user?.company_role;
+      const isCustomerOrPartner = ['customer', 'selling_partner'].includes(user?.role);
+      if (!isCustomerOrPartner || !sub || sub === 'founder') return true;
+      const path = item.path;
+      if (sub === 'sales') {
+        return ['/dashboard', '/leads', '/lead-referral', '/internal-requests',
+          '/war-room', '/reports'].includes(path);
+      }
+      if (sub === 'operations') {
+        return ['/dashboard', '/leads', '/commercials', '/commercials/kanban',
+          '/reports'].includes(path);
+      }
+      if (sub === 'finance') {
+        return ['/dashboard', '/commercials', '/commercials/kanban',
+          '/commercials/analytics', '/revenue-intelligence', '/reports'].includes(path);
+      }
+      return true;
+    });
   };
 
   const navItems = getNavItems();

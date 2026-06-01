@@ -44,7 +44,13 @@ const LeadDetail = () => {
   const [submittingComment, setSubmittingComment] = useState(false);
 
   // Follow-ups
-  const [newFollowUp, setNewFollowUp] = useState({ date: null, notes: '', pending_with: '' });
+  const [newFollowUp, setNewFollowUp] = useState({
+    date: null,
+    notes: '',
+    pending_with: '',
+    assignee_id: '',
+    reminder_minutes_before: 120,
+  });
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
 
   // Documents
@@ -231,9 +237,11 @@ const LeadDetail = () => {
         scheduled_date: format(newFollowUp.date, 'yyyy-MM-dd'),
         notes: newFollowUp.notes,
         pending_with: newFollowUp.pending_with || null,
+        assignee_id: newFollowUp.assignee_id || null,
+        reminder_minutes_before: newFollowUp.reminder_minutes_before ?? 120,
       });
       setLead(res.data);
-      setNewFollowUp({ date: null, notes: '', pending_with: '' });
+      setNewFollowUp({ date: null, notes: '', pending_with: '', assignee_id: '', reminder_minutes_before: 120 });
       setShowFollowUpForm(false);
       toast.success('Follow-up scheduled');
       fetchHealthAndActivity();

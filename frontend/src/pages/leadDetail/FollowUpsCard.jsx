@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Textarea } from '../../components/ui/textarea';
@@ -8,13 +8,23 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
 import {
-  CalendarIcon, Plus, Check, Clock, UserCheck, MoreHorizontal, AlarmClock,
+  CalendarIcon, Plus, Check, Clock, UserCheck, MoreHorizontal, AlarmClock, Bell,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
 import { format, addDays, addWeeks, addMonths } from 'date-fns';
-import { formatDate } from '../../utils/api';
+import api, { formatDate } from '../../utils/api';
+import SearchableUserSelect from '../../components/SearchableUserSelect';
+
+const REMINDER_OPTIONS = [
+  { value: 0, label: 'No reminder' },
+  { value: 30, label: '30 min before' },
+  { value: 60, label: '1 hour before' },
+  { value: 120, label: '2 hours before' },
+  { value: 240, label: '4 hours before' },
+  { value: 1440, label: '1 day before' },
+];
 
 const isOverdue = (f) => {
   if (f.is_completed || !f.scheduled_date) return false;
@@ -41,6 +51,17 @@ export const FollowUpsCard = ({
   onComplete,
   onSnooze,
 }) => {
+  // Phase 30: load assignable users (caller's company peers) for the assignee picker.
+  const [assignableUsers, setAssignableUsers] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (showFollowUpForm) {
+      api.get('/users/assignable').then((res) => {
+        if (!cancelled) setAssignableUsers(res.data || []);
+      }).catch(() => { if (!cancelled) setAssignableUsers([]); });
+    }
+    return () => { cancelled = true; };
+  }, [showFollowUpForm]);
   // sort: overdue first, then pending, then completed; within group by scheduled_date asc
   const sorted = [...followUps].sort((a, b) => {
     const aOver = isOverdue(a), bOver = isOverdue(b);
@@ -113,6 +134,38 @@ export const FollowUpsCard = ({
                 <SelectItem value="selling_partner">Selling Partner</SelectItem>
               </SelectContent>
             </Select>
+
+            {/* Phase 30: assignee picker — who is responsible for doing this follow-up */}
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Assigned to</label>
+              <SearchableUserSelect
+                value={newFollowUp.assignee_id || ''}
+                onChange={(v) => setNewFollowUp({ ...newFollowUp, assignee_id: v })}
+                users={assignableUsers}
+                placeholder="Pick a teammate (optional)"
+                emptyText="No teammates found in your company."
+                testId="followup-assignee-select"
+              />
+            </div>
+
+            {/* Phase 30: reminder lead-time */}
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Reminder</label>
+              <Select
+                value={String(newFollowUp.reminder_minutes_before ?? 120)}
+                onValueChange={(v) => setNewFollowUp({ ...newFollowUp, reminder_minutes_before: parseInt(v, 10) })}
+              >
+                <SelectTrigger data-testid="reminder-select">
+                  <SelectValue placeholder="Reminder lead time" />
+                </SelectTrigger>
+                <SelectContent>
+                  {REMINDER_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={String(opt.value)}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <Textarea
               placeholder="Notes (optional)"
               value={newFollowUp.notes}
@@ -208,6 +261,22 @@ const FollowUpRow = ({ f, onComplete, onSnooze }) => {
         <div className="flex items-center gap-1 text-xs text-blue-600 mt-1">
           <UserCheck className="w-3 h-3" />
           Pending with: {f.pending_with === 'customer' ? 'Customer' : 'Selling Partner'}
+        </div>
+      )}
+      {f.assignee_name && (
+        <div className="flex items-center gap-1 text-xs text-purple-600 mt-1" data-testid={`followup-assignee-${f.id}`}>
+          <UserCheck className="w-3 h-3" />
+          Assigned to: {f.assignee_name}
+        </div>
+      )}
+      {f.reminder_minutes_before > 0 && !f.is_completed && (
+        <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-1">
+          <Bell className="w-3 h-3" />
+          Reminder {f.reminder_minutes_before < 60
+            ? `${f.reminder_minutes_before} min`
+            : f.reminder_minutes_before < 1440
+              ? `${Math.round(f.reminder_minutes_before / 60)} hour${f.reminder_minutes_before >= 120 ? 's' : ''}`
+              : `${Math.round(f.reminder_minutes_before / 1440)} day${f.reminder_minutes_before >= 2880 ? 's' : ''}`} before
         </div>
       )}
       {f.notes && <p className="text-xs text-muted-foreground mt-1">{f.notes}</p>}
