@@ -392,6 +392,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Testing** — backend pytest 27/28 (96.4%, single failure was a test-script payload mismatch on `/comments`, not a server bug). Frontend Playwright smoke verified Login, Register, Companies, LeadDetail, Users pages all render correctly for both new role accounts.
 - [x] **Role context banner** (`RoleContextBanner.jsx`) — when a `vyapaar_ops` or `vyapaar_finance` user logs in, a subtle full-width banner appears under the top header showing "You're viewing as Vyapaar Operations / Finance" with their permission summary. Indigo accent for Ops, amber accent for Finance. Dismissible per session via `sessionStorage`. Respects dark mode.
 
+### Phase 30 — Sub-roles, smart search, follow-up assignees, war-room "Open Leads", lead list, notif prefs (Jun 1, 2026)
+- [x] **(#1) Company sub-roles** — `company_role` field (founder|sales|operations|finance) on Customer/Selling-Partner users; admin form has "Profile within Company" select; sidebar filtered in `Layout.jsx`. Founder=unrestricted; Sales=leads/war-room/deal-rooms; Operations=leads/commercials post-closure; Finance=commercials/invoices/payments.
+- [x] **(#2) SearchableUserSelect combobox** — reusable typeahead at `/app/frontend/src/components/SearchableUserSelect.jsx`. Wired into LeadForm (Partner + Referred-By) and Follow-Up assignee picker. Roll out to other dropdowns incrementally.
+- [x] **(#3) Follow-up assignee + reminder** — `FollowUpCreate/Response` carry `assignee_id`, `assignee_name` (enriched), `reminder_minutes_before` (default 120). Display "Assigned to" + "Reminder Xh before" chips on each row. Email/in-app dispatch BLOCKED on Zoho integration.
+- [x] **(#4) War Room "Open Leads" catch-all bucket** — added `open_leads` to `WAR_ROOM_BUCKETS`; `_classify_war_room_bucket` returns it as fallback. KPI total now reconciles with sum of bucket counts.
+- [x] **(#5) Lead list Company column** — `customer_company` rendered between Customer and Category.
+- [x] **(#6) Email notification preferences** — `NotificationPreferences` component reads 11-type catalog from `GET /api/notifications/types`. Mounted in Settings (selfMode auto-save via `PUT /api/profile`) and Users dialog (controlled mode). New endpoint: `GET /api/users/assignable`.
+- Test report: `/app/test_reports/iteration_19.json` — backend pytest 11/11 PASS, frontend UI 6/6 flows verified, 0 issues.
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
