@@ -401,6 +401,13 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **(#6) Email notification preferences** — `NotificationPreferences` component reads 11-type catalog from `GET /api/notifications/types`. Mounted in Settings (selfMode auto-save via `PUT /api/profile`) and Users dialog (controlled mode). New endpoint: `GET /api/users/assignable`.
 - Test report: `/app/test_reports/iteration_19.json` — backend pytest 11/11 PASS, frontend UI 6/6 flows verified, 0 issues.
 
+### Phase 31 — SearchableUserSelect rollout + Deal Room router extraction (Jun 1, 2026)
+- [x] **SearchableUserSelect rolled out** to 3 more spots: TasksCard "Assign to…" (Lead detail), CommercialDetail UserSelect helper (6 commercial fields: Project Owner / Delivery SPOC / Billing Contact / Account Manager / Contract Owner / Billing Contact-R), AssignedPartners "Assign Partner" dialog.
+- [x] **Deal Room router extracted** — Phase 27 + 27.5 endpoints (12 routes, ~620 lines) moved from `server.py` to `/app/backend/routers/deal_room.py`. Mounted via late-binding import (mirrors `routers/commercials.py` pattern). server.py shrunk from 8,740 → 8,110 lines (-7%). Includes: toggle, get curated view, public messages, approval CRUD, magic-link invite CRUD, and all 3 public guest endpoints.
+- [x] **Testing** — Phase 31 added 14 new pytest tests (all PASS) + 52/52 prior regression tests still PASS. Frontend: 3/3 UI rollouts confirmed as typeable comboboxes (cmdk popover filters as user types).
+- Test report: `/app/test_reports/iteration_20.json`.
+- **Refactor note (from testing agent)**: shared deps (db, get_current_user, etc.) should ideally be extracted to a `core.py` or `deps.py` so routers don't back-reference `server`. Current late-binding works but is fragile. Server.py still has ~7,400 lines of non-deal-room/non-commercials code — future extractions: routers/leads.py, routers/war_room.py, routers/reports.py, routers/users.py.
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
