@@ -1,0 +1,60 @@
+{
+  "summary": "Phase 31 — backend deal-room router extraction + frontend SearchableUserSelect rollout. Backend: 14/14 NEW Phase 31 regression tests PASS (1 skipped: invite-by-email lookup, not an endpoint issue). Prior Phase 27/27.5/30 regression suites: 52 passed, 1 pre-existing skip. Frontend: All 3 dropdown rollouts confirmed as typeable comboboxes — TasksCard 'Assign to...' (filtered 6 users for 'adm'), AssignPartner dialog (filtered 12 partners for 'a'), CommercialDetail UserSelect helper (3 'Search and select user' triggers on the page, typeahead filtered to 6 matches for 'adm' with email as secondary text). Deal-room router successfully mounted at server.py L8074 via late-binding import.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase31_deal_room_refactor.py",
+    "/app/test_reports/pytest/phase31_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routers/deal_room.py uses `from server import ...` (late-binding) which works because server.py imports the router only at the bottom (L8074). This pattern is fragile — any future top-of-file import of routers.deal_room from server.py will reintroduce the circular import. Consider extracting shared deps (db, get_current_user, UserRole, NotificationType, create_notification, logger, CommentCreate) into a dedicated module (e.g., backend/core.py or backend/deps.py) so router files have no back-reference to server.py.",
+    "server.py is still 8,110 lines; further extractions (e.g., leads/, war-room/, commercials kanban/, predictive/) would improve maintainability.",
+    "TasksCard.jsx still imports the legacy shadcn Select (used for the Priority dropdown) alongside SearchableUserSelect — fine, but worth noting the file now has two select systems.",
+    "CommercialDetail UserSelect helper is generic-purpose; the placeholder 'Search and select user...' is fixed. Consider parameterising placeholder per field (e.g., 'Choose Project Owner') to improve a11y/UX, but not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase31_deal_room_refactor.py (new — 14 tests, 220 lines)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 Phase 31 + 52/52 prior regression)",
+    "frontend": "100% (3/3 SearchableUserSelect rollouts)"
+  },
+  "test_credentials": "admin@vyapaarnetwork.com / admin123 (super_admin) — works.",
+  "seed_data_creation": "TEST_phase31_msg_*, TEST_phase31_approval_*, TEST_phase31_invite_* and TEST_phase31_followup_* records created on first lead. Lightweight; existing TEST_ cleanup conventions apply. No new users created by Phase 31 tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 31 cleanup: (a) Deal-room endpoints fully extracted to /app/backend/routers/deal_room.py, mounted near L8074 of server.py via late-binding `from routers.deal_room import router as deal_room_router; api_router.include_router(deal_room_router)`. Test file: /app/backend/tests/test_phase31_deal_room_refactor.py. (b) SearchableUserSelect testids to remember for future UI tests — task-assignee-select (TasksCard), partner-select (AssignedPartners dialog). CommercialDetail UserSelect helper does not pass a testid by default; identify it by placeholder 'Search and select user...'. To open the cmdk popover, click the trigger button with force=True then look for [cmdk-input] and [cmdk-item] selectors. Login admin credentials: admin@vyapaarnetwork.com / admin123. Public URL: https://vyapaar-preview-1.preview.emergentagent.com.",
+  "rca of the issue": "N/A — no issues found.",
+  "verified_endpoints": [
+    "POST /api/leads/{id}/deal-room/toggle → 200 ✓",
+    "GET  /api/leads/{id}/deal-room → 200 ✓",
+    "POST /api/leads/{id}/deal-room/messages → 200/201 ✓",
+    "POST /api/leads/{id}/approvals → 200/201 ✓",
+    "GET  /api/leads/{id}/approvals → 200 (list) ✓",
+    "POST /api/leads/{id}/approvals/{approval_id}/respond → 200 ✓",
+    "POST /api/leads/{id}/deal-room/invites → 200 ✓",
+    "GET  /api/leads/{id}/deal-room/invites → 200 ✓",
+    "DELETE /api/leads/{id}/deal-room/invites/{invite_id} → 200/204 (covered by test_phase27_5_invites.py regression)",
+    "GET  /api/deal-room/access/{invalid_token} → 403 ✓ (expected per spec)",
+    "POST /api/deal-room/access/{invalid_token}/messages → 403 ✓",
+    "POST /api/deal-room/access/{invalid_token}/approvals/{id}/respond → 403 ✓",
+    "GET  /api/notifications/types → 200 ✓ (Phase 30 regression)",
+    "GET  /api/users/assignable → 200 ✓",
+    "GET  /api/war-room/board → 200; open_leads bucket present ✓",
+    "POST /api/leads/{id}/follow-ups (assignee_id + reminder_minutes_before) → 200 ✓"
+  ],
+  "verified_ui_flows": [
+    "Login as admin@vyapaarnetwork.com → /dashboard",
+    "Open lead detail → TasksCard 'Add' → SearchableUserSelect opens cmdk popover → typing 'adm' filters to 6 options (first: 'Super Admin') ✓",
+    "Open lead detail → 'Assign Partner' button → partner-select SearchableUserSelect opens cmdk popover → typing 'a' filters to 12 partner options ✓",
+    "Open commercial detail → 3 'Search and select user' SearchableUserSelect triggers visible → opening one and typing 'adm' filters to 6 user options with email as secondary text ✓"
+  ]
+}

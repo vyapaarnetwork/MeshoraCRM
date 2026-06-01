@@ -11,6 +11,7 @@ import {
   Users, Plus, Trophy, UserCheck, UserMinus,
 } from 'lucide-react';
 import { formatDate } from '../../utils/api';
+import SearchableUserSelect from '../../components/SearchableUserSelect';
 
 const StatusIcon = ({ status }) => {
   if (status === 'won') return <Trophy className="w-4 h-4 text-green-600" />;
@@ -124,20 +125,15 @@ export const AssignPartnerDialog = ({
         </DialogDescription>
       </DialogHeader>
       <div className="py-4">
-        <Select value={selectedPartnerId} onValueChange={setSelectedPartnerId}>
-          <SelectTrigger data-testid="partner-select">
-            <SelectValue placeholder="Select a partner" />
-          </SelectTrigger>
-          <SelectContent>
-            {partners
-              .filter(p => !lead?.assigned_partners?.some(ap => ap.partner_id === p.id && ap.status === 'active'))
-              .map((partner) => (
-                <SelectItem key={partner.id} value={partner.id}>
-                  {partner.name} - {partner.company_name || 'No Company'}
-                </SelectItem>
-              ))}
-          </SelectContent>
-        </Select>
+        <SearchableUserSelect
+          value={selectedPartnerId || ''}
+          onChange={setSelectedPartnerId}
+          users={partners.filter(p => !lead?.assigned_partners?.some(ap => ap.partner_id === p.id && ap.status === 'active'))}
+          placeholder="Search and select partner..."
+          emptyText="No partners available to assign."
+          testId="partner-select"
+          secondaryRender={(p) => p.company_name || 'No Company'}
+        />
         {lead?.assigned_partners?.filter(p => p.status === 'active').length > 0 && (
           <p className="text-sm text-muted-foreground mt-3">
             Currently {lead.assigned_partners.filter(p => p.status === 'active').length} partner(s) actively working on this lead.

@@ -15,6 +15,7 @@ import {
 } from '../components/ui/dropdown-menu';
 import api, { formatDate } from '../utils/api';
 import { toast } from 'sonner';
+import SearchableUserSelect from './SearchableUserSelect';
 
 const PRIORITY_COLORS = {
   low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
@@ -118,16 +119,14 @@ const TasksCard = ({ leadId }) => {
               rows={2}
             />
             <div className="grid grid-cols-2 gap-2">
-              <Select value={newTask.assignee_id} onValueChange={(v) => setNewTask({ ...newTask, assignee_id: v })}>
-                <SelectTrigger className="h-9" data-testid="task-assignee-select">
-                  <SelectValue placeholder="Assign to…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableUserSelect
+                value={newTask.assignee_id || ''}
+                onChange={(v) => setNewTask({ ...newTask, assignee_id: v })}
+                users={users}
+                placeholder="Assign to…"
+                emptyText="No teammates found."
+                testId="task-assignee-select"
+              />
               <Select value={newTask.priority} onValueChange={(v) => setNewTask({ ...newTask, priority: v })}>
                 <SelectTrigger className="h-9" data-testid="task-priority-select">
                   <SelectValue />

@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '../components/ui/dropdown-menu';
 import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle, Wand2 } from 'lucide-react';
+import SearchableUserSelect from '../components/SearchableUserSelect';
 import { toast } from 'sonner';
 
 const MILESTONE_STATUS_STYLES = {
@@ -1251,15 +1252,15 @@ const KPI = ({ label, value, sub }) => (
 );
 
 const UserSelect = ({ value, onChange, users, testid }) => (
-  <Select value={value || '__none__'} onValueChange={(v) => onChange(v === '__none__' ? null : v)}>
-    <SelectTrigger data-testid={testid}><SelectValue placeholder="Select user" /></SelectTrigger>
-    <SelectContent>
-      <SelectItem value="__none__">— None —</SelectItem>
-      {users.map((u) => (
-        <SelectItem key={u.id} value={u.id}>{u.name} ({u.email})</SelectItem>
-      ))}
-    </SelectContent>
-  </Select>
+  <SearchableUserSelect
+    value={value || ''}
+    onChange={(v) => onChange(v || null)}
+    users={users}
+    placeholder="Search and select user..."
+    emptyText="No matching users."
+    testId={testid}
+    secondaryRender={(u) => u.email}
+  />
 );
 
 export default CommercialDetail;
