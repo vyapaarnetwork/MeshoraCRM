@@ -1270,6 +1270,55 @@ async def list_assignable_users(
         for u in users
     ]
 
+
+class BulkNotificationPreferenceUpdate(BaseModel):
+    """Phase 34: bulk-apply notification preference toggles to a set of users."""
+    user_ids: List[str]
+    notification_preferences: Dict[str, bool]
+    merge: bool = True  # True = merge with existing; False = REPLACE
+
+
+@api_router.post("/users/bulk-notification-preferences")
+async def bulk_update_notification_preferences(
+    body: BulkNotificationPreferenceUpdate, current_user: dict = Depends(get_current_user)
+):
+    """Phase 34 — admin-only. Apply a notification preference dict to many users
+    in one call. When `merge=True` (default), the new keys are merged into each
+    user's existing preferences (other keys retained). When `merge=False`, the
+    entire `notification_preferences` field is REPLACED. Returns counts."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    user_ids = [u for u in (body.user_ids or []) if u]
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="user_ids cannot be empty")
+    if len(user_ids) > 500:
+        raise HTTPException(status_code=400, detail="Too many users at once (max 500)")
+    if not body.notification_preferences:
+        raise HTTPException(status_code=400, detail="notification_preferences cannot be empty")
+
+    updated = 0
+    if body.merge:
+        # Apply per-user merge: load each user's prefs, deep-merge, write back.
+        # Done in a single Mongo bulk write for efficiency.
+        users = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "notification_preferences": 1}).to_list(len(user_ids))
+        from pymongo import UpdateOne
+        ops = []
+        for u in users:
+            existing = u.get('notification_preferences') or {}
+            merged = {**existing, **body.notification_preferences}
+            ops.append(UpdateOne({"id": u['id']}, {"$set": {"notification_preferences": merged}}))
+        if ops:
+            res = await db.users.bulk_write(ops)
+            updated = res.modified_count
+    else:
+        res = await db.users.update_many(
+            {"id": {"$in": user_ids}},
+            {"$set": {"notification_preferences": body.notification_preferences}},
+        )
+        updated = res.modified_count
+    return {"requested": len(user_ids), "updated": updated, "merge": body.merge}
+
+
 @api_router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """Get single user details"""

@@ -39,10 +39,90 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
-import { Search, Users, Filter, Mail, Phone, Building2, Calendar, Plus, Loader2, UserPlus, Edit, Trash2 } from 'lucide-react';
+import { Search, Users, Filter, Mail, Phone, Building2, Calendar, Plus, Loader2, UserPlus, Edit, Trash2, Bell, Check, ChevronDown } from 'lucide-react';
 import api, { formatDate, getRoleLabel, getRoleColor } from '../utils/api';
 import { toast } from 'sonner';
 import NotificationPreferences from '../components/NotificationPreferences';
+import { Checkbox } from '../components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu';
+
+// Phase 34: notification preset templates for bulk-apply.
+// Each entry sets EVERY notification key explicitly so the merge produces a clean state.
+const NOTIF_TEMPLATES = [
+  {
+    id: 'sales_default',
+    name: 'Sales team default',
+    description: 'Lead activity, follow-ups, deal-room invites, war-room digest',
+    preferences: {
+      lead_assigned: true, lead_status_changed: true, lead_won: true,
+      follow_up_reminder: true, follow_up_overdue: true,
+      milestone_due: false, invoice_overdue: false, payment_received: false,
+      commercial_created: false, comment_mention: true, weekly_war_room_digest: true,
+    },
+  },
+  {
+    id: 'operations_default',
+    name: 'Operations team',
+    description: 'Won deals, milestones, follow-ups, comment mentions',
+    preferences: {
+      lead_assigned: false, lead_status_changed: false, lead_won: true,
+      follow_up_reminder: true, follow_up_overdue: true,
+      milestone_due: true, invoice_overdue: false, payment_received: false,
+      commercial_created: true, comment_mention: true, weekly_war_room_digest: false,
+    },
+  },
+  {
+    id: 'finance_default',
+    name: 'Finance team',
+    description: 'Commercials, invoices, milestones, payments',
+    preferences: {
+      lead_assigned: false, lead_status_changed: false, lead_won: true,
+      follow_up_reminder: false, follow_up_overdue: false,
+      milestone_due: true, invoice_overdue: true, payment_received: true,
+      commercial_created: true, comment_mention: false, weekly_war_room_digest: false,
+    },
+  },
+  {
+    id: 'follow_ups_only',
+    name: 'Only follow-up reminders',
+    description: 'Mute everything except follow-up nudges',
+    preferences: {
+      lead_assigned: false, lead_status_changed: false, lead_won: false,
+      follow_up_reminder: true, follow_up_overdue: true,
+      milestone_due: false, invoice_overdue: false, payment_received: false,
+      commercial_created: false, comment_mention: false, weekly_war_room_digest: false,
+    },
+  },
+  {
+    id: 'enable_all',
+    name: 'Enable all notifications',
+    description: 'Turn every email type ON',
+    preferences: {
+      lead_assigned: true, lead_status_changed: true, lead_won: true,
+      follow_up_reminder: true, follow_up_overdue: true,
+      milestone_due: true, invoice_overdue: true, payment_received: true,
+      commercial_created: true, comment_mention: true, weekly_war_room_digest: true,
+    },
+  },
+  {
+    id: 'mute_all',
+    name: 'Mute all emails',
+    description: 'Turn every email type OFF (in-app bell still works)',
+    preferences: {
+      lead_assigned: false, lead_status_changed: false, lead_won: false,
+      follow_up_reminder: false, follow_up_overdue: false,
+      milestone_due: false, invoice_overdue: false, payment_received: false,
+      commercial_created: false, comment_mention: false, weekly_war_room_digest: false,
+    },
+  },
+];
 
 const UsersList = () => {
   const { isAdmin, user: currentUser } = useAuth();
@@ -75,6 +155,11 @@ const UsersList = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Phase 34: Bulk-update selection state
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState(null); // {template, count}
 
   useEffect(() => {
     fetchData();
@@ -125,6 +210,56 @@ const UsersList = () => {
       });
     }
     setDialogOpen(true);
+  };
+
+  // Phase 34 — Bulk selection helpers
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allFilteredSelected = (filteredIds) =>
+    filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+
+  const toggleSelectAll = (filteredIds) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (filteredIds.every((id) => next.has(id))) {
+        filteredIds.forEach((id) => next.delete(id));
+      } else {
+        filteredIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const applyBulkTemplate = async (template) => {
+    if (selectedIds.size === 0) {
+      toast.error('Select at least one user first.');
+      return;
+    }
+    setBulkApplying(true);
+    try {
+      const res = await api.post('/users/bulk-notification-preferences', {
+        user_ids: Array.from(selectedIds),
+        notification_preferences: template.preferences,
+        merge: true,
+      });
+      const { requested, updated } = res.data || {};
+      toast.success(`Applied "${template.name}" to ${updated} of ${requested} users.`);
+      setSelectedIds(new Set());
+      setBulkConfirm(null);
+      // Refresh so the updated prefs reflect immediately in edit dialog
+      await fetchData();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Bulk update failed');
+    } finally {
+      setBulkApplying(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -318,11 +453,74 @@ const UsersList = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {/* Phase 34 — Bulk update toolbar (only when admin + selections present) */}
+          {isAdmin && selectedIds.size > 0 && (
+            <div
+              className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border bg-primary/5 px-4 py-3"
+              data-testid="bulk-toolbar"
+            >
+              <Bell className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium" data-testid="bulk-count">
+                {selectedIds.size} user{selectedIds.size === 1 ? '' : 's'} selected
+              </span>
+              <span className="text-xs text-muted-foreground hidden sm:inline">
+                Apply a notification preference template:
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="default" disabled={bulkApplying} data-testid="bulk-template-trigger">
+                    {bulkApplying ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Bell className="w-4 h-4 mr-2" />
+                    )}
+                    Apply template
+                    <ChevronDown className="w-4 h-4 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <DropdownMenuLabel className="text-xs">Notification presets</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {NOTIF_TEMPLATES.map((t) => (
+                    <DropdownMenuItem
+                      key={t.id}
+                      onClick={() => setBulkConfirm({ template: t, count: selectedIds.size })}
+                      data-testid={`bulk-template-${t.id}`}
+                    >
+                      <div className="flex flex-col">
+                        <span className="font-medium">{t.name}</span>
+                        <span className="text-xs text-muted-foreground">{t.description}</span>
+                      </div>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedIds(new Set())}
+                data-testid="bulk-clear-btn"
+              >
+                Clear selection
+              </Button>
+            </div>
+          )}
+
           {filteredUsers.length > 0 ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {isAdmin && (
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={allFilteredSelected(filteredUsers.map((u) => u.id))}
+                          onCheckedChange={() => toggleSelectAll(filteredUsers.map((u) => u.id))}
+                          aria-label="Select all visible users"
+                          data-testid="bulk-select-all"
+                        />
+                      </TableHead>
+                    )}
                     <TableHead>User</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Company</TableHead>
@@ -334,7 +532,17 @@ const UsersList = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.map((user) => (
-                    <TableRow key={user.id} data-testid={`user-row-${user.id}`}>
+                    <TableRow key={user.id} data-testid={`user-row-${user.id}`} className={selectedIds.has(user.id) ? 'bg-primary/5' : ''}>
+                      {isAdmin && (
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedIds.has(user.id)}
+                            onCheckedChange={() => toggleSelect(user.id)}
+                            aria-label={`Select ${user.name}`}
+                            data-testid={`bulk-select-${user.id}`}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
                         <div className="flex items-center gap-3">
                           <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center">
@@ -669,6 +877,58 @@ const UsersList = () => {
                 </>
               ) : (
                 'Delete'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Phase 34 — Bulk template apply confirmation */}
+      <AlertDialog open={!!bulkConfirm} onOpenChange={(o) => { if (!o) setBulkConfirm(null); }}>
+        <AlertDialogContent data-testid="bulk-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Apply "{bulkConfirm?.template?.name}"?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm">
+                <p>
+                  This will update the notification preferences for <strong>{bulkConfirm?.count}</strong> selected
+                  user{bulkConfirm?.count === 1 ? '' : 's'}.
+                </p>
+                {bulkConfirm?.template?.description && (
+                  <p className="text-muted-foreground">{bulkConfirm.template.description}</p>
+                )}
+                <div className="rounded-md border bg-muted/40 p-3">
+                  <p className="text-xs font-semibold mb-2">Template enables:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(bulkConfirm?.template?.preferences || {})
+                      .filter(([, v]) => v)
+                      .map(([k]) => (
+                        <span key={k} className="text-xs bg-green-100 text-green-700 rounded px-1.5 py-0.5">
+                          {k.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    {Object.values(bulkConfirm?.template?.preferences || {}).every((v) => !v) && (
+                      <span className="text-xs text-muted-foreground">Nothing — everything will be muted</span>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Existing preferences for other notification types (if any) will be preserved.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkApplying}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => applyBulkTemplate(bulkConfirm.template)}
+              disabled={bulkApplying}
+              data-testid="bulk-confirm-apply"
+            >
+              {bulkApplying ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Applying...</>
+              ) : (
+                <><Check className="w-4 h-4 mr-2" />Apply</>
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

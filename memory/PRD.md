@@ -436,6 +436,14 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] Idempotent via `milestone_reminder_sent=True` flag + skip-with-reason audit trail.
 - **Verified end-to-end**: seeded a milestone with `invoice_due_date = tomorrow` → dispatcher returned `scanned=6, sent=1` → ZeptoMail delivered `[Meshora] Milestone due in 1d: Kickoff` (201, request_id `2d6f...e1d1`) → re-run returned `sent=0` (idempotent). Bonus: autostart pass found 2 pre-existing overdue milestones and emailed "Milestone due 6d ago" — the "missed during downtime" backstop works.
 
+### Phase 34 — Bulk notification preferences (Jun 2, 2026)
+- [x] Backend: `POST /api/users/bulk-notification-preferences` — admin-only, accepts `{user_ids[], notification_preferences{}, merge}`. Merge mode (default) deep-merges new keys into each user's existing prefs via `pymongo.UpdateOne` bulk write; replace mode overwrites. Caps at 500 users per call. Returns `{requested, updated, merge}`.
+- [x] Frontend: checkbox column in Users table (per-row + select-all in header). Selecting users reveals a primary-tinted toolbar with **6 preset templates**: Sales team default, Operations team, Finance team, Only follow-up reminders, Enable all, Mute all. Each preset has a description shown in the dropdown.
+- [x] Confirmation dialog shows the count of users + a preview of which notification keys the template enables (rendered as green chips) before applying.
+- [x] After successful apply, selection is cleared and table refetches.
+- **Verified via curl**: bulk POST to 2 user_ids returned `{requested: 2, updated: 2, merge: true}`.
+- **Verified via screenshot**: toolbar appears when 3 users selected, dropdown opens, all 6 templates visible.
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
