@@ -408,6 +408,16 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Test report: `/app/test_reports/iteration_20.json`.
 - **Refactor note (from testing agent)**: shared deps (db, get_current_user, etc.) should ideally be extracted to a `core.py` or `deps.py` so routers don't back-reference `server`. Current late-binding works but is fragile. Server.py still has ~7,400 lines of non-deal-room/non-commercials code — future extractions: routers/leads.py, routers/war_room.py, routers/reports.py, routers/users.py.
 
+### Phase 32 — Zoho ZeptoMail integration (Jun 2, 2026)
+- [x] Created `/app/backend/services/zeptomail.py` — async ZeptoMail REST client (httpx.AsyncClient + Tenacity retry-with-jitter + structured logging). Never raises to caller (email is a side-effect of business ops).
+- [x] Inline HTML templates for 5 first-class notification types (`lead_assigned`, `follow_up_reminder`, `deal_room_invite`, `approval_requested`, `payment_received`) plus a generic renderer for the other 7 catalog types. Branded Vyapaar Network gradient header + responsive 600px layout.
+- [x] **`create_notification()` auto-dispatches emails** — when a user has `notification_preferences[type_key]` set to true (or unset, since we default to opt-IN), an email is queued via `asyncio.create_task()` so the originating request returns immediately.
+- [x] Admin endpoint `POST /api/admin/test-email` to smoke-test the integration from the UI.
+- [x] `email_logs` collection with **90-day TTL index** for audit trail (request_id, status_code, error, correlation_id).
+- [x] Admin BCC config (`ZEPTOMAIL_ADMIN_BCC` env var, optional).
+- **Verified end-to-end**: 3 real emails delivered to `mrunal@vyapaar.net` (ZeptoMail returned 201 with `request_id` for each — generic test, lead_assigned template, deal_room_invite template).
+- **Region note**: account is on `.com` region, NOT `.in`. Make sure `ZEPTOMAIL_BASE_URL=https://api.zeptomail.com/v1.1` in production.
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment

@@ -8118,50 +8118,6 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
-# Mount commercials router (extracted to routers/commercials.py)
-from routers.commercials import router as commercials_router  # noqa: E402
-api_router.include_router(commercials_router)
-
-# Mount deal-room router (Phase 27/27.5 — extracted to routers/deal_room.py)
-from routers.deal_room import router as deal_room_router  # noqa: E402
-api_router.include_router(deal_room_router)
-
-# Include router
-app.include_router(api_router)
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
-
-@app.on_event("startup")
-async def backfill_lead_status_is_won():
-    """Ensure existing 'Won' lead statuses have is_won=True for the Closed-Won wizard."""
-    try:
-        await db.lead_statuses.update_many(
-            {"is_won": {"$exists": False}},
-            {"$set": {"is_won": False}}
-        )
-        await db.lead_statuses.update_many(
-            {"name": {"$regex": "^won$", "$options": "i"}},
-            {"$set": {"is_won": True}}
-        )
-        await db.lead_statuses.update_many(
-            {"name": {"$regex": "closed.?won", "$options": "i"}},
-            {"$set": {"is_won": True}}
-        )
-    except Exception as e:
-        logger.warning(f"Lead status is_won backfill failed: {e}")
-
-
 @app.on_event("startup")
 async def ensure_zeptomail_logs_ttl():
     """Phase 32 — ensure email_logs collection has a 90-day TTL index."""
@@ -8235,3 +8191,48 @@ async def admin_send_test_email(body: TestEmailRequest, current_user: dict = Dep
         correlation_id=str(uuid.uuid4()),
     )
     return result
+
+
+# Mount commercials router (extracted to routers/commercials.py)
+from routers.commercials import router as commercials_router  # noqa: E402
+api_router.include_router(commercials_router)
+
+# Mount deal-room router (Phase 27/27.5 — extracted to routers/deal_room.py)
+from routers.deal_room import router as deal_room_router  # noqa: E402
+api_router.include_router(deal_room_router)
+
+# Include router
+app.include_router(api_router)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
+
+@app.on_event("startup")
+async def backfill_lead_status_is_won():
+    """Ensure existing 'Won' lead statuses have is_won=True for the Closed-Won wizard."""
+    try:
+        await db.lead_statuses.update_many(
+            {"is_won": {"$exists": False}},
+            {"$set": {"is_won": False}}
+        )
+        await db.lead_statuses.update_many(
+            {"name": {"$regex": "^won$", "$options": "i"}},
+            {"$set": {"is_won": True}}
+        )
+        await db.lead_statuses.update_many(
+            {"name": {"$regex": "closed.?won", "$options": "i"}},
+            {"$set": {"is_won": True}}
+        )
+    except Exception as e:
+        logger.warning(f"Lead status is_won backfill failed: {e}")
+
