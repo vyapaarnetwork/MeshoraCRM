@@ -8164,6 +8164,20 @@ async def admin_run_followup_reminders(current_user: dict = Depends(get_current_
     return result
 
 
+@api_router.post("/admin/dispatch-milestone-reminders")
+async def admin_run_milestone_reminders(window_hours: int = 48, current_user: dict = Depends(get_current_user)):
+    """Phase 33.5 — admin-only manual trigger for the milestone-due scan.
+    Pass ?window_hours= to override the default 48h look-ahead. Returns scanned/sent."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    result = await _sched.dispatch_due_milestone_reminders(db, _zepto, window_hours=max(1, min(168, int(window_hours))))
+    return result
+
+
 class TestEmailRequest(BaseModel):
     to_address: EmailStr
     notification_type: Optional[str] = None  # if set, render via that template

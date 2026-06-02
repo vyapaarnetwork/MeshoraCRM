@@ -427,6 +427,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] Admin manual-trigger endpoint `POST /api/admin/dispatch-follow-up-reminders` (super_admin / vyapaar_ops only) for instant testing without waiting 60s.
 - **Verified end-to-end**: Test follow-up with `reminder_minutes_before=120` was correctly identified as due, email delivered to `admin@vyapaarnetwork.com` via ZeptoMail (request_id `2d6f...0105`), follow-up flagged `reminder_sent=True`, second dispatcher pass correctly sent 0 (idempotent).
 
+### Phase 33.5 — Milestone-due reminders piggy-backed on the scheduler (Jun 2, 2026)
+- [x] Added `_render_milestone_due` template (urgency chip: OVERDUE / <24 hrs / <48 hrs, Indian rupee formatting `₹1,25,000.00`).
+- [x] Added `dispatch_due_milestone_reminders(window_hours=48)` to `services/scheduler.py` — scans `commercials` for milestones whose `invoice_due_date` (or `delivery_date` fallback) falls inside the window AND aren't paid/cancelled AND haven't been reminded yet.
+- [x] Recipient resolution: `account_manager_id` → `billing_contact_id` → `contract_owner_id` → `project_owner_id` → `lead.created_by` → `lead.selling_partner_id`.
+- [x] Hooked the new scan into the existing 60s `_reminder_loop()` — no new infra.
+- [x] Admin manual-trigger endpoint `POST /api/admin/dispatch-milestone-reminders?window_hours=N` (clamped 1–168h).
+- [x] Idempotent via `milestone_reminder_sent=True` flag + skip-with-reason audit trail.
+- **Verified end-to-end**: seeded a milestone with `invoice_due_date = tomorrow` → dispatcher returned `scanned=6, sent=1` → ZeptoMail delivered `[Meshora] Milestone due in 1d: Kickoff` (201, request_id `2d6f...e1d1`) → re-run returned `sent=0` (idempotent). Bonus: autostart pass found 2 pre-existing overdue milestones and emailed "Milestone due 6d ago" — the "missed during downtime" backstop works.
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment

@@ -355,6 +355,42 @@ def _render_payment_received(ctx):
             "text": f"Payment received: {amount} from {customer}. {commercial_url}"}
 
 
+def _render_milestone_due(ctx):
+    title = "Milestone Due Soon"
+    milestone_name = ctx.get("milestone_name", "an upcoming milestone")
+    customer = ctx.get("customer_company") or ctx.get("customer_name") or ""
+    amount = ctx.get("amount_formatted") or ""
+    due_label = ctx.get("due_label") or ctx.get("due_date") or "soon"
+    hours_left = ctx.get("hours_left")
+    due_kind = ctx.get("due_kind") or "due"  # 'invoice' or 'delivery'
+    commercial_url = ctx.get("commercial_url") or f"https://app.vyapaar.net/commercials/{ctx.get('commercial_id','')}"
+    urgency_chip = ""
+    if isinstance(hours_left, (int, float)):
+        if hours_left < 0:
+            urgency_chip = '<span style="display:inline-block;background:#fee2e2;color:#991b1b;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;margin-left:8px;">OVERDUE</span>'
+        elif hours_left < 24:
+            urgency_chip = '<span style="display:inline-block;background:#fef3c7;color:#92400e;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;margin-left:8px;">&lt; 24 hrs</span>'
+        else:
+            urgency_chip = '<span style="display:inline-block;background:#dbeafe;color:#1e40af;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;margin-left:8px;">&lt; 48 hrs</span>'
+
+    customer_html = f'<div style="color:#6b7280;font-size:13px;margin-top:4px;">For {customer}</div>' if customer else ""
+    amount_html = f'<div style="color:#065f46;font-size:15px;font-weight:600;margin-top:8px;">{amount}</div>' if amount else ""
+    verb = "invoice is due" if due_kind == "invoice" else "milestone is due"
+    body = (
+        f'<p>Hi {ctx.get("recipient_name","there")},</p>'
+        f'<p>The following {verb} <strong>{due_label}</strong>:{urgency_chip}</p>'
+        f'<div style="background:#f9fafb;border-left:4px solid #4f46e5;padding:14px 16px;margin:12px 0;border-radius:6px;">'
+        f'<div style="font-size:16px;font-weight:600;">{milestone_name}</div>'
+        f'{customer_html}'
+        f'{amount_html}'
+        f'</div>'
+        f'{_btn("Open Commercial", commercial_url)}'
+    )
+    return {"subject": f"[Meshora] Milestone due {due_label}: {milestone_name}"[:255],
+            "html": _wrap(title, title, body),
+            "text": f"Milestone '{milestone_name}' is due {due_label}. {commercial_url}"}
+
+
 def _render_generic(ctx):
     """Fallback for notification types without a dedicated template."""
     title = ctx.get("title") or "Notification"
@@ -376,10 +412,10 @@ _RENDERERS = {
     "deal_room_invite": _render_deal_room_invite,
     "approval_requested": _render_approval_requested,
     "payment_received": _render_payment_received,
+    "milestone_due": _render_milestone_due,
     "comment_mention": _render_generic,
     "lead_status_changed": _render_generic,
     "lead_won": _render_generic,
-    "milestone_due": _render_generic,
     "invoice_overdue": _render_generic,
     "follow_up_overdue": _render_generic,
     "commercial_created": _render_generic,
