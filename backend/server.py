@@ -8128,6 +8128,42 @@ async def ensure_zeptomail_logs_ttl():
         logger.warning(f"email_logs TTL setup failed: {e}")
 
 
+@app.on_event("startup")
+async def start_followup_reminder_scheduler():
+    """Phase 33 — kick off the in-process asyncio loop that scans for
+    due follow-up reminders every 60s and dispatches emails."""
+    try:
+        from services import zeptomail as _zepto
+        from services import scheduler as _sched
+        _sched.start_reminder_loop(db, _zepto)
+        logger.info("Phase 33 follow-up reminder scheduler started.")
+    except Exception as e:
+        logger.warning(f"Follow-up scheduler startup failed: {e}")
+
+
+@app.on_event("shutdown")
+async def stop_followup_reminder_scheduler():
+    try:
+        from services import scheduler as _sched
+        _sched.stop_reminder_loop()
+    except Exception as e:
+        logger.warning(f"Follow-up scheduler shutdown failed: {e}")
+
+
+@api_router.post("/admin/dispatch-follow-up-reminders")
+async def admin_run_followup_reminders(current_user: dict = Depends(get_current_user)):
+    """Phase 33 — admin-only manual trigger that runs the scheduler pass NOW
+    instead of waiting up to 60s for the loop. Returns scanned/sent counts."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    result = await _sched.dispatch_due_reminders(db, _zepto)
+    return result
+
+
 class TestEmailRequest(BaseModel):
     to_address: EmailStr
     notification_type: Optional[str] = None  # if set, render via that template

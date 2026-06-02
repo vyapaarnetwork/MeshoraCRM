@@ -418,6 +418,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - **Verified end-to-end**: 3 real emails delivered to `mrunal@vyapaar.net` (ZeptoMail returned 201 with `request_id` for each — generic test, lead_assigned template, deal_room_invite template).
 - **Region note**: account is on `.com` region, NOT `.in`. Make sure `ZEPTOMAIL_BASE_URL=https://api.zeptomail.com/v1.1` in production.
 
+### Phase 33 — Follow-up reminder scheduler (Jun 2, 2026)
+- [x] Created `/app/backend/services/scheduler.py` — lightweight in-process **asyncio loop** that scans every 60s for follow-ups whose `reminder_due_at = scheduled_date 09:00 UTC - reminder_minutes_before` has passed.
+- [x] Loop kicks off in `@app.on_event("startup")`; gracefully cancelled on shutdown. **No new dependencies** (no APScheduler, no external cron).
+- [x] Recipient resolution: `followup.assignee_id` → `lead.selling_partner_id` → `lead.created_by` (first non-empty with an email).
+- [x] **Idempotent**: each follow-up gets a `reminder_sent=True` + `reminder_sent_at` flag once dispatched, so re-running the loop never duplicates.
+- [x] Skip-with-reason audit trail for follow-ups that can't be processed: `no_reminder_requested` (0 min), `unparseable_date`, `no_recipient_resolvable`, `opted_out`.
+- [x] Admin manual-trigger endpoint `POST /api/admin/dispatch-follow-up-reminders` (super_admin / vyapaar_ops only) for instant testing without waiting 60s.
+- **Verified end-to-end**: Test follow-up with `reminder_minutes_before=120` was correctly identified as due, email delivered to `admin@vyapaarnetwork.com` via ZeptoMail (request_id `2d6f...0105`), follow-up flagged `reminder_sent=True`, second dispatcher pass correctly sent 0 (idempotent).
+
 ## Key API Endpoints
 
 ### Multi-Partner Assignment
