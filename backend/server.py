@@ -863,7 +863,14 @@ async def change_password(password_data: PasswordChange, current_user: dict = De
 # ==================== NOTIFICATION HELPERS ====================
 
 async def create_notification(user_id: str, notification_type: str, title: str, message: str, lead_id: str = None, data: dict = None, commercial_id: str = None):
-    """Create a notification for a specific user"""
+    """Create a notification for a specific user.
+
+    Phase 32: also dispatch an email via ZeptoMail when the recipient has the
+    matching `notification_preferences[notification_type]` enabled. Email
+    sending happens as a fire-and-forget asyncio task so the caller's request
+    is never blocked by transactional email latency. Defaults to opt-IN: if the
+    user hasn't set a preference for this type, we DO send (matches existing
+    in-app notification behaviour)."""
     notification_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     
@@ -881,6 +888,51 @@ async def create_notification(user_id: str, notification_type: str, title: str, 
     }
     
     await db.notifications.insert_one(notification_doc)
+
+    # Phase 32 — dispatch email out-of-band
+    try:
+        user = await db.users.find_one({"id": user_id}, {"_id": 0, "email": 1, "name": 1, "notification_preferences": 1, "is_active": 1})
+        if user and user.get('is_active', True) and user.get('email'):
+            prefs = user.get('notification_preferences') or {}
+            # Opt-in by default: only skip if explicitly False
+            if prefs.get(notification_type, True):
+                from services import zeptomail as _zepto  # local import to avoid startup-time cycles
+                ctx = {
+                    "recipient_name": user.get('name') or '',
+                    "title": title,
+                    "message": message,
+                    "lead_id": lead_id,
+                    "commercial_id": commercial_id,
+                    **(data or {}),
+                }
+                if lead_id:
+                    ctx.setdefault("lead_url", f"https://app.vyapaar.net/leads/{lead_id}")
+                if commercial_id:
+                    ctx.setdefault("commercial_url", f"https://app.vyapaar.net/commercials/{commercial_id}")
+
+                rendered = _zepto.render(notification_type, ctx) or _zepto.render("__generic__", {**ctx})
+                if rendered is None:
+                    # No renderer at all — synthesize a minimal generic body
+                    rendered = {
+                        "subject": f"[Meshora] {title}",
+                        "html": f"<p>{message}</p>",
+                        "text": message,
+                    }
+                # Fire-and-forget: never block notification persistence
+                asyncio.create_task(_zepto.send_email(
+                    to_address=user['email'],
+                    to_name=user.get('name'),
+                    subject=rendered["subject"],
+                    html_body=rendered["html"],
+                    text_body=rendered.get("text"),
+                    db=db,
+                    notification_type=notification_type,
+                    user_id=user_id,
+                    correlation_id=notification_id,
+                ))
+    except Exception as e:
+        logger.warning("Email dispatch from create_notification failed (non-fatal): %s", e)
+
     return notification_doc
 
 async def create_notification_for_admins(notification_type: str, title: str, message: str, lead_id: str = None, data: dict = None):
@@ -8108,3 +8160,78 @@ async def backfill_lead_status_is_won():
         )
     except Exception as e:
         logger.warning(f"Lead status is_won backfill failed: {e}")
+
+
+@app.on_event("startup")
+async def ensure_zeptomail_logs_ttl():
+    """Phase 32 — ensure email_logs collection has a 90-day TTL index."""
+    try:
+        from services import zeptomail as _zepto
+        await _zepto.ensure_email_logs_ttl(db)
+    except Exception as e:
+        logger.warning(f"email_logs TTL setup failed: {e}")
+
+
+class TestEmailRequest(BaseModel):
+    to_address: EmailStr
+    notification_type: Optional[str] = None  # if set, render via that template
+    subject: Optional[str] = None
+    html_body: Optional[str] = None
+
+
+@api_router.post("/admin/test-email")
+async def admin_send_test_email(body: TestEmailRequest, current_user: dict = Depends(get_current_user)):
+    """Phase 32 — admin-only test endpoint to verify the ZeptoMail integration end-to-end.
+    Pass either a `notification_type` (uses our template) or a custom `subject`+`html_body`."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from services import zeptomail as _zepto
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+
+    if body.notification_type:
+        rendered = _zepto.render(body.notification_type, {
+            "recipient_name": current_user.get('name', ''),
+            "lead_title": "Acme Corp — Renewal",
+            "customer_name": "Anita Sharma",
+            "customer_company": "Acme Corp",
+            "assigned_by_name": current_user.get('name', 'Admin'),
+            "scheduled_date": "tomorrow at 4pm",
+            "notes": "Confirm proposal numbers; share updated SOW.",
+            "inviter_name": current_user.get('name', 'Vyapaar Admin'),
+            "magic_link": "https://app.vyapaar.net/deal-room/sample-token",
+            "permissions": ["view", "comment", "approve"],
+            "expires_at": "in 14 days",
+            "approval_title": "Approve final pricing",
+            "requester_name": current_user.get('name', 'Admin'),
+            "amount_formatted": "₹1,25,000",
+            "title": "Test notification",
+            "message": "This is a test email from Meshora's notifications pipeline.",
+            "lead_id": "sample-lead",
+            "lead_url": "https://app.vyapaar.net/leads/sample-lead",
+        }) or {}
+        subject = rendered.get("subject") or f"[Meshora] Test: {body.notification_type}"
+        html = rendered.get("html") or "<p>This is a test email from Meshora.</p>"
+        text = rendered.get("text")
+    elif body.subject and body.html_body:
+        subject = body.subject
+        html = body.html_body
+        text = None
+    else:
+        subject = "[Meshora] Test email"
+        html = "<p>This is a test email from your Meshora ZeptoMail integration. If you see this, the wiring works.</p>"
+        text = "Meshora ZeptoMail integration test."
+
+    result = await _zepto.send_email(
+        to_address=body.to_address,
+        subject=subject,
+        html_body=html,
+        text_body=text,
+        to_name=current_user.get('name'),
+        db=db,
+        notification_type=body.notification_type or "admin_test",
+        user_id=current_user['id'],
+        correlation_id=str(uuid.uuid4()),
+    )
+    return result
