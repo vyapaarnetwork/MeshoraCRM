@@ -426,189 +426,205 @@ const UsersList = () => {
 
       {/* Add/Edit User Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        <DialogContent className="max-w-4xl w-[95vw] max-h-[92vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b">
             <DialogTitle>{editingUser ? 'Edit User' : 'Add New User'}</DialogTitle>
             <DialogDescription>
-              {editingUser ? 'Update user details and settings' : 'Create a new user account. All user types can be created here.'}
+              {editingUser ? 'Update user details, role assignments, and notification preferences.' : 'Create a new user account. All user types can be created here.'}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Full Name *</Label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="John Doe"
-                  data-testid="user-name-input"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Role *</Label>
-                <Select 
-                  value={formData.role} 
-                  onValueChange={(v) => setFormData({ ...formData, role: v, company_id: '', company_name: '' })}
-                >
-                  <SelectTrigger data-testid="user-role-select">
-                    <SelectValue placeholder="Select role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="super_admin">Super Admin</SelectItem>
-                    <SelectItem value="vyapaar_ops">Vyapaar Operations</SelectItem>
-                    <SelectItem value="vyapaar_finance">Vyapaar Finance</SelectItem>
-                    <SelectItem value="selling_partner">Selling Partner</SelectItem>
-                    <SelectItem value="sales_associate">Sales Associate</SelectItem>
-                    <SelectItem value="customer">Customer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-5">
 
-            <div className="space-y-2">
-              <Label>Email *</Label>
-              <Input
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                placeholder="user@example.com"
-                data-testid="user-email-input"
-              />
-            </div>
+              {/* ============ LEFT COLUMN — Identity & access ============ */}
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Identity</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-sm">Full Name *</Label>
+                      <Input
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        placeholder="John Doe"
+                        data-testid="user-name-input"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm">Role *</Label>
+                      <Select
+                        value={formData.role}
+                        onValueChange={(v) => setFormData({ ...formData, role: v, company_id: '', company_name: '' })}
+                      >
+                        <SelectTrigger data-testid="user-role-select">
+                          <SelectValue placeholder="Select role" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="super_admin">Super Admin</SelectItem>
+                          <SelectItem value="vyapaar_ops">Vyapaar Operations</SelectItem>
+                          <SelectItem value="vyapaar_finance">Vyapaar Finance</SelectItem>
+                          <SelectItem value="selling_partner">Selling Partner</SelectItem>
+                          <SelectItem value="sales_associate">Sales Associate</SelectItem>
+                          <SelectItem value="customer">Customer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
 
-            <div className="space-y-2">
-              <Label>{editingUser ? 'New Password (leave blank to keep current)' : 'Password *'}</Label>
-              <Input
-                type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder={editingUser ? '••••••••' : 'Minimum 6 characters'}
-                data-testid="user-password-input"
-              />
-            </div>
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-sm">Email *</Label>
+                      <Input
+                        type="email"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        placeholder="user@example.com"
+                        data-testid="user-email-input"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm">Phone (Optional)</Label>
+                      <Input
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        placeholder="+91 98765 43210"
+                        data-testid="user-phone-input"
+                      />
+                    </div>
+                  </div>
 
-            <div className="space-y-2">
-              <Label>Phone (Optional)</Label>
-              <Input
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                placeholder="+91 98765 43210"
-                data-testid="user-phone-input"
-              />
-            </div>
-
-            {/* Phase 2 + Phase 17: Vyapaar team role flags */}
-            <div className="space-y-2 border rounded-md p-3 bg-muted/30">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">Vyapaar Team Roles (optional)</Label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.is_vyapaar_ops}
-                  onChange={(e) => setFormData({ ...formData, is_vyapaar_ops: e.target.checked })}
-                  className="w-4 h-4"
-                  data-testid="user-is-vyapaar-ops"
-                />
-                <span><strong>Vyapaar Operations</strong> — full app access except user/company/category creation</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.is_finance}
-                  onChange={(e) => setFormData({ ...formData, is_finance: e.target.checked })}
-                  className="w-4 h-4"
-                  data-testid="user-is-finance"
-                />
-                <span><strong>Vyapaar Finance</strong> — raise invoices, record payments, see analytics</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.is_delivery}
-                  onChange={(e) => setFormData({ ...formData, is_delivery: e.target.checked })}
-                  className="w-4 h-4"
-                  data-testid="user-is-delivery"
-                />
-                <span><strong>Delivery Lead</strong> — update milestone status, manage commercials</span>
-              </label>
-            </div>
-
-            {needsCompany && (
-              <>
-                <div className="space-y-2">
-                  <Label>Assign to Company {formData.role === 'sales_associate' ? '(Optional)' : ''}</Label>
-                  <Select 
-                    value={formData.company_id || '__none__'} 
-                    onValueChange={(v) => setFormData({ ...formData, company_id: v === '__none__' ? '' : v, company_name: '' })}
-                  >
-                    <SelectTrigger data-testid="user-company-select">
-                      <SelectValue placeholder="Select company" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">None</SelectItem>
-                      {getAllCompanies().map((company) => (
-                        <SelectItem key={company.id} value={company.id}>
-                          {company.name} ({company.type === 'selling_partner' ? 'Partner' : 'Customer'})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {canCreateCompany && !formData.company_id && !editingUser && (
-                  <div className="space-y-2">
-                    <Label>Or Create New Company</Label>
+                  <div className="space-y-1.5 mt-3">
+                    <Label className="text-sm">{editingUser ? 'New Password (leave blank to keep current)' : 'Password *'}</Label>
                     <Input
-                      value={formData.company_name}
-                      onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
-                      placeholder="New company name"
-                      data-testid="user-new-company-input"
+                      type="password"
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      placeholder={editingUser ? '••••••••' : 'Minimum 6 characters'}
+                      data-testid="user-password-input"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      A new {formData.role === 'selling_partner' ? 'selling partner' : 'customer'} company will be created
-                    </p>
+                  </div>
+                </div>
+
+                {/* Vyapaar team flags */}
+                <div>
+                  <h3 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Vyapaar Team Roles (optional)</h3>
+                  <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.is_vyapaar_ops}
+                        onChange={(e) => setFormData({ ...formData, is_vyapaar_ops: e.target.checked })}
+                        className="w-4 h-4 mt-0.5"
+                        data-testid="user-is-vyapaar-ops"
+                      />
+                      <span><strong>Vyapaar Operations</strong> — full app access except user/company/category creation</span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.is_finance}
+                        onChange={(e) => setFormData({ ...formData, is_finance: e.target.checked })}
+                        className="w-4 h-4 mt-0.5"
+                        data-testid="user-is-finance"
+                      />
+                      <span><strong>Vyapaar Finance</strong> — raise invoices, record payments, see analytics</span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.is_delivery}
+                        onChange={(e) => setFormData({ ...formData, is_delivery: e.target.checked })}
+                        className="w-4 h-4 mt-0.5"
+                        data-testid="user-is-delivery"
+                      />
+                      <span><strong>Delivery Lead</strong> — update milestone status, manage commercials</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Company assignment */}
+                {needsCompany && (
+                  <div>
+                    <h3 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Company</h3>
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-sm">Assign to Company {formData.role === 'sales_associate' ? '(Optional)' : ''}</Label>
+                        <Select
+                          value={formData.company_id || '__none__'}
+                          onValueChange={(v) => setFormData({ ...formData, company_id: v === '__none__' ? '' : v, company_name: '' })}
+                        >
+                          <SelectTrigger data-testid="user-company-select">
+                            <SelectValue placeholder="Select company" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">None</SelectItem>
+                            {getAllCompanies().map((company) => (
+                              <SelectItem key={company.id} value={company.id}>
+                                {company.name} ({company.type === 'selling_partner' ? 'Partner' : 'Customer'})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {canCreateCompany && !formData.company_id && !editingUser && (
+                        <div className="space-y-1.5">
+                          <Label className="text-sm">Or Create New Company</Label>
+                          <Input
+                            value={formData.company_name}
+                            onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
+                            placeholder="New company name"
+                            data-testid="user-new-company-input"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            A new {formData.role === 'selling_partner' ? 'selling partner' : 'customer'} company will be created
+                          </p>
+                        </div>
+                      )}
+
+                      {['selling_partner', 'customer'].includes(formData.role) && (
+                        <div className="space-y-1.5">
+                          <Label className="text-sm">Profile within Company</Label>
+                          <Select
+                            value={formData.company_role || '__unset__'}
+                            onValueChange={(v) => setFormData({ ...formData, company_role: v === '__unset__' ? '' : v })}
+                          >
+                            <SelectTrigger data-testid="user-company-role-select">
+                              <SelectValue placeholder="Select profile" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__unset__">Not specified</SelectItem>
+                              <SelectItem value="founder">Founder / CXO — full company access</SelectItem>
+                              <SelectItem value="sales">Sales — leads, war room, deal rooms</SelectItem>
+                              <SelectItem value="operations">Operations — post-closure leads, follow-ups, delivery</SelectItem>
+                              <SelectItem value="finance">Finance — commercials, invoices, payments</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            Controls what menus &amp; data this user can access. Founder = unrestricted.
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
+              </div>
 
-                {/* Phase 30: Company sub-role (Founder/Sales/Operations/Finance).
-                    Only for Customer or Selling Partner roles. */}
-                {['selling_partner', 'customer'].includes(formData.role) && (
-                  <div className="space-y-2">
-                    <Label>Profile within Company</Label>
-                    <Select
-                      value={formData.company_role || '__unset__'}
-                      onValueChange={(v) => setFormData({ ...formData, company_role: v === '__unset__' ? '' : v })}
-                    >
-                      <SelectTrigger data-testid="user-company-role-select">
-                        <SelectValue placeholder="Select profile" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__unset__">Not specified</SelectItem>
-                        <SelectItem value="founder">Founder / CXO — full access to everything in the company</SelectItem>
-                        <SelectItem value="sales">Sales — leads, war room, deal rooms</SelectItem>
-                        <SelectItem value="operations">Operations — post-closure leads, follow-ups, delivery</SelectItem>
-                        <SelectItem value="finance">Finance — commercials, invoices, payments</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Sub-role controls what menus &amp; data this user can access inside their company. Founder = unrestricted.
-                    </p>
-                  </div>
-                )}
-              </>
-            )}
+              {/* ============ RIGHT COLUMN — Email notifications ============ */}
+              <div className="lg:border-l lg:pl-8">
+                <NotificationPreferences
+                  compact
+                  value={formData.notification_preferences || {}}
+                  onChange={(next) => setFormData({ ...formData, notification_preferences: next })}
+                  testIdPrefix="user-notif"
+                />
+              </div>
 
-            {/* Phase 30: Notification preferences */}
-            <div className="pt-2 border-t">
-              <NotificationPreferences
-                value={formData.notification_preferences || {}}
-                onChange={(next) => setFormData({ ...formData, notification_preferences: next })}
-                testIdPrefix="user-notif"
-              />
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="px-6 py-4 border-t bg-muted/30">
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>
               Cancel
             </Button>

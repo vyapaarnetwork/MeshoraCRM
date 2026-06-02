@@ -13,12 +13,14 @@ import api from '../utils/api';
  * Props:
  *   - value, onChange (controlled mode)
  *   - selfMode: boolean — when true, auto-saves to /profile on toggle
+ *   - compact: boolean — drops Card chrome; renders as a flat section
  *   - testIdPrefix
  */
 export const NotificationPreferences = ({
   value,
   onChange,
   selfMode = false,
+  compact = false,
   initialFromUser = null,
   testIdPrefix = 'notif-pref',
 }) => {
@@ -71,6 +73,51 @@ export const NotificationPreferences = ({
     }
   };
 
+  const rowsList = (
+    <div className="space-y-0" data-testid={`${testIdPrefix}-list`}>
+      {loading && <p className="text-sm text-muted-foreground py-2">Loading…</p>}
+      {!loading && types.length === 0 && (
+        <p className="text-sm text-muted-foreground py-2">No notification types configured.</p>
+      )}
+      {types.map((t) => (
+        <div
+          key={t.key}
+          className="flex items-start justify-between gap-3 py-2.5 border-b last:border-b-0"
+          data-testid={`${testIdPrefix}-row-${t.key}`}
+        >
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium leading-tight">{t.label}</p>
+            {t.description && (
+              <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{t.description}</p>
+            )}
+          </div>
+          <Switch
+            checked={isOn(t.key)}
+            onCheckedChange={() => toggle(t.key)}
+            data-testid={`${testIdPrefix}-switch-${t.key}`}
+          />
+        </div>
+      ))}
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <div data-testid={`${testIdPrefix}-compact`}>
+        <div className="flex items-center gap-2 mb-2">
+          <Bell className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold">Email Notifications</span>
+          {saving && <Loader2 className="w-3.5 h-3.5 animate-spin opacity-60" />}
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">
+          Choose which events trigger an email to {selfMode ? 'you' : 'this user'}.
+          Changes apply immediately.
+        </p>
+        {rowsList}
+      </div>
+    );
+  }
+
   return (
     <Card data-testid={`${testIdPrefix}-card`}>
       <CardHeader>
@@ -85,31 +132,7 @@ export const NotificationPreferences = ({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {loading && (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        )}
-        {!loading && types.length === 0 && (
-          <p className="text-sm text-muted-foreground">No notification types configured.</p>
-        )}
-        {types.map((t) => (
-          <div
-            key={t.key}
-            className="flex items-start justify-between gap-4 py-2 border-b last:border-b-0"
-            data-testid={`${testIdPrefix}-row-${t.key}`}
-          >
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium">{t.label}</p>
-              {t.description && (
-                <p className="text-xs text-muted-foreground">{t.description}</p>
-              )}
-            </div>
-            <Switch
-              checked={isOn(t.key)}
-              onCheckedChange={() => toggle(t.key)}
-              data-testid={`${testIdPrefix}-switch-${t.key}`}
-            />
-          </div>
-        ))}
+        {rowsList}
       </CardContent>
     </Card>
   );
