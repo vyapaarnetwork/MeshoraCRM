@@ -239,7 +239,10 @@ def _btn(label: str, url: str) -> str:
 
 def render(notification_type: str, ctx: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """Pick a renderer for the given notification_type. Returns {subject, html, text} or None
-    if there's no renderer (caller may fall back to a generic message)."""
+    if there's no renderer (caller may fall back to a generic message).
+
+    Hardcoded inline-HTML only. Use `render_with_db_override()` to first try a
+    user-edited DB template via /email-templates."""
     fn = _RENDERERS.get(notification_type)
     if not fn:
         return None
@@ -248,6 +251,74 @@ def render(notification_type: str, ctx: Dict[str, Any]) -> Optional[Dict[str, st
     except Exception as e:
         logger.warning("Email template render failed for %s: %s", notification_type, e)
         return None
+
+
+def _interpolate(text: str, ctx: Dict[str, Any]) -> str:
+    """Substitute `{{key}}` placeholders in admin-edited templates with ctx values."""
+    if not text:
+        return text
+    out = text
+    # Provide a few aliases so admin templates feel intuitive
+    aliases = {
+        "category_name": ctx.get("category_name") or ctx.get("primary_category_name"),
+        "partner_name": ctx.get("partner_name") or ctx.get("assigned_by_name") or ctx.get("recipient_name"),
+        "deal_value": ctx.get("deal_value") or ctx.get("amount_formatted") or "",
+        "follow_up_date": ctx.get("scheduled_date") or "",
+        "follow_up_notes": ctx.get("notes") or "",
+        "old_status": ctx.get("old_status") or "",
+        "new_status": ctx.get("new_status") or "",
+        "changed_by": ctx.get("changed_by_name") or ctx.get("assigned_by_name") or "",
+        "created_by": ctx.get("created_by_name") or ctx.get("assigned_by_name") or "",
+        "created_date": ctx.get("created_date") or "",
+        "commission_amount": ctx.get("commission_amount") or "",
+    }
+    full = {**ctx, **{k: v for k, v in aliases.items() if v is not None}}
+    for key, val in full.items():
+        if val is None:
+            continue
+        out = out.replace("{{" + key + "}}", str(val))
+    # Strip any remaining placeholders so we never email raw `{{...}}` to users
+    import re as _re
+    out = _re.sub(r"\{\{\s*[a-zA-Z0-9_]+\s*\}\}", "", out)
+    return out
+
+
+async def render_with_db_override(
+    db, notification_type: str, ctx: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Phase 34.5 — try DB-stored admin-edited template first. Falls back to
+    hardcoded Meshora-branded renderer if none exists or template is disabled.
+    Returns dict with `subject`, `html`, optional `text`, and `from_db` flag.
+    """
+    try:
+        tmpl = await db.email_templates.find_one(
+            {"event_type": notification_type, "is_active": True, "is_enabled": True},
+            {"_id": 0},
+        )
+    except Exception as e:
+        logger.warning("DB template lookup failed for %s: %s", notification_type, e)
+        tmpl = None
+
+    if tmpl and (tmpl.get("subject") or "").strip() and (tmpl.get("body") or "").strip():
+        subject = _interpolate(tmpl["subject"], ctx)
+        body_html = _interpolate(tmpl["body"], ctx)
+        # Wrap the admin's body in our branded shell so all emails look unified
+        wrapped = _wrap(
+            tmpl.get("event_label") or notification_type.replace("_", " ").title(),
+            tmpl.get("event_label") or notification_type.replace("_", " ").title(),
+            body_html,
+        )
+        return {
+            "subject": subject[:255],
+            "html": wrapped,
+            "text": None,
+            "from_db": True,
+        }
+
+    rendered = render(notification_type, ctx)
+    if rendered:
+        return {**rendered, "from_db": False}
+    return None
 
 
 def _render_lead_assigned(ctx):

@@ -197,20 +197,6 @@ const EmailTemplates = () => {
         </div>
       </div>
 
-      {/* Info Banner */}
-      <Card className="bg-blue-50 border-blue-200">
-        <CardContent className="pt-4">
-          <div className="flex items-start gap-3">
-            <Info className="w-5 h-5 text-blue-600 mt-0.5" />
-            <div>
-              <p className="text-sm text-blue-800">
-                <strong>Email sending requires SendGrid API key.</strong> Configure <code className="bg-blue-100 px-1 rounded">SENDGRID_API_KEY</code> in backend/.env to enable email notifications.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Templates List */}
       {loading ? (
         <div className="flex items-center justify-center py-12">

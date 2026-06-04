@@ -404,6 +404,7 @@ class LeadUpdate(BaseModel):
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
     status_id: Optional[str] = None
+    closure_date: Optional[str] = None  # Phase 34.5
 
 class CommissionBreakdown(BaseModel):
     total_deal_value: float
@@ -910,7 +911,7 @@ async def create_notification(user_id: str, notification_type: str, title: str, 
                 if commercial_id:
                     ctx.setdefault("commercial_url", f"https://app.vyapaar.net/commercials/{commercial_id}")
 
-                rendered = _zepto.render(notification_type, ctx) or _zepto.render("__generic__", {**ctx})
+                rendered = await _zepto.render_with_db_override(db, notification_type, ctx)
                 if rendered is None:
                     # No renderer at all — synthesize a minimal generic body
                     rendered = {
@@ -2186,7 +2187,18 @@ class EmailTemplateEvent(str, Enum):
     LEAD_STATUS_CHANGED = "lead_status_changed"
     LEAD_WON = "lead_won"
     LEAD_LOST = "lead_lost"
+    LEAD_DISQUALIFIED = "lead_disqualified"  # Phase 34.5
+    LEAD_DEAD = "lead_dead"  # Phase 34.5
     FOLLOW_UP_REMINDER = "follow_up_reminder"
+    FOLLOW_UP_OVERDUE = "follow_up_overdue"  # Phase 34.5
+    DEAL_ROOM_INVITE = "deal_room_invite"  # Phase 34.5
+    APPROVAL_REQUESTED = "approval_requested"  # Phase 34.5
+    MILESTONE_DUE = "milestone_due"  # Phase 34.5
+    INVOICE_OVERDUE = "invoice_overdue"  # Phase 34.5
+    PAYMENT_RECEIVED = "payment_received"  # Phase 34.5
+    COMMENT_MENTION = "comment_mention"  # Phase 34.5
+    WEEKLY_WAR_ROOM_DIGEST = "weekly_war_room_digest"  # Phase 34.5
+    MONTHLY_WON_DIGEST = "monthly_won_digest"  # Phase 34.5 — first-of-month Vyapaar admin digest
 
 # Template Variables by Event
 EMAIL_TEMPLATE_VARIABLES = {
@@ -2381,7 +2393,18 @@ EVENT_LABELS = {
     "lead_status_changed": "Lead Status Changed",
     "lead_won": "Lead Won (Deal Closed)",
     "lead_lost": "Lead Lost",
-    "follow_up_reminder": "Follow-up Reminder"
+    "lead_disqualified": "Lead Disqualified",
+    "lead_dead": "Lead Dead / Cold",
+    "follow_up_reminder": "Follow-up Reminder",
+    "follow_up_overdue": "Follow-up Overdue",
+    "deal_room_invite": "Deal Room Invite",
+    "approval_requested": "Approval Requested",
+    "milestone_due": "Milestone Due Soon",
+    "invoice_overdue": "Invoice Overdue",
+    "payment_received": "Payment Received",
+    "comment_mention": "Mentioned in Comment",
+    "weekly_war_room_digest": "Weekly War Room Digest",
+    "monthly_won_digest": "Monthly Won-Deals Digest (Vyapaar Admins)",
 }
 
 # Email Template Routes
@@ -3441,7 +3464,16 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
             if new_status:
                 update_data['status_id'] = new_status['id']
                 status_changed = True
-    
+
+    # Phase 34.5 — auto-set closure_date when status flips to a terminal status (won/lost/disqualified/dead)
+    # if the user/API didn't supply one explicitly. The explicit value always wins so admins can backdate.
+    if 'status_id' in update_data and update_data['status_id'] and update_data['status_id'] != lead.get('status_id'):
+        new_status_doc = await db.lead_statuses.find_one({"id": update_data['status_id']}, {"_id": 0})
+        new_status_name = (new_status_doc or {}).get('name', '').lower()
+        terminal = {'won', 'lost', 'disqualified', 'dead'}
+        if new_status_name in terminal and 'closure_date' not in update_data and not lead.get('closure_date'):
+            update_data['closure_date'] = now[:10]  # YYYY-MM-DD
+
     await db.leads.update_one({"id": lead_id}, {"$set": update_data})
     
     updated_lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
@@ -7303,6 +7335,113 @@ async def export_leads(
 
 # ==================== ENHANCED REPORTS ====================
 
+def _fiscal_year_label(d):
+    """Apr-Mar fiscal year. e.g. 2026-04-15 → 'FY 2026-27', 2026-02-10 → 'FY 2025-26'."""
+    if d.month >= 4:
+        return f"FY {d.year}-{str(d.year + 1)[-2:]}"
+    return f"FY {d.year - 1}-{str(d.year)[-2:]}"
+
+
+def _fiscal_quarter_label(d):
+    m = d.month
+    if 4 <= m <= 6:
+        q, fy_start = 1, d.year
+    elif 7 <= m <= 9:
+        q, fy_start = 2, d.year
+    elif 10 <= m <= 12:
+        q, fy_start = 3, d.year
+    else:
+        q, fy_start = 4, d.year - 1
+    return f"FY {fy_start}-{str(fy_start + 1)[-2:]} Q{q}"
+
+
+@api_router.get("/reports/won-leads")
+async def get_won_leads_report(
+    period: str = "month",
+    current_user: dict = Depends(get_current_user),
+):
+    """Phase 34.5 — Won leads aggregated by Indian fiscal Apr-Mar calendar.
+    Vyapaar team only. Returns time-bucketed wins with comparison vs previous period."""
+    vyapaar_roles = {UserRole.SUPER_ADMIN.value, UserRole.VYAPAAR_OPS.value, UserRole.VYAPAAR_FINANCE.value}
+    if current_user.get('role') not in vyapaar_roles and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar team only")
+    if period not in ("month", "quarter", "annual"):
+        raise HTTPException(status_code=400, detail="period must be month, quarter, or annual")
+
+    won_statuses = await db.lead_statuses.find({"is_won": True}, {"_id": 0}).to_list(20)
+    won_ids = [s['id'] for s in won_statuses]
+    if not won_ids:
+        return {"period": period, "buckets": [], "summary": {"total_won": 0, "total_value": 0}}
+
+    leads = await db.leads.find({"status_id": {"$in": won_ids}}, {"_id": 0}).to_list(10000)
+
+    def bucket_key(lead):
+        raw = lead.get('closure_date') or lead.get('updated_at') or lead.get('created_at')
+        if not raw:
+            return None
+        try:
+            if len(raw) == 10 and raw[4] == '-':
+                d = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            else:
+                d = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+                if d.tzinfo is None:
+                    d = d.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+        if period == "month":
+            return d.strftime('%Y-%m'), d.strftime('%b %Y'), d
+        if period == "quarter":
+            label = _fiscal_quarter_label(d)
+            return label.replace(' ', '_'), label, d
+        return _fiscal_year_label(d).replace(' ', '_'), _fiscal_year_label(d), d
+
+    bucket_map = {}
+    for l in leads:
+        bk = bucket_key(l)
+        if not bk:
+            continue
+        key, label, anchor = bk
+        if key not in bucket_map:
+            bucket_map[key] = {
+                "key": key, "label": label, "anchor": anchor.isoformat(),
+                "won_count": 0, "total_value": 0.0, "leads": [],
+            }
+        bucket_map[key]['won_count'] += 1
+        bucket_map[key]['total_value'] += float(l.get('deal_value') or 0)
+        bucket_map[key]['leads'].append({
+            "id": l['id'],
+            "title": l.get('title'),
+            "customer_name": l.get('customer_name'),
+            "customer_company": l.get('customer_company'),
+            "deal_value": float(l.get('deal_value') or 0),
+            "closure_date": l.get('closure_date') or (l.get('updated_at') or '')[:10],
+            "primary_category_name": l.get('primary_category_name'),
+        })
+    buckets = sorted(bucket_map.values(), key=lambda b: b['anchor'])
+    for i, b in enumerate(buckets):
+        prev = buckets[i - 1] if i > 0 else None
+        if prev:
+            delta = b['won_count'] - prev['won_count']
+            delta_value = b['total_value'] - prev['total_value']
+            b['prev_label'] = prev['label']
+            b['delta_count'] = delta
+            b['delta_value'] = round(delta_value, 2)
+            b['delta_pct'] = round((delta / prev['won_count']) * 100, 1) if prev['won_count'] else None
+        else:
+            b['prev_label'] = None
+            b['delta_count'] = None
+            b['delta_value'] = None
+            b['delta_pct'] = None
+        b['total_value'] = round(b['total_value'], 2)
+
+    summary = {
+        "total_won": sum(b['won_count'] for b in buckets),
+        "total_value": round(sum(b['total_value'] for b in buckets), 2),
+        "bucket_count": len(buckets),
+    }
+    return {"period": period, "buckets": buckets, "summary": summary}
+
+
 @api_router.get("/reports/vyapaar-revenue")
 async def get_vyapaar_revenue_report(
     start_date: Optional[str] = None,
@@ -8334,4 +8473,6 @@ async def backfill_lead_status_is_won():
         )
     except Exception as e:
         logger.warning(f"Lead status is_won backfill failed: {e}")
+
+atus is_won backfill failed: {e}")
 

@@ -354,7 +354,7 @@ async def dispatch_due_milestone_reminders(db, zeptomail, window_hours: int = 48
                 "commercial_id": c['id'],
                 "commercial_url": f"https://app.vyapaar.net/commercials/{c['id']}",
             }
-            rendered = zeptomail.render("milestone_due", ctx) or {}
+            rendered = (await zeptomail.render_with_db_override(db, "milestone_due", ctx)) or {}
             result = await zeptomail.send_email(
                 to_address=recipient['email'],
                 to_name=recipient.get('name'),
@@ -382,6 +382,167 @@ async def dispatch_due_milestone_reminders(db, zeptomail, window_hours: int = 48
                 sent += 1
                 logger.info("Milestone-due reminder sent: commercial=%s milestone=%s to=%s", c['id'], m['id'], recipient['email'])
     return {"scanned": scanned, "sent": sent, "now": now.isoformat(), "window_hours": window_hours}
+
+
+async def dispatch_monthly_won_digest(db, zeptomail, force: bool = False) -> dict:
+    """Phase 34.5 — fires on the 1st of every month at 09:00 UTC. Sends a
+    comparison digest of last-month vs prior-month won deals to all active
+    Super Admins + Vyapaar Ops users. Idempotent via `monthly_digest_runs`
+    collection — only one send per (year, month) tuple even if the loop catches
+    the 09:xx window multiple times."""
+    now = datetime.now(timezone.utc)
+    # Determine "last month"
+    if now.month == 1:
+        last_month = (now.year - 1, 12)
+        prior_month = (now.year - 1, 11)
+    elif now.month == 2:
+        last_month = (now.year, 1)
+        prior_month = (now.year - 1, 12)
+    else:
+        last_month = (now.year, now.month - 1)
+        prior_month = (now.year, now.month - 2)
+
+    if not force:
+        # Only run on the 1st, between 09:00 and 09:59 UTC
+        if now.day != 1 or now.hour != 9:
+            return {"skipped": True, "reason": "outside_window", "now": now.isoformat()}
+    run_key = f"{last_month[0]}-{last_month[1]:02d}"
+    existing = await db.monthly_digest_runs.find_one({"key": run_key})
+    if existing and not force:
+        return {"skipped": True, "reason": "already_sent", "key": run_key}
+
+    # Aggregate won leads for last_month & prior_month
+    won_statuses = await db.lead_statuses.find({"is_won": True}, {"_id": 0}).to_list(20)
+    won_ids = [s['id'] for s in won_statuses]
+    if not won_ids:
+        return {"skipped": True, "reason": "no_won_statuses"}
+    leads = await db.leads.find({"status_id": {"$in": won_ids}}, {"_id": 0}).to_list(10000)
+
+    def _month_of(raw):
+        if not raw:
+            return None
+        try:
+            if len(raw) == 10:
+                return (int(raw[:4]), int(raw[5:7]))
+            return (int(raw[:4]), int(raw[5:7]))
+        except Exception:
+            return None
+
+    def _bucket(lead):
+        anchor = lead.get('closure_date') or (lead.get('updated_at') or '')[:10]
+        return _month_of(anchor)
+
+    last_leads = [l for l in leads if _bucket(l) == last_month]
+    prior_leads = [l for l in leads if _bucket(l) == prior_month]
+    last_total = sum(float(l.get('deal_value') or 0) for l in last_leads)
+    prior_total = sum(float(l.get('deal_value') or 0) for l in prior_leads)
+
+    last_label = datetime(last_month[0], last_month[1], 1).strftime('%B %Y')
+    prior_label = datetime(prior_month[0], prior_month[1], 1).strftime('%B %Y')
+    delta_count = len(last_leads) - len(prior_leads)
+    delta_value = last_total - prior_total
+    delta_pct = round((delta_count / len(prior_leads)) * 100, 1) if prior_leads else None
+
+    # Render
+    def _fmt_inr(amount):
+        try:
+            from services.scheduler import _format_amount
+            return _format_amount(amount, "INR")
+        except Exception:
+            return f"₹{amount:,.2f}"
+
+    deals_rows = "".join([
+        f'<tr><td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">{l.get("title") or "—"}</td>'
+        f'<td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#6b7280;">{l.get("customer_company") or l.get("customer_name") or "—"}</td>'
+        f'<td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">{_fmt_inr(float(l.get("deal_value") or 0))}</td></tr>'
+        for l in sorted(last_leads, key=lambda x: float(x.get('deal_value') or 0), reverse=True)[:20]
+    ]) or '<tr><td colspan="3" style="padding:12px;color:#6b7280;text-align:center;">No deals closed last month.</td></tr>'
+
+    arrow = "↑" if delta_count > 0 else ("↓" if delta_count < 0 else "→")
+    arrow_color = "#059669" if delta_count > 0 else ("#dc2626" if delta_count < 0 else "#6b7280")
+    pct_text = f"{delta_pct:+.1f}%" if delta_pct is not None else "n/a"
+
+    body_html = (
+        f'<p>Hi team,</p>'
+        f'<p>Here\'s the monthly performance digest comparing <strong>{last_label}</strong> with <strong>{prior_label}</strong>:</p>'
+        f'<table cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:16px 0;">'
+        f'<tr>'
+        f'<td style="background:#ede9fe;border-radius:8px;padding:14px;text-align:center;width:48%;">'
+        f'<div style="font-size:12px;color:#6b21a8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">{last_label}</div>'
+        f'<div style="font-size:28px;font-weight:700;color:#5b21b6;margin:4px 0;">{len(last_leads)}</div>'
+        f'<div style="font-size:14px;color:#6b21a8;">deals · {_fmt_inr(last_total)}</div>'
+        f'</td>'
+        f'<td style="width:4%;"></td>'
+        f'<td style="background:#f3f4f6;border-radius:8px;padding:14px;text-align:center;width:48%;">'
+        f'<div style="font-size:12px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">{prior_label}</div>'
+        f'<div style="font-size:28px;font-weight:700;color:#374151;margin:4px 0;">{len(prior_leads)}</div>'
+        f'<div style="font-size:14px;color:#6b7280;">deals · {_fmt_inr(prior_total)}</div>'
+        f'</td>'
+        f'</tr></table>'
+        f'<p style="font-size:15px;"><span style="font-size:22px;color:{arrow_color};">{arrow}</span> '
+        f'<strong style="color:{arrow_color};">{abs(delta_count)}</strong> deals '
+        f'({pct_text}) — value change <strong>{_fmt_inr(delta_value)}</strong></p>'
+        f'<h3 style="margin-top:24px;font-size:16px;">Top deals closed in {last_label}</h3>'
+        f'<table cellpadding="0" cellspacing="0" border="0" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;border-collapse:separate;border-spacing:0;font-size:14px;">'
+        f'<thead><tr style="background:#f9fafb;">'
+        f'<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-transform:uppercase;">Deal</th>'
+        f'<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-transform:uppercase;">Customer</th>'
+        f'<th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280;text-transform:uppercase;">Value</th>'
+        f'</tr></thead>'
+        f'<tbody>{deals_rows}</tbody>'
+        f'</table>'
+    )
+    subject = f"[Vyapaar] {last_label} won-deals digest — {len(last_leads)} deals, {_fmt_inr(last_total)}"
+
+    # Recipients: super_admin + is_vyapaar_ops + vyapaar_finance
+    recipients = await db.users.find({
+        "is_active": {"$ne": False},
+        "$or": [
+            {"role": "super_admin"},
+            {"role": "vyapaar_ops"},
+            {"role": "vyapaar_finance"},
+            {"is_vyapaar_ops": True},
+        ],
+    }, {"_id": 0, "email": 1, "name": 1, "id": 1, "notification_preferences": 1}).to_list(200)
+
+    sent = 0
+    failed = 0
+    for r in recipients:
+        if not r.get('email'):
+            continue
+        prefs = r.get('notification_preferences') or {}
+        if prefs.get('monthly_won_digest', True) is False:
+            continue
+        # Wrap in branded shell
+        wrapped = zeptomail._wrap("Monthly Won-Deals Digest", f"{last_label} · Won Deals Digest", body_html)
+        result = await zeptomail.send_email(
+            to_address=r['email'],
+            to_name=r.get('name'),
+            subject=subject,
+            html_body=wrapped,
+            db=db,
+            notification_type="monthly_won_digest",
+            user_id=r.get('id'),
+            correlation_id=f"monthly:{run_key}",
+        )
+        if result.get('ok'):
+            sent += 1
+        else:
+            failed += 1
+
+    await db.monthly_digest_runs.insert_one({
+        "key": run_key,
+        "ran_at": now.isoformat(),
+        "last_month_label": last_label,
+        "last_count": len(last_leads),
+        "last_total": last_total,
+        "prior_count": len(prior_leads),
+        "prior_total": prior_total,
+        "recipients_attempted": len(recipients),
+        "sent": sent,
+        "failed": failed,
+    })
+    return {"key": run_key, "sent": sent, "failed": failed, "recipients": len(recipients), "last_count": len(last_leads), "prior_count": len(prior_leads)}
 
 
 async def _reminder_loop(db, zeptomail) -> None:
