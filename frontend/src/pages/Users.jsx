@@ -825,6 +825,8 @@ const UsersList = () => {
                   compact
                   value={formData.notification_preferences || {}}
                   onChange={(next) => setFormData({ ...formData, notification_preferences: next })}
+                  userRole={formData.role || null}
+                  userCompanyRole={formData.company_role || null}
                   testIdPrefix="user-notif"
                 />
               </div>

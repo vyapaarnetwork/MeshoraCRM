@@ -14,6 +14,7 @@ import api from '../utils/api';
  *   - value, onChange (controlled mode)
  *   - selfMode: boolean — when true, auto-saves to /profile on toggle
  *   - compact: boolean — drops Card chrome; renders as a flat section
+ *   - userRole, userCompanyRole: filter the type list by recipient role/sub-role
  *   - testIdPrefix
  */
 export const NotificationPreferences = ({
@@ -22,6 +23,8 @@ export const NotificationPreferences = ({
   selfMode = false,
   compact = false,
   initialFromUser = null,
+  userRole = null,
+  userCompanyRole = null,
   testIdPrefix = 'notif-pref',
 }) => {
   const [types, setTypes] = useState([]);
@@ -32,8 +35,12 @@ export const NotificationPreferences = ({
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setLoading(true);
       try {
-        const res = await api.get('/notifications/types');
+        const params = {};
+        if (userRole) params.role = userRole;
+        if (userCompanyRole) params.company_role = userCompanyRole;
+        const res = await api.get('/notifications/types', { params });
         if (!cancelled) setTypes(res.data || []);
       } catch (e) {
         // Silently ignore — UI will show empty list.
@@ -44,7 +51,7 @@ export const NotificationPreferences = ({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [userRole, userCompanyRole]);
 
   useEffect(() => {
     if (value !== undefined) setLocal(value || {});

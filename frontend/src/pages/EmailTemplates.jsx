@@ -45,7 +45,18 @@ import {
   Trophy,
   XCircle,
   Clock,
-  Info
+  Info,
+  Ban,
+  Snowflake,
+  AlertCircle,
+  Briefcase,
+  CheckCircle2,
+  DollarSign,
+  AtSign,
+  ListChecks,
+  FileSignature,
+  Newspaper,
+  CalendarClock
 } from 'lucide-react';
 import api from '../utils/api';
 import { toast } from 'sonner';
@@ -57,7 +68,20 @@ const EVENT_ICONS = {
   lead_status_changed: RefreshCw,
   lead_won: Trophy,
   lead_lost: XCircle,
+  lead_disqualified: Ban,
+  lead_dead: Snowflake,
   follow_up_reminder: Clock,
+  follow_up_overdue: AlertCircle,
+  deal_room_invite: Briefcase,
+  approval_requested: CheckCircle2,
+  milestone_due: CalendarClock,
+  invoice_overdue: AlertCircle,
+  payment_received: DollarSign,
+  comment_mention: AtSign,
+  task_assigned: ListChecks,
+  commercial_created: FileSignature,
+  weekly_war_room_digest: Newspaper,
+  monthly_won_digest: Newspaper,
 };
 
 // Event colors
@@ -67,7 +91,20 @@ const EVENT_COLORS = {
   lead_status_changed: 'bg-purple-100 text-purple-700',
   lead_won: 'bg-emerald-100 text-emerald-700',
   lead_lost: 'bg-red-100 text-red-700',
+  lead_disqualified: 'bg-slate-100 text-slate-700',
+  lead_dead: 'bg-sky-100 text-sky-700',
   follow_up_reminder: 'bg-amber-100 text-amber-700',
+  follow_up_overdue: 'bg-rose-100 text-rose-700',
+  deal_room_invite: 'bg-indigo-100 text-indigo-700',
+  approval_requested: 'bg-blue-100 text-blue-700',
+  milestone_due: 'bg-violet-100 text-violet-700',
+  invoice_overdue: 'bg-red-100 text-red-700',
+  payment_received: 'bg-emerald-100 text-emerald-700',
+  comment_mention: 'bg-violet-100 text-violet-700',
+  task_assigned: 'bg-indigo-100 text-indigo-700',
+  commercial_created: 'bg-teal-100 text-teal-700',
+  weekly_war_room_digest: 'bg-orange-100 text-orange-700',
+  monthly_won_digest: 'bg-amber-100 text-amber-700',
 };
 
 const EmailTemplates = () => {
@@ -196,6 +233,22 @@ const EmailTemplates = () => {
           </p>
         </div>
       </div>
+
+      {/* Branding & delivery info banner (Phase 34.5) */}
+      <Card className="border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-950/30 dark:to-indigo-950/30" data-testid="email-templates-info">
+        <CardContent className="py-4 flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-violet-100 dark:bg-violet-900/40">
+            <Mail className="w-5 h-5 text-violet-700 dark:text-violet-300" />
+          </div>
+          <div className="flex-1 text-sm">
+            <p className="font-semibold text-violet-900 dark:text-violet-100">Meshora-branded delivery via Zoho ZeptoMail</p>
+            <p className="text-violet-800/80 dark:text-violet-200/80 mt-0.5">
+              Every template you edit below is automatically wrapped in the global Meshora branded layout (header, body, footer).
+              Recipients also only receive emails relevant to their role (e.g. Sales Associates get New Lead &amp; Deal Closed events).
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Templates List */}
       {loading ? (

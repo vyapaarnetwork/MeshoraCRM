@@ -892,11 +892,13 @@ async def create_notification(user_id: str, notification_type: str, title: str, 
 
     # Phase 32 — dispatch email out-of-band
     try:
-        user = await db.users.find_one({"id": user_id}, {"_id": 0, "email": 1, "name": 1, "notification_preferences": 1, "is_active": 1})
+        user = await db.users.find_one({"id": user_id}, {"_id": 0, "email": 1, "name": 1, "notification_preferences": 1, "is_active": 1, "role": 1, "company_role": 1})
         if user and user.get('is_active', True) and user.get('email'):
             prefs = user.get('notification_preferences') or {}
+            # Phase 34.5 — gate by role: skip if this type isn't relevant to the user's role/sub-role
+            role_ok = is_notification_allowed_for_role(notification_type, user.get('role'), user.get('company_role'))
             # Opt-in by default: only skip if explicitly False
-            if prefs.get(notification_type, True):
+            if role_ok and prefs.get(notification_type, True):
                 from services import zeptomail as _zepto  # local import to avoid startup-time cycles
                 ctx = {
                     "recipient_name": user.get('name') or '',
@@ -1212,25 +1214,114 @@ async def list_referrers(current_user: dict = Depends(get_current_user)):
         ))
     return result
 
-# Phase 30 — Notification preference catalog
+# Phase 30 / 34.5 — Notification preference catalog (with role-based filtering)
 NOTIFICATION_TYPE_CATALOG = [
+    {"key": "new_lead", "label": "New Lead Created", "description": "When a new lead is added to the system"},
     {"key": "lead_assigned", "label": "Lead Assigned", "description": "When a new lead is assigned to you"},
     {"key": "lead_status_changed", "label": "Lead Status Changed", "description": "When status of a lead you own changes"},
     {"key": "lead_won", "label": "Deal Won", "description": "When a deal in your pipeline is marked Won"},
+    {"key": "lead_lost", "label": "Deal Lost", "description": "When a deal in your pipeline is marked Lost"},
+    {"key": "lead_dead", "label": "Deal Dead / Cold", "description": "When a deal goes cold or is marked Dead"},
+    {"key": "lead_disqualified", "label": "Deal Disqualified", "description": "When a lead is disqualified"},
     {"key": "follow_up_reminder", "label": "Follow-up Reminder", "description": "Reminder ahead of a scheduled follow-up"},
     {"key": "follow_up_overdue", "label": "Follow-up Overdue", "description": "When a follow-up has passed its scheduled date"},
+    {"key": "approval_requested", "label": "Approval Requested", "description": "When someone requests your approval in a Deal Room"},
+    {"key": "deal_room_invite", "label": "Deal Room Invite", "description": "When you are invited to a collaborative Deal Room"},
     {"key": "milestone_due", "label": "Milestone Due", "description": "When a commercial milestone is approaching its due date"},
     {"key": "invoice_overdue", "label": "Invoice Overdue", "description": "When an invoice you raised is past due"},
     {"key": "payment_received", "label": "Payment Received", "description": "When a payment is recorded against your deal"},
     {"key": "commercial_created", "label": "Commercial Created", "description": "When commercials are set up for your deal"},
     {"key": "comment_mention", "label": "Mention in Comment", "description": "When someone @mentions you in a lead/deal comment"},
+    {"key": "task_assigned", "label": "Task Assigned", "description": "When someone assigns a task to you"},
     {"key": "weekly_war_room_digest", "label": "Weekly War Room Digest", "description": "Monday summary of what's hot, blocked, and at risk"},
 ]
 
+# Phase 34.5 — Role → allowed notification types matrix.
+# `*` = all types. company_role is consulted only for selling_partner / customer.
+_DEAL_CLOSED_TYPES = ["lead_won", "lead_lost", "lead_dead", "lead_disqualified"]
+ROLE_NOTIFICATION_MATRIX: Dict[str, Any] = {
+    "super_admin": "*",
+    "vyapaar_ops": "*",
+    "vyapaar_finance": "*",
+    "sales_associate": [
+        "new_lead", "lead_assigned",
+        "follow_up_reminder", "follow_up_overdue",
+        *_DEAL_CLOSED_TYPES,
+        "comment_mention", "task_assigned",
+    ],
+    "selling_partner": {
+        "sales": [
+            "new_lead", "lead_assigned",
+            "follow_up_reminder", "follow_up_overdue",
+            "approval_requested", "deal_room_invite",
+            *_DEAL_CLOSED_TYPES,
+            "comment_mention", "task_assigned",
+        ],
+        "operations": [
+            "milestone_due", "approval_requested", "deal_room_invite",
+            *_DEAL_CLOSED_TYPES,
+            "comment_mention", "task_assigned",
+        ],
+        "finance": [
+            "milestone_due", "invoice_overdue", "payment_received",
+            "comment_mention", "task_assigned",
+        ],
+        "founder": "*",
+        None: "*",
+    },
+    "customer": {
+        "sales": ["approval_requested", "deal_room_invite", "comment_mention"],
+        "operations": ["approval_requested", "deal_room_invite", "comment_mention"],
+        "finance": ["approval_requested", "deal_room_invite", "comment_mention"],
+        "founder": ["approval_requested", "deal_room_invite", "comment_mention"],
+        None: ["approval_requested", "deal_room_invite", "comment_mention"],
+    },
+}
+
+
+def allowed_notification_types_for(role: Optional[str], company_role: Optional[str] = None) -> List[str]:
+    """Return the list of notification type keys this role+sub-role is allowed
+    to receive. `*` resolves to every key in NOTIFICATION_TYPE_CATALOG."""
+    all_keys = [t["key"] for t in NOTIFICATION_TYPE_CATALOG]
+    if not role:
+        return all_keys
+    spec = ROLE_NOTIFICATION_MATRIX.get(role)
+    if spec is None:
+        return all_keys
+    if spec == "*":
+        return all_keys
+    if isinstance(spec, dict):
+        sub = spec.get(company_role) if company_role else spec.get(None, "*")
+        if sub is None:
+            sub = spec.get(None, "*")
+        if sub == "*":
+            return all_keys
+        return list(sub) if isinstance(sub, list) else all_keys
+    if isinstance(spec, list):
+        return list(spec)
+    return all_keys
+
+
+def is_notification_allowed_for_role(notification_type: str, role: Optional[str], company_role: Optional[str] = None) -> bool:
+    """Phase 34.5 — gate email/notification dispatch on the recipient's role."""
+    return notification_type in allowed_notification_types_for(role, company_role)
+
+
 @api_router.get("/notifications/types")
-async def list_notification_types(current_user: dict = Depends(get_current_user)):
-    """Phase 30: Returns the catalog of notification types users can opt in/out of."""
-    return NOTIFICATION_TYPE_CATALOG
+async def list_notification_types(
+    role: Optional[str] = None,
+    company_role: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Phase 30 / 34.5: Returns the catalog of notification types users can opt in/out of.
+    When `role` is provided, the list is filtered to only the types relevant to
+    that role (and optional company_role sub-profile). When omitted, the caller's
+    own role/company_role is used.
+    """
+    target_role = role or current_user.get('role')
+    target_company_role = company_role if role is not None else current_user.get('company_role')
+    allowed = set(allowed_notification_types_for(target_role, target_company_role))
+    return [t for t in NOTIFICATION_TYPE_CATALOG if t["key"] in allowed]
 
 @api_router.get("/users/assignable", response_model=List[UserResponse])
 async def list_assignable_users(
@@ -2197,6 +2288,8 @@ class EmailTemplateEvent(str, Enum):
     INVOICE_OVERDUE = "invoice_overdue"  # Phase 34.5
     PAYMENT_RECEIVED = "payment_received"  # Phase 34.5
     COMMENT_MENTION = "comment_mention"  # Phase 34.5
+    TASK_ASSIGNED = "task_assigned"  # Phase 34.5
+    COMMERCIAL_CREATED = "commercial_created"  # Phase 34.5
     WEEKLY_WAR_ROOM_DIGEST = "weekly_war_room_digest"  # Phase 34.5
     MONTHLY_WON_DIGEST = "monthly_won_digest"  # Phase 34.5 — first-of-month Vyapaar admin digest
 
@@ -2258,110 +2351,296 @@ EMAIL_TEMPLATE_VARIABLES = {
         {"key": "{{pending_with}}", "description": "Who the follow-up is pending with"},
         {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
     ],
+    "follow_up_overdue": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{follow_up_date}}", "description": "Scheduled follow-up date that was missed"},
+        {"key": "{{follow_up_notes}}", "description": "Notes for the follow-up"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "lead_disqualified": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{partner_name}}", "description": "Partner's name"},
+        {"key": "{{deal_value}}", "description": "Deal value"},
+        {"key": "{{lost_reason}}", "description": "Reason for disqualification (if provided)"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "lead_dead": [
+        {"key": "{{lead_title}}", "description": "Title of the lead"},
+        {"key": "{{customer_name}}", "description": "Customer's full name"},
+        {"key": "{{partner_name}}", "description": "Partner's name"},
+        {"key": "{{deal_value}}", "description": "Deal value"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "deal_room_invite": [
+        {"key": "{{lead_title}}", "description": "Lead / deal title"},
+        {"key": "{{inviter_name}}", "description": "Person who sent the invite"},
+        {"key": "{{magic_link}}", "description": "Magic-link URL"},
+        {"key": "{{expires_at}}", "description": "Expiry timestamp of the magic link"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "approval_requested": [
+        {"key": "{{lead_title}}", "description": "Lead / deal title"},
+        {"key": "{{approval_title}}", "description": "Title of the approval ask"},
+        {"key": "{{requester_name}}", "description": "Person who requested the approval"},
+        {"key": "{{lead_url}}", "description": "URL to open the lead"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "milestone_due": [
+        {"key": "{{milestone_name}}", "description": "Name of the milestone"},
+        {"key": "{{customer_company}}", "description": "Customer company name"},
+        {"key": "{{amount_formatted}}", "description": "Milestone amount (formatted)"},
+        {"key": "{{due_label}}", "description": "Friendly due-date label (e.g. 'in 2 days')"},
+        {"key": "{{commercial_url}}", "description": "URL to open the commercial"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "invoice_overdue": [
+        {"key": "{{invoice_number}}", "description": "Invoice number"},
+        {"key": "{{customer_company}}", "description": "Customer company name"},
+        {"key": "{{amount_formatted}}", "description": "Invoice amount (formatted)"},
+        {"key": "{{due_date}}", "description": "Original due date"},
+        {"key": "{{commercial_url}}", "description": "URL to open the commercial"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "payment_received": [
+        {"key": "{{amount_formatted}}", "description": "Payment amount (formatted)"},
+        {"key": "{{customer_company}}", "description": "Customer company name"},
+        {"key": "{{customer_name}}", "description": "Customer name"},
+        {"key": "{{commercial_url}}", "description": "URL to open the commercial"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "comment_mention": [
+        {"key": "{{lead_title}}", "description": "Lead title"},
+        {"key": "{{author_name}}", "description": "Person who mentioned you"},
+        {"key": "{{comment_snippet}}", "description": "First 200 chars of the comment"},
+        {"key": "{{lead_url}}", "description": "URL to open the lead"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "task_assigned": [
+        {"key": "{{task_title}}", "description": "Title of the task"},
+        {"key": "{{assigner_name}}", "description": "Person who assigned the task"},
+        {"key": "{{due_date}}", "description": "Task due date"},
+        {"key": "{{priority}}", "description": "Task priority (low / medium / high)"},
+        {"key": "{{lead_url}}", "description": "URL to open the related lead"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "commercial_created": [
+        {"key": "{{lead_title}}", "description": "Lead title"},
+        {"key": "{{customer_company}}", "description": "Customer company"},
+        {"key": "{{contract_value}}", "description": "Contract value"},
+        {"key": "{{commercial_url}}", "description": "URL to open the commercial"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "weekly_war_room_digest": [
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+        {"key": "{{summary}}", "description": "AI-generated executive summary"},
+    ],
+    "monthly_won_digest": [
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+        {"key": "{{summary}}", "description": "Monthly digest body"},
+    ],
 }
 
-# Default templates
+# Default templates (body-only — wrapped automatically by services/zeptomail._BASE_TEMPLATE)
 DEFAULT_EMAIL_TEMPLATES = {
     "new_lead": {
-        "subject": "New Lead Created: {{lead_title}}",
-        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-    <h2 style="color: #2563eb;">New Lead Created</h2>
-    <p>A new lead has been created in Vyapaar Network CRM.</p>
-    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <p><strong>Lead Title:</strong> {{lead_title}}</p>
-        <p><strong>Customer:</strong> {{customer_name}}</p>
-        <p><strong>Email:</strong> {{customer_email}}</p>
-        <p><strong>Category:</strong> {{category_name}}</p>
-        <p><strong>Deal Value:</strong> {{deal_value}}</p>
-        <p><strong>Created By:</strong> {{created_by}}</p>
-    </div>
-    <p>Login to CRM to view more details.</p>
-    <p>Best regards,<br>Vyapaar Network CRM</p>
+        "subject": "[Meshora] New lead created: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>A new lead has just been created.</p>
+<div style="background:#f3f4f6;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;"><strong>Lead:</strong> {{lead_title}}</p>
+  <p style="margin:6px 0 0;"><strong>Customer:</strong> {{customer_name}}</p>
+  <p style="margin:6px 0 0;"><strong>Category:</strong> {{category_name}}</p>
+  <p style="margin:6px 0 0;"><strong>Deal value:</strong> {{deal_value}}</p>
+  <p style="margin:6px 0 0;"><strong>Created by:</strong> {{created_by}}</p>
 </div>"""
     },
     "lead_assigned": {
-        "subject": "Lead Assigned to You: {{lead_title}}",
-        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-    <h2 style="color: #2563eb;">Lead Assigned to You</h2>
-    <p>Hi {{partner_name}},</p>
-    <p>A new lead has been assigned to you.</p>
-    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <p><strong>Lead Title:</strong> {{lead_title}}</p>
-        <p><strong>Customer:</strong> {{customer_name}}</p>
-        <p><strong>Email:</strong> {{customer_email}}</p>
-        <p><strong>Phone:</strong> {{customer_phone}}</p>
-        <p><strong>Category:</strong> {{category_name}}</p>
-        <p><strong>Deal Value:</strong> {{deal_value}}</p>
-    </div>
-    <p>Please login to CRM and follow up with the customer.</p>
-    <p>Best regards,<br>Vyapaar Network CRM</p>
-</div>"""
+        "subject": "[Meshora] New lead assigned: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p><strong>{{assigned_by_name}}</strong> assigned you a new lead:</p>
+<div style="background:#f3f4f6;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;font-size:16px;font-weight:600;">{{lead_title}}</p>
+  <p style="margin:6px 0 0;color:#6b7280;font-size:13px;">{{customer_name}} &middot; {{customer_company}}</p>
+  <p style="margin:6px 0 0;color:#6b7280;font-size:13px;">Category: {{category_name}}</p>
+</div>
+<p><a href="{{lead_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open Lead</a></p>"""
     },
     "lead_status_changed": {
-        "subject": "Lead Status Updated: {{lead_title}}",
-        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-    <h2 style="color: #2563eb;">Lead Status Changed</h2>
-    <p>The status of a lead has been updated.</p>
-    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <p><strong>Lead:</strong> {{lead_title}}</p>
-        <p><strong>Customer:</strong> {{customer_name}}</p>
-        <p><strong>Previous Status:</strong> {{old_status}}</p>
-        <p><strong>New Status:</strong> <span style="color: #16a34a; font-weight: bold;">{{new_status}}</span></p>
-        <p><strong>Changed By:</strong> {{changed_by}}</p>
-    </div>
-    <p>Best regards,<br>Vyapaar Network CRM</p>
+        "subject": "[Meshora] Status updated: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>The status of the following lead has been updated:</p>
+<div style="background:#f3f4f6;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;"><strong>Lead:</strong> {{lead_title}}</p>
+  <p style="margin:6px 0 0;"><strong>From:</strong> {{old_status}}</p>
+  <p style="margin:6px 0 0;"><strong>To:</strong> <span style="color:#16a34a;font-weight:600;">{{new_status}}</span></p>
+  <p style="margin:6px 0 0;"><strong>By:</strong> {{changed_by}}</p>
 </div>"""
     },
     "lead_won": {
-        "subject": "🎉 Congratulations! Deal Won: {{lead_title}}",
-        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-    <h2 style="color: #16a34a;">🎉 Deal Won!</h2>
-    <p>Congratulations! A deal has been successfully closed.</p>
-    <div style="background: #dcfce7; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <p><strong>Lead:</strong> {{lead_title}}</p>
-        <p><strong>Customer:</strong> {{customer_name}}</p>
-        <p><strong>Company:</strong> {{customer_company}}</p>
-        <p><strong>Partner:</strong> {{partner_name}}</p>
-        <p><strong>Deal Value:</strong> <span style="font-size: 1.2em; color: #16a34a;">{{deal_value}}</span></p>
-        <p><strong>Commission:</strong> {{commission_amount}}</p>
-    </div>
-    <p>Great work! Keep it up!</p>
-    <p>Best regards,<br>Vyapaar Network CRM</p>
+        "subject": "[Meshora] Deal won: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>Congratulations &mdash; a deal has been closed Won!</p>
+<div style="background:#d1fae5;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;font-size:16px;font-weight:600;">{{lead_title}}</p>
+  <p style="margin:6px 0 0;color:#047857;">Customer: {{customer_company}}</p>
+  <p style="margin:6px 0 0;color:#047857;">Partner: {{partner_name}}</p>
+  <p style="margin:6px 0 0;color:#065f46;font-size:18px;font-weight:700;">{{deal_value}}</p>
+  <p style="margin:4px 0 0;color:#047857;font-size:13px;">Commission: {{commission_amount}}</p>
 </div>"""
     },
     "lead_lost": {
-        "subject": "Lead Lost: {{lead_title}}",
-        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-    <h2 style="color: #dc2626;">Lead Lost</h2>
-    <p>Unfortunately, a lead has been marked as lost.</p>
-    <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <p><strong>Lead:</strong> {{lead_title}}</p>
-        <p><strong>Customer:</strong> {{customer_name}}</p>
-        <p><strong>Partner:</strong> {{partner_name}}</p>
-        <p><strong>Deal Value:</strong> {{deal_value}}</p>
-        <p><strong>Category:</strong> {{category_name}}</p>
-    </div>
-    <p>Review the lead details to understand what went wrong and improve future conversions.</p>
-    <p>Best regards,<br>Vyapaar Network CRM</p>
-</div>"""
+        "subject": "[Meshora] Deal lost: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>The following lead has been marked as <strong>Lost</strong>.</p>
+<div style="background:#fef2f2;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;"><strong>Lead:</strong> {{lead_title}}</p>
+  <p style="margin:6px 0 0;"><strong>Customer:</strong> {{customer_name}}</p>
+  <p style="margin:6px 0 0;"><strong>Partner:</strong> {{partner_name}}</p>
+  <p style="margin:6px 0 0;"><strong>Deal value:</strong> {{deal_value}}</p>
+  <p style="margin:6px 0 0;"><strong>Reason:</strong> {{lost_reason}}</p>
+</div>
+<p>Review the lead to understand what went wrong and improve future conversions.</p>"""
     },
     "follow_up_reminder": {
-        "subject": "Follow-up Reminder: {{lead_title}}",
-        "body": """<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-    <h2 style="color: #f59e0b;">⏰ Follow-up Reminder</h2>
-    <p>Hi {{recipient_name}},</p>
-    <p>This is a reminder for your upcoming follow-up.</p>
-    <div style="background: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <p><strong>Lead:</strong> {{lead_title}}</p>
-        <p><strong>Customer:</strong> {{customer_name}}</p>
-        <p><strong>Phone:</strong> {{customer_phone}}</p>
-        <p><strong>Scheduled Date:</strong> {{follow_up_date}}</p>
-        <p><strong>Notes:</strong> {{follow_up_notes}}</p>
-    </div>
-    <p>Please ensure to complete this follow-up on time.</p>
-    <p>Best regards,<br>Vyapaar Network CRM</p>
+        "subject": "[Meshora] Follow-up reminder: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>Reminder &mdash; you have a follow-up scheduled for <strong>{{follow_up_date}}</strong> on:</p>
+<div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:14px 16px;margin:12px 0;border-radius:6px;">
+  <div style="font-size:16px;font-weight:600;">{{lead_title}}</div>
+  <div style="color:#92400e;font-size:13px;margin-top:6px;">Notes: {{follow_up_notes}}</div>
+</div>
+<p style="margin-top:14px;">Please ensure to complete this follow-up on time.</p>"""
+    },
+    "follow_up_overdue": {
+        "subject": "[Meshora] Follow-up overdue: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>The following follow-up has passed its scheduled date and is still pending:</p>
+<div style="background:#fee2e2;border-left:4px solid #dc2626;padding:14px 16px;margin:12px 0;border-radius:6px;">
+  <div style="font-size:16px;font-weight:600;">{{lead_title}}</div>
+  <div style="color:#991b1b;font-size:13px;margin-top:6px;">Scheduled for: {{follow_up_date}}</div>
+  <div style="color:#991b1b;font-size:13px;margin-top:4px;">{{follow_up_notes}}</div>
 </div>"""
-    }
+    },
+    "lead_disqualified": {
+        "subject": "[Meshora] Lead disqualified: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>A lead in your pipeline has been marked as <strong>Disqualified</strong>.</p>
+<div style="background:#f3f4f6;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;"><strong>Lead:</strong> {{lead_title}}</p>
+  <p style="margin:6px 0 0;"><strong>Customer:</strong> {{customer_name}}</p>
+  <p style="margin:6px 0 0;"><strong>Reason:</strong> {{lost_reason}}</p>
+</div>"""
+    },
+    "lead_dead": {
+        "subject": "[Meshora] Deal gone cold: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>The following deal has been marked as <strong>Dead / Cold</strong>.</p>
+<div style="background:#f3f4f6;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;"><strong>Lead:</strong> {{lead_title}}</p>
+  <p style="margin:6px 0 0;"><strong>Customer:</strong> {{customer_name}}</p>
+  <p style="margin:6px 0 0;"><strong>Deal value:</strong> {{deal_value}}</p>
+</div>
+<p>You can re-engage if conditions change &mdash; or review what we can learn.</p>"""
+    },
+    "deal_room_invite": {
+        "subject": "[Meshora] {{inviter_name}} invited you to a Deal Room",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p><strong>{{inviter_name}}</strong> has invited you to collaborate in the Deal Room for:</p>
+<div style="background:#ede9fe;border-radius:8px;padding:14px 16px;margin:12px 0;">
+  <div style="font-size:16px;font-weight:600;">{{lead_title}}</div>
+</div>
+<p><a href="{{magic_link}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open Deal Room</a></p>
+<p style="color:#6b7280;font-size:12px;margin-top:18px;">This link expires on {{expires_at}}.</p>"""
+    },
+    "approval_requested": {
+        "subject": "[Meshora] Approval requested: {{approval_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p><strong>{{requester_name}}</strong> has requested your approval:</p>
+<div style="background:#dbeafe;border-radius:8px;padding:14px 16px;margin:12px 0;">
+  <div style="font-size:16px;font-weight:600;">{{approval_title}}</div>
+  <div style="color:#1e40af;font-size:13px;margin-top:6px;">Deal: {{lead_title}}</div>
+</div>
+<p><a href="{{lead_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Review &amp; Respond</a></p>"""
+    },
+    "milestone_due": {
+        "subject": "[Meshora] Milestone due {{due_label}}: {{milestone_name}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>The following milestone is due <strong>{{due_label}}</strong>:</p>
+<div style="background:#f9fafb;border-left:4px solid #4f46e5;padding:14px 16px;margin:12px 0;border-radius:6px;">
+  <div style="font-size:16px;font-weight:600;">{{milestone_name}}</div>
+  <div style="color:#6b7280;font-size:13px;margin-top:4px;">For {{customer_company}}</div>
+  <div style="color:#065f46;font-size:15px;font-weight:600;margin-top:8px;">{{amount_formatted}}</div>
+</div>
+<p><a href="{{commercial_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open Commercial</a></p>"""
+    },
+    "invoice_overdue": {
+        "subject": "[Meshora] Invoice overdue: {{invoice_number}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>Invoice <strong>{{invoice_number}}</strong> for {{customer_company}} is past its due date.</p>
+<div style="background:#fef2f2;border-left:4px solid #dc2626;padding:14px 16px;margin:12px 0;border-radius:6px;">
+  <div style="font-size:16px;font-weight:600;">{{amount_formatted}}</div>
+  <div style="color:#991b1b;font-size:13px;margin-top:6px;">Was due on {{due_date}}</div>
+</div>
+<p><a href="{{commercial_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">View Commercial</a></p>"""
+    },
+    "payment_received": {
+        "subject": "[Meshora] Payment received: {{amount_formatted}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>A payment was recorded against your deal:</p>
+<div style="background:#d1fae5;border-radius:8px;padding:14px 16px;margin:12px 0;">
+  <div style="font-size:20px;font-weight:700;color:#065f46;">{{amount_formatted}}</div>
+  <div style="color:#047857;font-size:14px;margin-top:6px;">From {{customer_company}}</div>
+</div>
+<p><a href="{{commercial_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">View Commercial</a></p>"""
+    },
+    "comment_mention": {
+        "subject": "[Meshora] {{author_name}} mentioned you on {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p><strong>{{author_name}}</strong> mentioned you in a comment on <strong>{{lead_title}}</strong>:</p>
+<div style="background:#f5f3ff;border-left:4px solid #7c3aed;padding:12px 14px;margin:12px 0;border-radius:6px;font-style:italic;color:#5b21b6;">
+  &ldquo;{{comment_snippet}}&rdquo;
+</div>
+<p><a href="{{lead_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open Lead</a></p>"""
+    },
+    "task_assigned": {
+        "subject": "[Meshora] New task: {{task_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p><strong>{{assigner_name}}</strong> assigned you a new task:</p>
+<div style="background:#eef2ff;border-radius:8px;padding:14px 16px;margin:12px 0;">
+  <div style="font-size:16px;font-weight:600;">{{task_title}}</div>
+  <div style="color:#4338ca;font-size:13px;margin-top:6px;">Priority: {{priority}} &middot; Due: {{due_date}}</div>
+</div>
+<p><a href="{{lead_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open in Meshora</a></p>"""
+    },
+    "commercial_created": {
+        "subject": "[Meshora] Commercials set up: {{lead_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>Commercials have been set up for your deal:</p>
+<div style="background:#f3f4f6;padding:14px 16px;border-radius:8px;margin:12px 0;">
+  <p style="margin:0;"><strong>Lead:</strong> {{lead_title}}</p>
+  <p style="margin:6px 0 0;"><strong>Customer:</strong> {{customer_company}}</p>
+  <p style="margin:6px 0 0;"><strong>Contract value:</strong> {{contract_value}}</p>
+</div>
+<p><a href="{{commercial_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open Commercial</a></p>"""
+    },
+    "weekly_war_room_digest": {
+        "subject": "[Meshora] Your Weekly War Room digest",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>Here's your weekly snapshot of what's hot, blocked, and at risk:</p>
+<div style="background:#f9fafb;padding:14px 16px;border-radius:8px;margin:12px 0;color:#374151;">
+  {{summary}}
+</div>"""
+    },
+    "monthly_won_digest": {
+        "subject": "[Meshora] Monthly Won-Deals digest",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>Here's last month's Won-deals digest:</p>
+<div style="background:#f9fafb;padding:14px 16px;border-radius:8px;margin:12px 0;color:#374151;">
+  {{summary}}
+</div>"""
+    },
 }
 
 # Email Template Models
@@ -2403,6 +2682,8 @@ EVENT_LABELS = {
     "invoice_overdue": "Invoice Overdue",
     "payment_received": "Payment Received",
     "comment_mention": "Mentioned in Comment",
+    "task_assigned": "Task Assigned",
+    "commercial_created": "Commercial Created",
     "weekly_war_room_digest": "Weekly War Room Digest",
     "monthly_won_digest": "Monthly Won-Deals Digest (Vyapaar Admins)",
 }
@@ -8473,6 +8754,3 @@ async def backfill_lead_status_is_won():
         )
     except Exception as e:
         logger.warning(f"Lead status is_won backfill failed: {e}")
-
-atus is_won backfill failed: {e}")
-

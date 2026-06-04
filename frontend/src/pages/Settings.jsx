@@ -305,6 +305,8 @@ const Settings = () => {
       <NotificationPreferences
         selfMode
         initialFromUser={user?.notification_preferences || null}
+        userRole={user?.role || null}
+        userCompanyRole={user?.company_role || null}
         testIdPrefix="profile-notif"
       />
 

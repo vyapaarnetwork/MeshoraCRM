@@ -209,17 +209,25 @@ _BASE_TEMPLATE = """<!DOCTYPE html>
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#111827;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f3f4f6;padding:24px 0;">
 <tr><td align="center">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-<tr><td style="background:linear-gradient(135deg,#7c3aed,#4f46e5);padding:20px 28px;">
-<div style="color:#ffffff;font-size:14px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;opacity:0.85;">Vyapaar Network</div>
-<div style="color:#ffffff;font-size:22px;font-weight:700;margin-top:4px;">{header}</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 2px 6px rgba(15,23,42,0.06);">
+<tr><td style="background:linear-gradient(135deg,#7c3aed 0%,#4f46e5 55%,#312e81 100%);padding:24px 28px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+<td style="vertical-align:middle;">
+<div style="color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.5px;line-height:1;">Meshora</div>
+<div style="color:#ddd6fe;font-size:11px;font-weight:500;letter-spacing:1.2px;text-transform:uppercase;margin-top:6px;">Collaboration that converts</div>
+</td>
+<td style="vertical-align:middle;text-align:right;">
+<div style="color:#ffffff;font-size:14px;font-weight:600;opacity:0.92;">{header}</div>
+</td>
+</tr></table>
 </td></tr>
-<tr><td style="padding:28px;">
+<tr><td style="padding:28px 28px 24px 28px;font-size:14px;line-height:1.55;color:#111827;">
 {body}
 </td></tr>
-<tr><td style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;">
-You're receiving this because your notification preferences allow it.
-<br/>You can manage them anytime from <a href="https://app.vyapaar.net/settings" style="color:#4f46e5;">Settings → Profile</a>.
+<tr><td style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.55;">
+You're receiving this because your notification preferences allow it for your role.
+<br/>Manage them anytime from <a href="https://app.vyapaar.net/settings" style="color:#4f46e5;text-decoration:none;font-weight:500;">Settings &rarr; Email Notifications</a>.
+<div style="margin-top:10px;color:#9ca3af;font-size:11px;">Meshora &middot; Powered by Vyapaar Network</div>
 </td></tr>
 </table>
 </td></tr></table>
@@ -381,7 +389,7 @@ def _render_deal_room_invite(ctx):
         f'{_btn("Open Deal Room", magic_link)}'
         f'{expires_html}'
     )
-    return {"subject": f"[Vyapaar Network] {inviter} invited you to a Deal Room"[:255],
+    return {"subject": f"[Meshora] {inviter} invited you to a Deal Room"[:255],
             "html": _wrap(title, title, body),
             "text": f"{inviter} invited you to the Deal Room for {lead_title}. Open: {magic_link}"}
 
