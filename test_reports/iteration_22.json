@@ -1,0 +1,44 @@
+{
+  "summary": "Phase 34.6 — Lead date tracking (start_date / closure_date), auto-stamp on terminal status, Won Leads report (month/quarter/annual Indian fiscal Apr-Mar) with date filters + RBAC, and Monthly Won-Deals Digest. Backend: 16 PASS / 2 SKIP (16/16 of the runnable cases). Frontend: 7/7 critical flows PASS — sidebar nav RBAC (admin sees 'Won Leads', customer does not), direct-URL bounce on customer, /reports/won-leads renders KPI cards (3 wins, ₹18,00,000 total, ₹6,00,000 avg) for admin, period tabs (month/quarter/annual) all switch, From/To filter + clear-filters work, dispatch button visible, LeadForm /leads/new has Lead Start Date pre-filled to today (2026-06-04) and Lead Closure Date empty with the helper subtext 'Auto-stamps when status flips to Won / Lost / Dead / Disqualified'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/master/lead-status", "issue": "Only 'won' and 'lost' terminal statuses are seeded — 'disqualified' and 'dead' are NOT in lead_statuses, so auto-stamp behaviour for those two terminal names is not exercised end-to-end on this DB. Code path is in place (terminal set = {won, lost, disqualified, dead}) but cannot be regression-tested until those statuses are seeded."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase34_6_won_leads_digest.py",
+    "/app/test_reports/pytest/phase34_6_results.xml"
+  ],
+  "action_items": [
+    "(Low priority) Seed 'Disqualified' and 'Dead' into master lead-statuses so the full terminal auto-stamp set can be regression-tested. Today only 'Won' and 'Lost' exist; 'Disqualified'/'Dead' tests skip rather than fail.",
+    "(Optional) /api/admin/dispatch-monthly-digest currently allows super_admin and any user whose is_vyapaar_ops flag is true, but NOT vyapaar_finance role. fin_test@meshora.com returned 403 in our test — confirm this is intentional. The matching scheduler.dispatch_monthly_won_digest() DOES include 'vyapaar_finance' role in the email recipient list, so a finance user is a recipient but not a trigger-er — fine, just documenting the asymmetry."
+  ],
+  "critical_code_review_comments": [
+    "server.py update_lead auto-stamp logic (L3765-3772) correctly checks 'closure_date' not in update_data AND not lead.get('closure_date') — verified: explicit closure_date in PUT body wins; absence of closure_date and no prior value triggers today's date stamp. Status name comparison is case-insensitive (.lower()), good.",
+    "server.py /api/reports/won-leads (L7655-7758) uses closure_date as the bucketing anchor and falls back to updated_at then created_at when closure_date is null. For Won leads created BEFORE Phase 34.6 (no closure_date), they bucket by updated_at — acceptable for backfill but worth a one-time migration to backfill closure_date so the date_filter behaviour is deterministic.",
+    "server.py /api/admin/dispatch-monthly-digest (L8685-8706) deletes the existing monthly_digest_runs row before re-running when force=true. This is correct for the manual admin-trigger UX but means the dedup row check (existing && !force returns skipped:already_sent) can only be exercised by running force=false on the 1st of the month with an existing row. Cannot easily test today without time-mocking the scheduler.",
+    "scheduler.py dispatch_monthly_won_digest (L387-545) — recipients query at L498-506 correctly OR's role:vyapaar_finance + role:vyapaar_ops + is_vyapaar_ops:true + role:super_admin; honours notification_preferences.monthly_won_digest != false opt-out at L514. Live ZeptoMail send happened — sent:3 recipients:3 confirmed at API level.",
+    "frontend WonLeadsReport.jsx — period tabs, KPI cards, From/To filters, Clear button, Dispatch button all visible and wired with data-testids that match the review spec. Bucket cards render with delta badges per code (DeltaBadge component, lines confirm green/red/slate states).",
+    "frontend LeadForm.jsx — start_date defaults to todayIso (line 47), closure_date initially empty (line 48); edit-mode hydrates from lead.start_date with fallback to created_at slice(0,10) (line 144) — sensible for back-fill of older leads. Both fields have data-testids lead-start-date and lead-closure-date.",
+    "frontend App.js — /reports/won-leads is wrapped in <ProtectedRoute allowedRoles={['super_admin']}> but the ProtectedRoute helper at L57-58 auto-expands ['super_admin'] to ADMIN_LIKE_ROLES = [super_admin, vyapaar_ops, vyapaar_finance]. Verified via API tests for all three roles. Customer correctly bounces to /dashboard (frontend test confirmed)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase34_6_won_leads_digest.py (new — 18 test cases / 16 runnable + 2 skip)"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 runnable; 2 skipped due to missing seed data — 'disqualified' and 'dead' statuses)",
+    "frontend": "100% (7/7 critical flows confirmed: admin sidebar link, customer no link, customer bounce, admin Won Leads page KPIs, period tab switching, date-filter + clear, dispatch btn visible, LeadForm date defaults)"
+  },
+  "test_credentials": "All four sets in /app/memory/test_credentials.md are valid — admin/ops/fin/customer all logged in successfully.",
+  "seed_data_creation": "Created several TEST_Phase34_6 leads during testing including some auto-cleaned by the module-scoped _cleanup fixture (DELETE /api/leads/{id}). Some Won leads with closure_date=2026-05-15 may persist if the cleanup race-conditioned; manual cleanup query: db.leads.deleteMany({title: /^TEST_Phase34_6/}).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Re-run with: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env|cut -d= -f2) pytest /app/backend/tests/test_phase34_6_won_leads_digest.py -v. Module-scoped cleanup fixture deletes test leads. The dispatch test sends REAL ZeptoMail emails — only run on the .com region and after verifying recipients list (currently 3 active vyapaar admins). The two terminal-status skips ('disqualified', 'dead') will auto-run once those statuses are seeded into db.lead_statuses. Frontend selectors verified: data-testid={won-leads-report, dispatch-monthly-digest-btn, period-month/quarter/annual, start-date-filter, end-date-filter, clear-filters-btn, kpi-total-won/total-value/avg-deal, bucket-{key}, won-lead-{id}, lead-start-date, lead-closure-date}.",
+  "rca of the issue": "No P0 issues. One minor environmental gap: only 'Won' and 'Lost' terminal statuses are seeded; 'Disqualified' and 'Dead' missing from db.lead_statuses prevents end-to-end auto-stamp verification of those two transitions. Recommendation: extend seed_lead_statuses() to include Disqualified + Dead with is_active=true and a terminal=true flag if you want them in the picklist."
+}

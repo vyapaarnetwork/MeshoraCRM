@@ -28,6 +28,7 @@ const LeadForm = () => {
 
   const [loading, setLoading] = useState(isEditing);
   const [submitting, setSubmitting] = useState(false);
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -42,7 +43,9 @@ const LeadForm = () => {
     deal_value: '',
     commission_override: '',
     sales_associate_commission: '',
-    status_id: ''
+    status_id: '',
+    start_date: todayIso,
+    closure_date: ''
   });
 
   const [options, setOptions] = useState({
@@ -137,7 +140,9 @@ const LeadForm = () => {
         deal_value: lead.deal_value?.toString() || '',
         commission_override: lead.commission_override?.toString() || '',
         sales_associate_commission: lead.sales_associate_commission?.toString() || '',
-        status_id: lead.status_id || ''
+        status_id: lead.status_id || '',
+        start_date: lead.start_date || (lead.created_at ? lead.created_at.slice(0, 10) : todayIso),
+        closure_date: lead.closure_date || ''
       });
     } catch (error) {
       toast.error('Failed to load lead');
@@ -180,7 +185,9 @@ const LeadForm = () => {
         sales_associate_commission: formData.sales_associate_commission ? parseFloat(formData.sales_associate_commission) : null,
         selling_partner_id: formData.selling_partner_id || null,
         sales_associate_id: formData.sales_associate_id || null,
-        secondary_category_id: formData.secondary_category_id || null
+        secondary_category_id: formData.secondary_category_id || null,
+        start_date: formData.start_date || todayIso,
+        closure_date: formData.closure_date || null
       };
 
       // If user is selling partner, auto-assign themselves
@@ -331,6 +338,34 @@ const LeadForm = () => {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Phase 34.6 — Lead start & closure dates */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="start_date">Lead Start Date</Label>
+                  <Input
+                    type="date"
+                    id="start_date"
+                    name="start_date"
+                    value={formData.start_date || ''}
+                    onChange={handleChange}
+                    data-testid="lead-start-date"
+                  />
+                  <p className="text-xs text-muted-foreground">Defaults to today; edit if the deal started earlier.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="closure_date">Lead Closure Date</Label>
+                  <Input
+                    type="date"
+                    id="closure_date"
+                    name="closure_date"
+                    value={formData.closure_date || ''}
+                    onChange={handleChange}
+                    data-testid="lead-closure-date"
+                  />
+                  <p className="text-xs text-muted-foreground">Auto-stamps when status flips to Won / Lost / Dead / Disqualified. Override here if needed.</p>
+                </div>
               </div>
             </CardContent>
           </Card>

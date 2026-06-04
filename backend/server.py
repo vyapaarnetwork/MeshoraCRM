@@ -388,6 +388,8 @@ class LeadCreate(BaseModel):
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
     status_id: Optional[str] = None
+    start_date: Optional[str] = None  # Phase 34.6 — YYYY-MM-DD; defaults to today on create
+    closure_date: Optional[str] = None  # Phase 34.6 — YYYY-MM-DD; can be set manually or auto-stamped on Won
 
 class LeadUpdate(BaseModel):
     title: Optional[str] = None
@@ -404,6 +406,7 @@ class LeadUpdate(BaseModel):
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
     status_id: Optional[str] = None
+    start_date: Optional[str] = None  # Phase 34.6
     closure_date: Optional[str] = None  # Phase 34.5
 
 class CommissionBreakdown(BaseModel):
@@ -474,6 +477,8 @@ class LeadResponse(BaseModel):
     created_by_name: Optional[str] = None
     created_at: str
     updated_at: str
+    start_date: Optional[str] = None  # Phase 34.6 — YYYY-MM-DD when the deal/conversation began
+    closure_date: Optional[str] = None  # Phase 34.6 — YYYY-MM-DD when the deal was closed (Won/Lost/Dead/Disqualified)
     # Phase 27: Deal Room state
     deal_room_enabled: bool = False
     deal_room_opened_at: Optional[str] = None
@@ -3214,6 +3219,8 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         created_by_name=created_by_user['name'] if created_by_user else None,
         created_at=lead['created_at'],
         updated_at=lead['updated_at'],
+        start_date=lead.get('start_date'),
+        closure_date=lead.get('closure_date'),
         deal_room_enabled=bool(lead.get('deal_room_enabled', False)),
         deal_room_opened_at=lead.get('deal_room_opened_at'),
     )
@@ -3382,7 +3389,9 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             created_by=lead['created_by'],
             created_by_name=created_by_user['name'] if created_by_user else None,
             created_at=lead['created_at'],
-            updated_at=lead['updated_at']
+            updated_at=lead['updated_at'],
+            start_date=lead.get('start_date'),
+            closure_date=lead.get('closure_date'),
         ))
     
     return result
@@ -3418,7 +3427,12 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
     
     lead_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    
+    today_iso = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    # Phase 34.6: default start_date to today on create (admin can override). closure_date stays empty
+    # until the lead is moved to a terminal status OR admin sets it manually.
+    start_date = lead_data.start_date or today_iso
+    closure_date = lead_data.closure_date  # may be None — auto-stamps later on Won
+
     lead_doc = {
         "id": lead_id,
         "title": lead_data.title,
@@ -3439,7 +3453,9 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
         "comments": [],
         "created_by": current_user['id'],
         "created_at": now,
-        "updated_at": now
+        "updated_at": now,
+        "start_date": start_date,
+        "closure_date": closure_date,
     }
     
     await db.leads.insert_one(lead_doc)
@@ -7639,10 +7655,13 @@ def _fiscal_quarter_label(d):
 @api_router.get("/reports/won-leads")
 async def get_won_leads_report(
     period: str = "month",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    """Phase 34.5 — Won leads aggregated by Indian fiscal Apr-Mar calendar.
-    Vyapaar team only. Returns time-bucketed wins with comparison vs previous period."""
+    """Phase 34.5 / 34.6 — Won leads aggregated by Indian fiscal Apr-Mar calendar.
+    Vyapaar team only. Returns time-bucketed wins with comparison vs previous period.
+    Optional `start_date`/`end_date` filters bound the closure_date range (inclusive)."""
     vyapaar_roles = {UserRole.SUPER_ADMIN.value, UserRole.VYAPAAR_OPS.value, UserRole.VYAPAAR_FINANCE.value}
     if current_user.get('role') not in vyapaar_roles and not current_user.get('is_vyapaar_ops'):
         raise HTTPException(status_code=403, detail="Vyapaar team only")
@@ -7652,9 +7671,18 @@ async def get_won_leads_report(
     won_statuses = await db.lead_statuses.find({"is_won": True}, {"_id": 0}).to_list(20)
     won_ids = [s['id'] for s in won_statuses]
     if not won_ids:
-        return {"period": period, "buckets": [], "summary": {"total_won": 0, "total_value": 0}}
+        return {"period": period, "buckets": [], "summary": {"total_won": 0, "total_value": 0, "bucket_count": 0}}
 
     leads = await db.leads.find({"status_id": {"$in": won_ids}}, {"_id": 0}).to_list(10000)
+
+    # Normalize date filter bounds (YYYY-MM-DD strings, inclusive)
+    def _parse_d(s):
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    lo = _parse_d(start_date) if start_date else None
+    hi = _parse_d(end_date) if end_date else None
 
     def bucket_key(lead):
         raw = lead.get('closure_date') or lead.get('updated_at') or lead.get('created_at')
@@ -7668,6 +7696,11 @@ async def get_won_leads_report(
                 if d.tzinfo is None:
                     d = d.replace(tzinfo=timezone.utc)
         except Exception:
+            return None
+        # Apply date filter on closure_date
+        if lo and d < lo:
+            return None
+        if hi and d > hi.replace(hour=23, minute=59, second=59):
             return None
         if period == "month":
             return d.strftime('%Y-%m'), d.strftime('%b %Y'), d
@@ -7696,7 +7729,9 @@ async def get_won_leads_report(
             "customer_company": l.get('customer_company'),
             "deal_value": float(l.get('deal_value') or 0),
             "closure_date": l.get('closure_date') or (l.get('updated_at') or '')[:10],
+            "start_date": l.get('start_date'),
             "primary_category_name": l.get('primary_category_name'),
+            "selling_partner_id": l.get('selling_partner_id'),
         })
     buckets = sorted(bucket_map.values(), key=lambda b: b['anchor'])
     for i, b in enumerate(buckets):
@@ -8644,6 +8679,30 @@ async def admin_run_milestone_reminders(window_hours: int = 48, current_user: di
     if not _zepto.is_configured():
         raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
     result = await _sched.dispatch_due_milestone_reminders(db, _zepto, window_hours=max(1, min(168, int(window_hours))))
+    return result
+
+
+@api_router.post("/admin/dispatch-monthly-digest")
+async def admin_run_monthly_digest(force: bool = True, current_user: dict = Depends(get_current_user)):
+    """Phase 34.6 — admin-only manual trigger for the monthly won-deals digest.
+    By default forces a send (bypasses the 1st-of-month + 09:xx UTC window) so admins can preview.
+    Idempotent per (year, month) — a row in `monthly_digest_runs` prevents duplicate sends; pass force=True to override."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    # When force=True we also clear the existing run-key so the send actually fires
+    if force:
+        now = datetime.now(timezone.utc)
+        if now.month == 1:
+            last_month = (now.year - 1, 12)
+        else:
+            last_month = (now.year, now.month - 1)
+        run_key = f"{last_month[0]}-{last_month[1]:02d}"
+        await db.monthly_digest_runs.delete_many({"key": run_key})
+    result = await _sched.dispatch_monthly_won_digest(db, _zepto, force=force)
     return result
 
 

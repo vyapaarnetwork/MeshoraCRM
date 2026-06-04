@@ -267,6 +267,16 @@ const Layout = ({ children }) => {
       roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance', 'selling_partner', 'sales_associate']
     });
 
+    // Phase 34.6: Won Leads Report — Vyapaar team only
+    if (isAdmin || isVyapaarOps || isVyapaarFinance) {
+      items.push({
+        label: 'Won Leads',
+        icon: Trophy,
+        path: '/reports/won-leads',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
+      });
+    }
+
     // Phase 29: Weekly War Room — for everyone who works leads
     if (isAdmin || isVyapaarOps || isVyapaarFinance || isSellingPartner || isSalesAssociate) {
       items.push({

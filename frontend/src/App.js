@@ -16,6 +16,7 @@ import CompanyUsers from './pages/CompanyUsers';
 import Categories from './pages/Categories';
 import Commission from './pages/Commission';
 import Reports from './pages/Reports';
+import WonLeadsReport from './pages/WonLeadsReport';
 import RevenueIntelligence from './pages/RevenueIntelligence';
 import PredictiveForecast from './pages/PredictiveForecast';
 import PartnerIntelligence from './pages/PartnerIntelligence';
@@ -255,6 +256,13 @@ function AppRoutes() {
       <Route path="/war-room" element={
         <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
           <WarRoom />
+        </ProtectedRoute>
+      } />
+
+      {/* Phase 34.6: Won Leads Report - Vyapaar team only (admin/ops/finance) */}
+      <Route path="/reports/won-leads" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <WonLeadsReport />
         </ProtectedRoute>
       } />
 

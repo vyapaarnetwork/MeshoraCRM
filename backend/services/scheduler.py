@@ -492,7 +492,7 @@ async def dispatch_monthly_won_digest(db, zeptomail, force: bool = False) -> dic
         f'<tbody>{deals_rows}</tbody>'
         f'</table>'
     )
-    subject = f"[Vyapaar] {last_label} won-deals digest — {len(last_leads)} deals, {_fmt_inr(last_total)}"
+    subject = f"[Meshora] {last_label} won-deals digest — {len(last_leads)} deals, {_fmt_inr(last_total)}"
 
     # Recipients: super_admin + is_vyapaar_ops + vyapaar_finance
     recipients = await db.users.find({
@@ -565,6 +565,16 @@ async def _reminder_loop(db, zeptomail) -> None:
             raise
         except Exception as e:
             logger.exception("Milestone-due loop iteration crashed: %s", e)
+        # Piggyback the monthly won-deals digest scan (fires once on 1st of month, 09:xx UTC).
+        try:
+            res = await dispatch_monthly_won_digest(db, zeptomail)
+            if not res.get('skipped'):
+                logger.info("Monthly won-deals digest fired: key=%s sent=%s recipients=%s",
+                            res.get('key'), res.get('sent'), res.get('recipients'))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Monthly digest iteration crashed: %s", e)
         try:
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
         except asyncio.CancelledError:
