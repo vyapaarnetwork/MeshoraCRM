@@ -8797,7 +8797,9 @@ async def shutdown_db_client():
 
 @app.on_event("startup")
 async def backfill_lead_status_is_won():
-    """Ensure existing 'Won' lead statuses have is_won=True for the Closed-Won wizard."""
+    """Ensure existing 'Won' lead statuses have is_won=True for the Closed-Won wizard.
+    Also seeds 'Disqualified' and 'Dead' terminal statuses (Phase 34.6) so the closure_date
+    auto-stamp logic covers all four terminal states (won/lost/disqualified/dead)."""
     try:
         await db.lead_statuses.update_many(
             {"is_won": {"$exists": False}},
@@ -8811,5 +8813,17 @@ async def backfill_lead_status_is_won():
             {"name": {"$regex": "closed.?won", "$options": "i"}},
             {"$set": {"is_won": True}}
         )
+        # Phase 34.6 — ensure Disqualified + Dead terminal statuses exist
+        for name, color, order in [("Disqualified", "#94A3B8", 8), ("Dead", "#475569", 9)]:
+            existing = await db.lead_statuses.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}})
+            if not existing:
+                await db.lead_statuses.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "name": name,
+                    "color": color,
+                    "order": order,
+                    "is_active": True,
+                    "is_won": False,
+                })
     except Exception as e:
-        logger.warning(f"Lead status is_won backfill failed: {e}")
+        logger.warning(f"Lead status startup backfill failed: {e}")
