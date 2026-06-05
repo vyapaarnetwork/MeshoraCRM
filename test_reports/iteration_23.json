@@ -1,0 +1,51 @@
+{
+  "summary": "Phase 34.7 — Split lead assignment + categorized 5-group sidebar + 6 new report pages + Weekly War Room digest. Backend: 20/20 PASS. Frontend: All critical flows PASS — sidebar groups (Core/Manage/Commercials/Analytics/Intelligence), Reports submenu with 7 sub-items, 3 split-assignment dropdowns (sp-company-select / lead-owner-select / vyapaar-lead-owner-select) including cascade reload, Assigned-to-Me checkbox, all 6 report pages render, customer RBAC bounces /reports/partner-performance → /dashboard and hides MANAGE entirely. Found + fixed one critical bug: POST /api/reports/scheduled returned 500 (ObjectId not iterable — motor mutated doc with _id). Fixed by stripping _id from response.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/reports/scheduled (POST)", "issue": "FIXED — was returning 500 with TypeError('ObjectId object is not iterable'). Root cause: motor's insert_one mutates the input dict and adds the BSON _id (ObjectId); the route was returning that dict directly to FastAPI's jsonable_encoder. Fix applied: return {k:v for k,v in doc.items() if k!='_id'} (mirrors the existing pattern used by POST /reports/saved on line 8101)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard (admin)", "issues": ["Recharts width(-1)/height(-1) console warnings on first render — chart container parent likely has 0 width during initial mount. Cosmetic only, charts render correctly after layout settles. Not blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase34_7_split_assignment.py",
+    "/app/test_reports/pytest/phase34_7_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Apply the 'pop _id' pattern defensively to any other POST endpoint that returns the freshly-inserted doc directly — search for 'await db.*.insert_one(doc)\\n    return doc' to find more potential 500s. Confirmed safe today: /reports/saved already strips _id, /reports/scheduled now fixed."
+  ],
+  "critical_code_review_comments": [
+    "server.py L8089-8101 (POST /reports/saved): correctly strips _id from doc before returning. Good pattern.",
+    "server.py L8131-8151 (POST /reports/scheduled): MISSING _id strip — was returning 500. Fixed in this run. RECOMMEND adding a lint rule or wrapper helper insert_and_clean(doc) to prevent this regression class-wide.",
+    "server.py: enrich_lead surfaces selling_partner_company_name, lead_owner_name, vyapaar_lead_owner_name — confirmed via test_create_lead_with_all_fields response inspection.",
+    "server.py create_lead derivation: with payload missing selling_partner_company_id but providing lead_owner_id → company auto-derived from user's company_id AND selling_partner_id mirrors lead_owner_id (back-compat). Verified end-to-end.",
+    "server.py PUT /leads/{id}: independent update of vyapaar_lead_owner_id (without sending other fields) persists correctly and does not clobber lead_owner_id.",
+    "Phase 34.7 startup backfill: confirmed by inspecting pre-existing leads — selling_partner_company_id + lead_owner_id are non-null on the 109 existing leads (pipeline report returns them grouped by stage).",
+    "/api/reports/pipeline returns stages[] with count + total_value + leads[] — 11 stages, 109 leads total, matches curl smoke data from the review brief.",
+    "/api/reports/conversion returns funnel{total,assigned,won,lost,win_rate}, avg_days_to_close, by_category[] — all keys present, validated by test.",
+    "/api/reports/partner-performance + /api/reports/lead-activity-feed: customer correctly gets 403; admin gets sorted rows. Pass.",
+    "POST /admin/dispatch-weekly-war-room-digest?force=true: returned 200 with key 'YYYY-Www', sent, recipients, hot_count, blocked_count, at_risk_count, owner_breakdown_count — all 7 required keys present. ZeptoMail accepted 2 emails to ops_test + fin_test per backend logs. Customer correctly 403.",
+    "Frontend Layout.jsx: 5 sidebar groups (CORE/MANAGE/COMMERCIALS/ANALYTICS/INTELLIGENCE) all render with uppercase slate-500 headers. Reports submenu toggle (data-testid submenu-toggle-reports) expands with all 7 sub-reports (Won Leads, Pipeline Report, Lead Activity, Conversion Report, Partner Performance, My Reports, Scheduled Reports). Active state highlights Scheduled Reports when on /reports/scheduled — confirmed in screenshot.",
+    "Frontend role-based nav: customer (john@testco.com) sees ONLY CORE group (Dashboard / Leads / Team Members). MANAGE/COMMERCIALS/ANALYTICS/INTELLIGENCE all hidden. Direct-URL /reports/partner-performance bounces to /dashboard. Pass.",
+    "Frontend LeadForm.jsx: data-testids sp-company-select / lead-owner-select / vyapaar-lead-owner-select all present. SP company dropdown shows 4 options ('Partner 1 Corp' etc). After selecting a company, lead-owner-select fetches /users/by-company/{id} and shows the company's users. Vyapaar lead owner combobox lists Vyapaar team. Cascade reload on company change confirmed.",
+    "Frontend Leads.jsx: assigned-to-me-checkbox present and triggers refetch with ?assigned_to_me=true (200 response).",
+    "Frontend ScheduledReports page: shows 'Heads up — schedule dispatch will land in a follow-up release' warning banner as documented. CRUD-only is intentional per review brief."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (L8150-8151 — strip _id from POST /reports/scheduled response)",
+    "/app/backend/tests/test_phase34_7_split_assignment.py (new — 20 test cases, all passing)"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% (all 12 critical UI flows confirmed)"},
+  "test_credentials": "All 4 sets in /app/memory/test_credentials.md valid (admin, ops_test, fin_test, john@testco.com).",
+  "seed_data_creation": "Created and auto-cleaned TEST_Phase347_* leads + saved_reports + scheduled_reports. Each test deletes its fixture in a finally block; no orphans expected. If any stragglers: db.leads.deleteMany({title:/^TEST_Phase347/}), db.saved_reports.deleteMany({name:/^TEST_Phase347/}).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Re-run with: REACT_APP_BACKEND_URL=https://vyapaar-preview-1.preview.emergentagent.com pytest /app/backend/tests/test_phase34_7_split_assignment.py -v. Two assumptions in tests: (a) at least one selling-partner company exists with >=1 active user — true today (4 companies, first has 1 user 'Test Partner 1'); (b) at least one primary category exists. Company-RBAC test (test_sp_user_sees_company_leads) currently smoke-checks because we don't have known SP-user passwords; to make it stronger, seed two SP users in same company with known credentials. The weekly digest test sends REAL ZeptoMail emails to ops_test@meshora.com and fin_test@meshora.com — safe but be aware of inbox volume.",
+  "rca of the issue": "Bug RCA — POST /api/reports/scheduled 500: motor's insert_one() mutates the dict you pass it by adding a BSON _id (ObjectId). The route was 'return doc' directly, so FastAPI's jsonable_encoder tried to serialize the ObjectId and threw TypeError(\"'ObjectId' object is not iterable\"). Reproduction: POST any valid body to /api/reports/scheduled — observed 500 with traceback in backend.err.log. Mitigation: strip _id before return (one-line fix already applied at L8151). Class-wide recommendation: introduce a tiny helper `def strip_id(d): d.pop('_id', None); return d` and use after every insert_one to prevent recurrence."
+}

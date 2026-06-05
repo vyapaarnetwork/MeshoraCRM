@@ -44,17 +44,19 @@ const Leads = () => {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [healthFilter, setHealthFilter] = useState('all');
+  const [assignedToMe, setAssignedToMe] = useState(false);  // Phase 34.7
   const [statuses, setStatuses] = useState([]);
   const [healthByLead, setHealthByLead] = useState({});
 
   useEffect(() => {
     fetchData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignedToMe]);
 
   const fetchData = async () => {
     try {
       const [leadsRes, statusesRes, healthRes] = await Promise.all([
-        api.get('/leads'),
+        api.get('/leads', { params: assignedToMe ? { assigned_to_me: true } : {} }),
         api.get('/master/lead-status'),
         api.get('/leads/health-summary').catch(() => ({ data: { results: [] } })),
       ]);
@@ -299,14 +301,27 @@ const Leads = () => {
                 <SelectItem value="hot">🔥 Hot</SelectItem>
               </SelectContent>
             </Select>
+            <label
+              className="flex items-center gap-2 text-sm cursor-pointer select-none px-3 py-1.5 rounded-md border bg-card hover:bg-accent"
+              data-testid="assigned-to-me-toggle"
+            >
+              <input
+                type="checkbox"
+                checked={assignedToMe}
+                onChange={(e) => setAssignedToMe(e.target.checked)}
+                className="h-4 w-4 accent-violet-600"
+                data-testid="assigned-to-me-checkbox"
+              />
+              <span className="font-medium">Assigned to Me</span>
+            </label>
             <span className="text-sm text-muted-foreground">
               {filteredLeads.length} leads
             </span>
-            {(statusFilter !== 'all' || healthFilter !== 'all') && (
+            {(statusFilter !== 'all' || healthFilter !== 'all' || assignedToMe) && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setStatusFilter('all'); setHealthFilter('all'); }}
+                onClick={() => { setStatusFilter('all'); setHealthFilter('all'); setAssignedToMe(false); }}
                 data-testid="clear-filters-btn"
               >
                 Clear filters

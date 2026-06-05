@@ -37,6 +37,9 @@ const LeadForm = () => {
     customer_phone: '',
     customer_company: '',
     selling_partner_id: '',
+    selling_partner_company_id: '',
+    lead_owner_id: '',
+    vyapaar_lead_owner_id: '',
     sales_associate_id: '',
     primary_category_id: '',
     secondary_category_id: '',
@@ -53,9 +56,13 @@ const LeadForm = () => {
     primaryCategories: [],
     secondaryCategories: [],
     sellingPartners: [],
-    salesAssociates: []
+    salesAssociates: [],
+    sellingPartnerCompanies: [],
+    companyUsers: [],
+    vyapaarTeam: []
   });
   const [loadingPartners, setLoadingPartners] = useState(false);
+  const [loadingCompanyUsers, setLoadingCompanyUsers] = useState(false);
 
   useEffect(() => {
     fetchOptions();
@@ -103,11 +110,13 @@ const LeadForm = () => {
 
   const fetchOptions = async () => {
     try {
-      const [statusesRes, primaryRes, secondaryRes, associatesRes] = await Promise.all([
+      const [statusesRes, primaryRes, secondaryRes, associatesRes, companiesRes, vyapaarRes] = await Promise.all([
         api.get('/master/lead-status'),
         api.get('/master/primary-categories'),
         api.get('/master/secondary-categories'),
-        api.get('/users/referrers').catch(() => ({ data: [] }))
+        api.get('/users/referrers').catch(() => ({ data: [] })),
+        api.get('/companies/selling-partners').catch(() => ({ data: [] })),
+        api.get('/users/vyapaar-team').catch(() => ({ data: [] })),
       ]);
 
       setOptions(prev => ({
@@ -115,12 +124,34 @@ const LeadForm = () => {
         statuses: statusesRes.data,
         primaryCategories: primaryRes.data,
         secondaryCategories: secondaryRes.data,
-        salesAssociates: associatesRes.data
+        salesAssociates: associatesRes.data,
+        sellingPartnerCompanies: companiesRes.data,
+        vyapaarTeam: vyapaarRes.data,
       }));
     } catch (error) {
       console.error('Failed to fetch options:', error);
     }
   };
+
+  // Phase 34.7 — Refetch users when SP company changes
+  useEffect(() => {
+    const loadUsers = async () => {
+      if (!formData.selling_partner_company_id) {
+        setOptions(prev => ({ ...prev, companyUsers: [] }));
+        return;
+      }
+      setLoadingCompanyUsers(true);
+      try {
+        const res = await api.get(`/users/by-company/${formData.selling_partner_company_id}`);
+        setOptions(prev => ({ ...prev, companyUsers: res.data }));
+      } catch (e) {
+        setOptions(prev => ({ ...prev, companyUsers: [] }));
+      } finally {
+        setLoadingCompanyUsers(false);
+      }
+    };
+    loadUsers();
+  }, [formData.selling_partner_company_id]);
 
   const fetchLead = async () => {
     try {
@@ -134,6 +165,9 @@ const LeadForm = () => {
         customer_phone: lead.customer_phone || '',
         customer_company: lead.customer_company || '',
         selling_partner_id: lead.selling_partner_id || '',
+        selling_partner_company_id: lead.selling_partner_company_id || '',
+        lead_owner_id: lead.lead_owner_id || lead.selling_partner_id || '',
+        vyapaar_lead_owner_id: lead.vyapaar_lead_owner_id || '',
         sales_associate_id: lead.sales_associate_id || '',
         primary_category_id: lead.primary_category_id || '',
         secondary_category_id: lead.secondary_category_id || '',
@@ -183,16 +217,23 @@ const LeadForm = () => {
         deal_value: parseFloat(formData.deal_value) || 0,
         commission_override: formData.commission_override ? parseFloat(formData.commission_override) : null,
         sales_associate_commission: formData.sales_associate_commission ? parseFloat(formData.sales_associate_commission) : null,
-        selling_partner_id: formData.selling_partner_id || null,
+        selling_partner_id: formData.lead_owner_id || formData.selling_partner_id || null,
+        selling_partner_company_id: formData.selling_partner_company_id || null,
+        lead_owner_id: formData.lead_owner_id || null,
+        vyapaar_lead_owner_id: formData.vyapaar_lead_owner_id || null,
         sales_associate_id: formData.sales_associate_id || null,
         secondary_category_id: formData.secondary_category_id || null,
         start_date: formData.start_date || todayIso,
         closure_date: formData.closure_date || null
       };
 
-      // If user is selling partner, auto-assign themselves
-      if (isSellingPartner && !payload.selling_partner_id) {
+      // If user is selling partner, auto-assign themselves as Lead Owner
+      if (isSellingPartner && !payload.lead_owner_id) {
+        payload.lead_owner_id = user.id;
         payload.selling_partner_id = user.id;
+        if (!payload.selling_partner_company_id) {
+          payload.selling_partner_company_id = user.company_id;
+        }
       }
 
       if (isEditing) {
@@ -450,48 +491,78 @@ const LeadForm = () => {
               </div>
               {isAdmin && (
                 <>
+                  {/* Phase 34.7 — split SP into Company → Lead Owner + add Vyapaar Lead Owner */}
                   <div className="space-y-2">
-                    <Label htmlFor="selling_partner_id">Selling Partner</Label>
+                    <Label htmlFor="selling_partner_company_id">Selling Partner Company</Label>
                     <SearchableUserSelect
-                      value={formData.selling_partner_id}
-                      onChange={(v) => handleSelectChange('selling_partner_id', v)}
-                      users={options.sellingPartners}
-                      disabled={!formData.secondary_category_id || loadingPartners}
-                      placeholder={
-                        !formData.secondary_category_id
-                          ? 'Select sub-category first'
-                          : loadingPartners
-                            ? 'Loading partners...'
-                            : options.sellingPartners.length === 0
-                              ? 'No partners for this sub-category'
-                              : 'Search and select partner...'
-                      }
-                      emptyText="No matching partners."
-                      testId="selling-partner-select"
-                      secondaryRender={(p) => {
-                        const parts = [];
-                        if (p.company_name) parts.push(p.company_name);
-                        if (p._unmapped) parts.push('not mapped to this sub-category');
-                        return parts.join(' · ');
+                      value={formData.selling_partner_company_id}
+                      onChange={(v) => {
+                        setFormData(prev => ({
+                          ...prev,
+                          selling_partner_company_id: v,
+                          lead_owner_id: '',  // reset owner when company changes
+                          selling_partner_id: '',
+                        }));
                       }}
+                      users={options.sellingPartnerCompanies}
+                      placeholder="Search and select selling partner company..."
+                      emptyText="No selling partner companies."
+                      testId="sp-company-select"
                     />
-                    {formData.secondary_category_id && !loadingPartners && options.sellingPartners.length === 0 && (
-                      <p className="text-xs text-muted-foreground" data-testid="no-partners-msg">
-                        No active selling partners for this sub-category. Either no companies are mapped to it,
-                        or the mapped companies have no active selling-partner users yet. Visit{' '}
-                        <a href="/partner-mappings" className="text-primary underline">Partner Mappings</a> to map
-                        a company, then click "Add User" if that company has no users.
-                      </p>
-                    )}
-                    {!isEditing && !formData.selling_partner_id && (
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lead_owner_id">Lead Owner (Selling Partner User)</Label>
+                    <SearchableUserSelect
+                      value={formData.lead_owner_id}
+                      onChange={(v) => {
+                        setFormData(prev => ({
+                          ...prev,
+                          lead_owner_id: v,
+                          selling_partner_id: v,  // keep legacy in sync
+                        }));
+                      }}
+                      users={options.companyUsers}
+                      disabled={!formData.selling_partner_company_id || loadingCompanyUsers}
+                      placeholder={
+                        !formData.selling_partner_company_id
+                          ? 'Select company first'
+                          : loadingCompanyUsers
+                            ? 'Loading users...'
+                            : options.companyUsers.length === 0
+                              ? 'No users in this company'
+                              : 'Search and select a Lead Owner...'
+                      }
+                      emptyText="No matching users."
+                      testId="lead-owner-select"
+                      secondaryRender={(u) => u.company_role || ''}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Any active user from <strong>{options.sellingPartnerCompanies.find(c => c.id === formData.selling_partner_company_id)?.name || 'this company'}</strong> will be able to see this lead.
+                    </p>
+                    {!isEditing && !formData.lead_owner_id && (
                       <Alert className="border-amber-200 bg-amber-50 text-amber-800">
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription className="text-xs">
-                          Without a selling partner, this lead will be saved as <strong>Draft</strong>.
-                          It will move to "New" status when a partner is assigned.
+                          Without a Lead Owner, this lead will be saved as <strong>Draft</strong>.
+                          It will move to "New" status when an owner is assigned.
                         </AlertDescription>
                       </Alert>
                     )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="vyapaar_lead_owner_id">Vyapaar Lead Owner</Label>
+                    <SearchableUserSelect
+                      value={formData.vyapaar_lead_owner_id}
+                      onChange={(v) => handleSelectChange('vyapaar_lead_owner_id', v)}
+                      users={options.vyapaarTeam}
+                      placeholder="Search and select Vyapaar Lead Owner..."
+                      emptyText="No matching Vyapaar users."
+                      testId="vyapaar-lead-owner-select"
+                      secondaryRender={(u) => (u.role || '').replace('_', ' ')}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The Vyapaar Network user responsible for shepherding this lead internally.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="sales_associate_id">Referred By (Sales Associate / Selling Partner)</Label>

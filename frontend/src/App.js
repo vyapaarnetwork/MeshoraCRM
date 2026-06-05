@@ -17,6 +17,12 @@ import Categories from './pages/Categories';
 import Commission from './pages/Commission';
 import Reports from './pages/Reports';
 import WonLeadsReport from './pages/WonLeadsReport';
+import PipelineReport from './pages/PipelineReport';
+import ConversionReport from './pages/ConversionReport';
+import PartnerPerformance from './pages/PartnerPerformance';
+import LeadActivityReport from './pages/LeadActivityReport';
+import SavedReports from './pages/SavedReports';
+import ScheduledReports from './pages/ScheduledReports';
 import RevenueIntelligence from './pages/RevenueIntelligence';
 import PredictiveForecast from './pages/PredictiveForecast';
 import PartnerIntelligence from './pages/PartnerIntelligence';
@@ -263,6 +269,38 @@ function AppRoutes() {
       <Route path="/reports/won-leads" element={
         <ProtectedRoute allowedRoles={['super_admin']}>
           <WonLeadsReport />
+        </ProtectedRoute>
+      } />
+
+      {/* Phase 34.7: New report pages */}
+      <Route path="/reports/pipeline" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
+          <PipelineReport />
+        </ProtectedRoute>
+      } />
+      <Route path="/reports/conversion" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
+          <ConversionReport />
+        </ProtectedRoute>
+      } />
+      <Route path="/reports/partner-performance" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <PartnerPerformance />
+        </ProtectedRoute>
+      } />
+      <Route path="/reports/lead-activity" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <LeadActivityReport />
+        </ProtectedRoute>
+      } />
+      <Route path="/reports/saved" element={
+        <ProtectedRoute allowedRoles={['super_admin', 'selling_partner', 'sales_associate']}>
+          <SavedReports />
+        </ProtectedRoute>
+      } />
+      <Route path="/reports/scheduled" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <ScheduledReports />
         </ProtectedRoute>
       } />
 

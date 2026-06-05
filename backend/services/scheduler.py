@@ -545,6 +545,216 @@ async def dispatch_monthly_won_digest(db, zeptomail, force: bool = False) -> dic
     return {"key": run_key, "sent": sent, "failed": failed, "recipients": len(recipients), "last_count": len(last_leads), "prior_count": len(prior_leads)}
 
 
+async def dispatch_weekly_war_room_digest(db, zeptomail, force: bool = False) -> dict:
+    """Phase 34.7 — Mondays 09:xx UTC. Sends a War Room digest grouped by Vyapaar
+    Lead Owner so the Vyapaar team can spot what's HOT / BLOCKED / AT-RISK across
+    leads they personally own + an Unassigned bucket at the bottom.
+
+    Idempotent via `weekly_digest_runs` keyed by ISO-week (YYYY-Www).
+    Recipients: all active super_admin + vyapaar_ops + vyapaar_finance users
+    with notification_preferences.weekly_war_room_digest != False.
+    """
+    now = datetime.now(timezone.utc)
+    iso_year, iso_week, iso_dow = now.isocalendar()
+    run_key = f"{iso_year}-W{iso_week:02d}"
+
+    if not force:
+        # Mondays (ISO dow == 1), 09:xx UTC
+        if iso_dow != 1 or now.hour != 9:
+            return {"skipped": True, "reason": "outside_window", "now": now.isoformat()}
+        existing = await db.weekly_digest_runs.find_one({"key": run_key})
+        if existing:
+            return {"skipped": True, "reason": "already_sent", "key": run_key}
+
+    # Load leads + statuses
+    leads = await db.leads.find({}, {"_id": 0}).to_list(5000)
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(50)
+    status_map = {s['id']: s for s in statuses}
+
+    # Compute health bands inline (lightweight) — anything >7d inactive or with
+    # pending approvals counts as "blocked", >14d inactive == "at_risk", high-value
+    # recent activity == "hot".
+    today = now.date()
+
+    def _days_since(raw):
+        if not raw:
+            return 999
+        try:
+            d = datetime.fromisoformat(raw.replace('Z', '+00:00')).date()
+            return (today - d).days
+        except Exception:
+            return 999
+
+    hot, blocked, at_risk = [], [], []
+    for l in leads:
+        st = status_map.get(l.get('status_id')) or {}
+        if st.get('is_won') or st.get('is_lost'):
+            continue
+        dv = float(l.get('deal_value') or 0)
+        days_inactive = _days_since(l.get('updated_at') or l.get('created_at'))
+        pending_appr = sum(1 for a in (l.get('approvals') or []) if a.get('status') == 'pending')
+        has_blocker = any(
+            '#blocker' in (c.get('content') or '').lower() or '#blocked' in (c.get('content') or '').lower()
+            for c in (l.get('comments') or [])[-10:]
+        )
+        if has_blocker or (pending_appr and days_inactive >= 3):
+            blocked.append(l)
+        elif days_inactive >= 14 and dv >= 100000:
+            at_risk.append(l)
+        elif days_inactive <= 3 and dv >= 250000:
+            hot.append(l)
+
+    all_relevant = {l['id']: l for l in hot + blocked + at_risk}
+
+    # Group by Vyapaar Lead Owner (None bucket = Unassigned)
+    grouped = {}
+    for lid, l in all_relevant.items():
+        owner_id = l.get('vyapaar_lead_owner_id') or '__unassigned__'
+        grouped.setdefault(owner_id, {"hot": [], "blocked": [], "at_risk": []})
+
+    for l in hot:
+        grouped[l.get('vyapaar_lead_owner_id') or '__unassigned__']['hot'].append(l)
+    for l in blocked:
+        grouped[l.get('vyapaar_lead_owner_id') or '__unassigned__']['blocked'].append(l)
+    for l in at_risk:
+        grouped[l.get('vyapaar_lead_owner_id') or '__unassigned__']['at_risk'].append(l)
+
+    # Resolve owner names
+    owner_ids = [oid for oid in grouped if oid != '__unassigned__']
+    owners = {}
+    if owner_ids:
+        owners_list = await db.users.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(200)
+        owners = {u['id']: u for u in owners_list}
+
+    def _fmt_inr(amount):
+        try:
+            return _format_amount(amount, "INR")
+        except Exception:
+            return f"₹{amount:,.0f}"
+
+    def _row(bucket_name, lead, accent):
+        return (
+            f'<tr><td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;color:{accent};font-weight:600;width:60px;">{bucket_name}</td>'
+            f'<td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;">{lead.get("title") or "—"}</td>'
+            f'<td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;color:#64748b;">{lead.get("customer_company") or lead.get("customer_name") or "—"}</td>'
+            f'<td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;">{_fmt_inr(float(lead.get("deal_value") or 0))}</td></tr>'
+        )
+
+    # Sort owners: assigned first (by total count desc), unassigned last
+    def _bucket_total(b):
+        return len(b['hot']) + len(b['blocked']) + len(b['at_risk'])
+
+    sorted_owners = sorted(
+        [oid for oid in grouped if oid != '__unassigned__'],
+        key=lambda oid: _bucket_total(grouped[oid]),
+        reverse=True,
+    )
+    if '__unassigned__' in grouped:
+        sorted_owners.append('__unassigned__')
+
+    owner_sections = []
+    for oid in sorted_owners:
+        b = grouped[oid]
+        if oid == '__unassigned__':
+            header = '⚠️ Unassigned (no Vyapaar Lead Owner)'
+            sub = 'These leads need a Vyapaar owner.'
+            color = '#dc2626'
+        else:
+            u = owners.get(oid) or {}
+            header = u.get('name') or 'Unknown owner'
+            sub = u.get('email') or ''
+            color = '#4f46e5'
+
+        rows_html = []
+        for l in b['hot']:
+            rows_html.append(_row('🔥 HOT', l, '#ea580c'))
+        for l in b['blocked']:
+            rows_html.append(_row('🚧 BLK', l, '#dc2626'))
+        for l in b['at_risk']:
+            rows_html.append(_row('⏳ RISK', l, '#7c3aed'))
+
+        owner_sections.append(
+            f'<div style="margin:18px 0 8px;">'
+            f'<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:{color};color:#fff;border-radius:6px;">'
+            f'<strong>{header}</strong>'
+            f'<span style="font-size:11px;opacity:0.85;">{sub}</span>'
+            f'<span style="margin-left:auto;font-size:11px;opacity:0.85;">{len(b["hot"])} hot · {len(b["blocked"])} blocked · {len(b["at_risk"])} risk</span>'
+            f'</div>'
+            f'<table cellpadding="0" cellspacing="0" border="0" style="width:100%;margin-top:6px;font-size:13px;">{"".join(rows_html) or "<tr><td colspan=4 style=padding:8px;color:#94a3b8;font-style:italic;>No active war-room leads.</td></tr>"}</table>'
+            f'</div>'
+        )
+
+    body_html = (
+        f'<p>Hi team,</p>'
+        f'<p>Here\'s this week\'s War Room snapshot grouped by Vyapaar Lead Owner. '
+        f'Totals: <strong>{len(hot)}</strong> hot · <strong>{len(blocked)}</strong> blocked · <strong>{len(at_risk)}</strong> at-risk.</p>'
+        f'{"".join(owner_sections) or "<p style=color:#6b7280>Nothing in the War Room this week — great hygiene 🎉</p>"}'
+        f'<p style="margin-top:18px;"><a href="https://app.vyapaar.net/war-room" style="background:#4f46e5;color:#fff;text-decoration:none;padding:8px 16px;border-radius:6px;font-weight:600;">Open War Room</a></p>'
+    )
+
+    subject = f"[Meshora] Weekly War Room — {len(hot)} hot · {len(blocked)} blocked · {len(at_risk)} at-risk"
+
+    # Resolve Vyapaar admin recipients
+    recipients = await db.users.find({
+        "is_active": True,
+        "$or": [
+            {"role": {"$in": ["super_admin", "vyapaar_ops", "vyapaar_finance"]}},
+            {"is_vyapaar_ops": True},
+        ],
+    }, {"_id": 0, "email": 1, "name": 1, "id": 1, "notification_preferences": 1}).to_list(200)
+
+    sent = failed = 0
+    for r in recipients:
+        if not r.get('email'):
+            continue
+        prefs = r.get('notification_preferences') or {}
+        if prefs.get('weekly_war_room_digest', True) is False:
+            continue
+        wrapped = zeptomail._wrap("Weekly War Room Digest", f"Week of {now.strftime('%d %b %Y')}", body_html)
+        result = await zeptomail.send_email(
+            to_address=r['email'],
+            to_name=r.get('name'),
+            subject=subject,
+            html_body=wrapped,
+            db=db,
+            notification_type="weekly_war_room_digest",
+            user_id=r.get('id'),
+            correlation_id=f"weekly:{run_key}",
+        )
+        if result.get('ok'):
+            sent += 1
+        else:
+            failed += 1
+
+    await db.weekly_digest_runs.insert_one({
+        "key": run_key,
+        "ran_at": now.isoformat(),
+        "hot_count": len(hot),
+        "blocked_count": len(blocked),
+        "at_risk_count": len(at_risk),
+        "owner_breakdown": [
+            {
+                "owner_id": oid if oid != '__unassigned__' else None,
+                "owner_name": (owners.get(oid) or {}).get('name') if oid != '__unassigned__' else 'Unassigned',
+                "hot": len(grouped[oid]['hot']),
+                "blocked": len(grouped[oid]['blocked']),
+                "at_risk": len(grouped[oid]['at_risk']),
+            }
+            for oid in sorted_owners
+        ],
+        "recipients_attempted": len(recipients),
+        "sent": sent,
+        "failed": failed,
+    })
+
+    return {
+        "key": run_key, "sent": sent, "failed": failed,
+        "recipients": len(recipients),
+        "hot_count": len(hot), "blocked_count": len(blocked), "at_risk_count": len(at_risk),
+        "owner_breakdown_count": len(sorted_owners),
+    }
+
+
 async def _reminder_loop(db, zeptomail) -> None:
     logger.info("Follow-up reminder loop started (interval=%ss)", SCAN_INTERVAL_SECONDS)
     while True:
@@ -575,6 +785,17 @@ async def _reminder_loop(db, zeptomail) -> None:
             raise
         except Exception as e:
             logger.exception("Monthly digest iteration crashed: %s", e)
+        # Piggyback the Weekly War Room digest scan (Mondays 09:xx UTC).
+        try:
+            res = await dispatch_weekly_war_room_digest(db, zeptomail)
+            if not res.get('skipped'):
+                logger.info("Weekly War Room digest fired: key=%s sent=%s hot=%s blocked=%s risk=%s",
+                            res.get('key'), res.get('sent'), res.get('hot_count'),
+                            res.get('blocked_count'), res.get('at_risk_count'))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Weekly War Room digest iteration crashed: %s", e)
         try:
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
         except asyncio.CancelledError:

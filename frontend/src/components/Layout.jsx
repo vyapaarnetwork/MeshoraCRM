@@ -22,6 +22,7 @@ import {
   LogOut, 
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Building2,
   Tag,
   Percent,
@@ -46,7 +47,12 @@ import {
   Sparkles,
   Trophy,
   HelpCircle,
-  Swords
+  Swords,
+  Activity,
+  Target,
+  PieChart,
+  CalendarRange,
+  Save as SaveIcon,
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
 import api from '../utils/api';
@@ -338,31 +344,168 @@ const Layout = ({ children }) => {
 
   const navItems = getNavItems();
 
+  // Phase 34.7 — Categorize the flat nav into section groups (CORE / MANAGE / COMMERCIALS / ANALYTICS / INTELLIGENCE).
+  // Reports gets a nested submenu showing all the new sub-reports.
+  const buildNavGroups = () => {
+    const byPath = Object.fromEntries(navItems.map(i => [i.path, i]));
+    const has = (p) => Boolean(byPath[p]);
+
+    const reportsSubmenu = [
+      { label: 'Won Leads',           icon: Trophy,        path: '/reports/won-leads',           visible: has('/reports/won-leads') },
+      { label: 'Pipeline Report',     icon: PieChart,      path: '/reports/pipeline',            visible: has('/reports') },
+      { label: 'Lead Activity',       icon: Activity,      path: '/reports/lead-activity',       visible: (isAdmin || isVyapaarOps || isVyapaarFinance) },
+      { label: 'Conversion Report',   icon: Target,        path: '/reports/conversion',          visible: has('/reports') },
+      { label: 'Partner Performance', icon: Trophy,        path: '/reports/partner-performance', visible: (isAdmin || isVyapaarOps || isVyapaarFinance) },
+      { label: 'My Reports',          icon: SaveIcon,      path: '/reports/saved',               visible: has('/reports') },
+      { label: 'Scheduled Reports',   icon: CalendarRange, path: '/reports/scheduled',           visible: (isAdmin || isVyapaarOps) },
+    ].filter(s => s.visible);
+
+    const groups = [
+      {
+        title: 'Core',
+        items: [
+          has('/dashboard') && byPath['/dashboard'],
+          has('/leads') && byPath['/leads'],
+          has('/lead-referral') && byPath['/lead-referral'],
+          has('/internal-requests') && byPath['/internal-requests'],
+          has('/company-users') && byPath['/company-users'],
+        ].filter(Boolean),
+      },
+      {
+        title: 'Manage',
+        items: [
+          has('/users') && byPath['/users'],
+          has('/companies') && byPath['/companies'],
+          has('/categories') && byPath['/categories'],
+          has('/partner-mappings') && byPath['/partner-mappings'],
+          has('/commission') && byPath['/commission'],
+          has('/document-tags') && byPath['/document-tags'],
+          has('/email-templates') && byPath['/email-templates'],
+        ].filter(Boolean),
+      },
+      {
+        title: 'Commercials',
+        items: [
+          has('/commercials') && byPath['/commercials'],
+          has('/commercials/kanban') && byPath['/commercials/kanban'],
+          has('/commercials/analytics') && byPath['/commercials/analytics'],
+        ].filter(Boolean),
+      },
+      {
+        title: 'Analytics',
+        items: [
+          has('/reports') && { ...byPath['/reports'], submenu: reportsSubmenu },
+          has('/grid-report') && byPath['/grid-report'],
+        ].filter(Boolean),
+      },
+      {
+        title: 'Intelligence',
+        items: [
+          has('/war-room') && byPath['/war-room'],
+          has('/revenue-intelligence') && byPath['/revenue-intelligence'],
+          has('/predictive-forecast') && byPath['/predictive-forecast'],
+          has('/partner-intelligence') && byPath['/partner-intelligence'],
+        ].filter(Boolean),
+      },
+    ];
+
+    return groups.filter(g => g.items.length > 0);
+  };
+
+  const navGroups = buildNavGroups();
+
+  // Active-check helper used by both top-level + submenu items
+  const isPathActive = (path) =>
+    location.pathname === path || location.pathname.startsWith(path + '/');
+
+  // Track which group has its Reports submenu open (auto-open if on a /reports/* path).
+  const [openSubmenu, setOpenSubmenu] = useState(() =>
+    location.pathname.startsWith('/reports') ? '/reports' : null
+  );
+  useEffect(() => {
+    if (location.pathname.startsWith('/reports')) setOpenSubmenu('/reports');
+  }, [location.pathname]);
+
   const NavLink = ({ item }) => {
-    const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+    const isActive = isPathActive(item.path);
     const Icon = item.icon;
-    
+    const hasSubmenu = Array.isArray(item.submenu) && item.submenu.length > 0;
+    const expanded = openSubmenu === item.path;
+
     return (
-      <Link
-        to={item.path}
-        data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
-        onClick={() => setMobileMenuOpen(false)}
-        className={`
-          flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200
-          ${isActive 
-            ? 'bg-primary text-white shadow-md' 
-            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-          }
-          ${sidebarCollapsed ? 'justify-center' : ''}
-        `}
-      >
-        <Icon className="w-5 h-5 flex-shrink-0" />
-        {!sidebarCollapsed && (
-          <span className="font-medium text-sm">{item.label}</span>
+      <div>
+        <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : ''}`}>
+          <Link
+            to={item.path}
+            data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
+            onClick={() => setMobileMenuOpen(false)}
+            className={`
+              flex-1 flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200
+              ${isActive
+                ? 'bg-primary text-white shadow-md'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }
+              ${sidebarCollapsed ? 'justify-center' : ''}
+            `}
+          >
+            <Icon className="w-5 h-5 flex-shrink-0" />
+            {!sidebarCollapsed && (
+              <span className="font-medium text-sm">{item.label}</span>
+            )}
+          </Link>
+          {hasSubmenu && !sidebarCollapsed && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setOpenSubmenu(expanded ? null : item.path); }}
+              className="ml-1 p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800"
+              aria-label={expanded ? 'Collapse submenu' : 'Expand submenu'}
+              data-testid={`submenu-toggle-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+        </div>
+        {hasSubmenu && expanded && !sidebarCollapsed && (
+          <div className="mt-1 ml-7 flex flex-col gap-0.5 border-l border-slate-700/60 pl-3">
+            {item.submenu.map((sub) => {
+              const SubIcon = sub.icon;
+              const subActive = isPathActive(sub.path);
+              return (
+                <Link
+                  key={sub.path}
+                  to={sub.path}
+                  onClick={() => setMobileMenuOpen(false)}
+                  data-testid={`nav-sub-${sub.label.toLowerCase().replace(/\s+/g, '-')}`}
+                  className={`
+                    flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors
+                    ${subActive
+                      ? 'bg-violet-500/20 text-white'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'}
+                  `}
+                >
+                  <SubIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="truncate">{sub.label}</span>
+                </Link>
+              );
+            })}
+          </div>
         )}
-      </Link>
+      </div>
     );
   };
+
+  const NavSection = ({ group }) => (
+    <div className="mb-3">
+      {!sidebarCollapsed && (
+        <div className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-500">
+          {group.title}
+        </div>
+      )}
+      <div className="space-y-1">
+        {group.items.map((item) => <NavLink key={item.path} item={item} />)}
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -403,11 +546,11 @@ const Layout = ({ children }) => {
           )}
         </div>
 
-        {/* Nav Items */}
-        <ScrollArea className="flex-1 py-4 px-3">
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              <NavLink key={item.path} item={item} />
+        {/* Nav Items (Phase 34.7 — grouped by section) */}
+        <ScrollArea className="flex-1 py-3 px-3">
+          <nav className="space-y-0.5">
+            {navGroups.map((g) => (
+              <NavSection key={g.title} group={g} />
             ))}
           </nav>
         </ScrollArea>
@@ -482,10 +625,10 @@ const Layout = ({ children }) => {
           </Button>
         </div>
 
-        <ScrollArea className="flex-1 py-4 px-3 h-[calc(100vh-8rem)]">
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              <NavLink key={item.path} item={item} />
+        <ScrollArea className="flex-1 py-3 px-3 h-[calc(100vh-8rem)]">
+          <nav className="space-y-0.5">
+            {navGroups.map((g) => (
+              <NavSection key={g.title} group={g} />
             ))}
           </nav>
         </ScrollArea>

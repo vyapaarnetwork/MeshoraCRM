@@ -381,6 +381,9 @@ class LeadCreate(BaseModel):
     customer_phone: Optional[str] = None
     customer_company: Optional[str] = None
     selling_partner_id: Optional[str] = None
+    selling_partner_company_id: Optional[str] = None  # Phase 34.7 — company-level assignment
+    lead_owner_id: Optional[str] = None  # Phase 34.7 — primary user-level owner inside the partner company
+    vyapaar_lead_owner_id: Optional[str] = None  # Phase 34.7 — Vyapaar Network user responsible for this lead
     sales_associate_id: Optional[str] = None
     primary_category_id: str
     secondary_category_id: Optional[str] = None
@@ -388,8 +391,8 @@ class LeadCreate(BaseModel):
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
     status_id: Optional[str] = None
-    start_date: Optional[str] = None  # Phase 34.6 — YYYY-MM-DD; defaults to today on create
-    closure_date: Optional[str] = None  # Phase 34.6 — YYYY-MM-DD; can be set manually or auto-stamped on Won
+    start_date: Optional[str] = None
+    closure_date: Optional[str] = None
 
 class LeadUpdate(BaseModel):
     title: Optional[str] = None
@@ -399,6 +402,9 @@ class LeadUpdate(BaseModel):
     customer_phone: Optional[str] = None
     customer_company: Optional[str] = None
     selling_partner_id: Optional[str] = None
+    selling_partner_company_id: Optional[str] = None  # Phase 34.7
+    lead_owner_id: Optional[str] = None  # Phase 34.7
+    vyapaar_lead_owner_id: Optional[str] = None  # Phase 34.7
     sales_associate_id: Optional[str] = None
     primary_category_id: Optional[str] = None
     secondary_category_id: Optional[str] = None
@@ -406,8 +412,8 @@ class LeadUpdate(BaseModel):
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
     status_id: Optional[str] = None
-    start_date: Optional[str] = None  # Phase 34.6
-    closure_date: Optional[str] = None  # Phase 34.5
+    start_date: Optional[str] = None
+    closure_date: Optional[str] = None
 
 class CommissionBreakdown(BaseModel):
     total_deal_value: float
@@ -460,6 +466,13 @@ class LeadResponse(BaseModel):
     primary_category_name: Optional[str] = None
     secondary_category_id: Optional[str] = None
     secondary_category_name: Optional[str] = None
+    # Phase 34.7 — company-level + user-level assignment split
+    selling_partner_company_id: Optional[str] = None
+    selling_partner_company_name: Optional[str] = None
+    lead_owner_id: Optional[str] = None
+    lead_owner_name: Optional[str] = None
+    vyapaar_lead_owner_id: Optional[str] = None
+    vyapaar_lead_owner_name: Optional[str] = None
     deal_value: float
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
@@ -1416,6 +1429,43 @@ async def bulk_update_notification_preferences(
     return {"requested": len(user_ids), "updated": updated, "merge": body.merge}
 
 
+# Phase 34.7 — Literal user lookup paths must come BEFORE /users/{user_id} so FastAPI
+# doesn't capture 'vyapaar-team' / 'by-company' as a user_id path param.
+@api_router.get("/users/by-company/{company_id}")
+async def list_users_for_company(company_id: str, current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — Lookup users belonging to a given selling-partner company.
+    Used by the Lead Owner combobox in the Lead Add/Edit form."""
+    company = await db.companies.find_one({"id": company_id}, {"_id": 0, "id": 1, "name": 1})
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    users = await db.users.find(
+        {"company_id": company_id, "is_active": True, "role": UserRole.SELLING_PARTNER.value},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "company_role": 1},
+    ).sort("name", 1).to_list(500)
+    return [
+        {"id": u['id'], "name": u['name'], "email": u['email'], "company_role": u.get('company_role')}
+        for u in users
+    ]
+
+
+@api_router.get("/users/vyapaar-team")
+async def list_vyapaar_team(current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — Lookup all active Vyapaar Network users (super_admin / vyapaar_ops / vyapaar_finance)
+    + anyone flagged with is_vyapaar_ops. Used by the Vyapaar Lead Owner combobox."""
+    or_clauses = [
+        {"role": {"$in": [UserRole.SUPER_ADMIN.value, UserRole.VYAPAAR_OPS.value, UserRole.VYAPAAR_FINANCE.value]}},
+        {"is_vyapaar_ops": True},
+    ]
+    users = await db.users.find(
+        {"is_active": True, "$or": or_clauses},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1, "company_role": 1},
+    ).sort("name", 1).to_list(500)
+    return [
+        {"id": u['id'], "name": u['name'], "email": u['email'], "role": u.get('role'), "company_role": u.get('company_role')}
+        for u in users
+    ]
+
+
 @api_router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """Get single user details"""
@@ -1569,6 +1619,26 @@ async def list_users(role: Optional[str] = None, current_user: dict = Depends(ge
         ))
     
     return result
+
+
+@api_router.get("/companies/selling-partners")
+async def list_selling_partner_companies(current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — Lookup companies that have at least one active selling-partner user.
+    Used by the Selling Partner Company combobox in the Lead form."""
+    pipeline = [
+        {"$match": {"role": UserRole.SELLING_PARTNER.value, "is_active": True, "company_id": {"$ne": None}}},
+        {"$group": {"_id": "$company_id", "user_count": {"$sum": 1}}},
+    ]
+    cursor = db.users.aggregate(pipeline)
+    company_ids = [doc['_id'] async for doc in cursor]
+    if not company_ids:
+        return []
+    companies = await db.companies.find(
+        {"id": {"$in": company_ids}, "is_active": {"$ne": False}},
+        {"_id": 0, "id": 1, "name": 1},
+    ).sort("name", 1).to_list(500)
+    return [{"id": c['id'], "name": c['name']} for c in companies]
+
 
 # ==================== CUSTOMER USER MANAGEMENT ====================
 
@@ -3130,6 +3200,17 @@ async def enrich_lead(lead: dict) -> LeadResponse:
     referred_by_associate = None
     if lead.get('referred_by_associate_id'):
         referred_by_associate = await db.users.find_one({"id": lead['referred_by_associate_id']}, {"_id": 0})
+
+    # Phase 34.7 — split company + lead-owner + vyapaar-lead-owner
+    sp_company = None
+    if lead.get('selling_partner_company_id'):
+        sp_company = await db.companies.find_one({"id": lead['selling_partner_company_id']}, {"_id": 0})
+    lead_owner = None
+    if lead.get('lead_owner_id'):
+        lead_owner = await db.users.find_one({"id": lead['lead_owner_id']}, {"_id": 0})
+    vyapaar_owner = None
+    if lead.get('vyapaar_lead_owner_id'):
+        vyapaar_owner = await db.users.find_one({"id": lead['vyapaar_lead_owner_id']}, {"_id": 0})
     
     primary_category = await db.primary_categories.find_one({"id": lead['primary_category_id']}, {"_id": 0})
     
@@ -3202,6 +3283,12 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         primary_category_name=primary_category['name'] if primary_category else None,
         secondary_category_id=lead.get('secondary_category_id'),
         secondary_category_name=secondary_category['name'] if secondary_category else None,
+        selling_partner_company_id=lead.get('selling_partner_company_id'),
+        selling_partner_company_name=sp_company['name'] if sp_company else None,
+        lead_owner_id=lead.get('lead_owner_id'),
+        lead_owner_name=lead_owner['name'] if lead_owner else None,
+        vyapaar_lead_owner_id=lead.get('vyapaar_lead_owner_id'),
+        vyapaar_lead_owner_name=vyapaar_owner['name'] if vyapaar_owner else None,
         deal_value=lead.get('deal_value', 0),
         commission_override=lead.get('commission_override'),
         sales_associate_commission=lead.get('sales_associate_commission'),
@@ -3248,6 +3335,12 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             user_ids.add(lead['referred_by_partner_id'])
         if lead.get('referred_by_associate_id'):
             user_ids.add(lead['referred_by_associate_id'])
+        if lead.get('lead_owner_id'):
+            user_ids.add(lead['lead_owner_id'])
+        if lead.get('vyapaar_lead_owner_id'):
+            user_ids.add(lead['vyapaar_lead_owner_id'])
+        if lead.get('selling_partner_company_id'):
+            company_ids.add(lead['selling_partner_company_id'])
         if lead.get('created_by'):
             user_ids.add(lead['created_by'])
         if lead.get('primary_category_id'):
@@ -3294,10 +3387,11 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
         for u in uploaders:
             users_map[u['id']] = u
     
-    # Get company IDs for commission calculation
+    # Get company IDs for commission calculation + Phase 34.7 SP company lookup
     for user in users_list:
         if user.get('company_id'):
             company_ids.add(user['company_id'])
+    # company_ids may already include selling_partner_company_id added above
     
     # Fetch companies for commission calculation
     companies_list = await db.companies.find({"id": {"$in": list(company_ids)}}, {"_id": 0}).to_list(100) if company_ids else []
@@ -3373,6 +3467,12 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             primary_category_name=primary_category['name'] if primary_category else None,
             secondary_category_id=lead.get('secondary_category_id'),
             secondary_category_name=secondary_category['name'] if secondary_category else None,
+            selling_partner_company_id=lead.get('selling_partner_company_id'),
+            selling_partner_company_name=(companies_map.get(lead.get('selling_partner_company_id')) or {}).get('name'),
+            lead_owner_id=lead.get('lead_owner_id'),
+            lead_owner_name=(users_map.get(lead.get('lead_owner_id')) or {}).get('name'),
+            vyapaar_lead_owner_id=lead.get('vyapaar_lead_owner_id'),
+            vyapaar_lead_owner_name=(users_map.get(lead.get('vyapaar_lead_owner_id')) or {}).get('name'),
             deal_value=lead.get('deal_value', 0),
             commission_override=lead.get('commission_override'),
             sales_associate_commission=lead.get('sales_associate_commission'),
@@ -3433,6 +3533,16 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
     start_date = lead_data.start_date or today_iso
     closure_date = lead_data.closure_date  # may be None — auto-stamps later on Won
 
+    # Phase 34.7 — derive selling_partner_company_id from lead_owner / selling_partner if not provided
+    sp_company_id = lead_data.selling_partner_company_id
+    lead_owner_id = lead_data.lead_owner_id or lead_data.selling_partner_id  # fall back to legacy field
+    if lead_owner_id and not sp_company_id:
+        owner = await db.users.find_one({"id": lead_owner_id}, {"_id": 0, "company_id": 1})
+        if owner and owner.get('company_id'):
+            sp_company_id = owner['company_id']
+    # Keep legacy selling_partner_id in sync with lead_owner_id (backward-compat for downstream code)
+    selling_partner_id_final = lead_data.selling_partner_id or lead_owner_id
+
     lead_doc = {
         "id": lead_id,
         "title": lead_data.title,
@@ -3441,7 +3551,10 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
         "customer_email": lead_data.customer_email,
         "customer_phone": lead_data.customer_phone,
         "customer_company": lead_data.customer_company,
-        "selling_partner_id": lead_data.selling_partner_id,
+        "selling_partner_id": selling_partner_id_final,
+        "selling_partner_company_id": sp_company_id,
+        "lead_owner_id": lead_owner_id,
+        "vyapaar_lead_owner_id": lead_data.vyapaar_lead_owner_id,
         "sales_associate_id": lead_data.sales_associate_id,
         "primary_category_id": lead_data.primary_category_id,
         "secondary_category_id": lead_data.secondary_category_id,
@@ -3592,18 +3705,43 @@ async def list_leads(
     primary_category_id: Optional[str] = None,
     selling_partner_id: Optional[str] = None,
     sales_associate_id: Optional[str] = None,
+    assigned_to_me: bool = False,  # Phase 34.7 — "Assigned to Me" filter
     current_user: dict = Depends(get_current_user)
 ):
     query = {}
-    
+
     # Role-based filtering
     if current_user['role'] == UserRole.SELLING_PARTNER.value:
-        query['selling_partner_id'] = current_user['id']
+        # Phase 34.7 — Selling-partner users see ALL leads of their company (legacy + new fields).
+        company_id = current_user.get('company_id')
+        company_clauses = [
+            {"selling_partner_id": current_user['id']},
+            {"lead_owner_id": current_user['id']},
+            {"assigned_partners.partner_id": current_user['id']},
+        ]
+        if company_id:
+            company_clauses.append({"selling_partner_company_id": company_id})
+        query['$or'] = company_clauses
     elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
         query['sales_associate_id'] = current_user['id']
     elif current_user['role'] == UserRole.CUSTOMER.value:
         query['created_by'] = current_user['id']
-    
+
+    # Phase 34.7 — "Assigned to Me" applied on top of the role visibility.
+    if assigned_to_me:
+        me = current_user['id']
+        my_clauses = [
+            {"lead_owner_id": me},
+            {"vyapaar_lead_owner_id": me},
+            {"selling_partner_id": me},
+            {"sales_associate_id": me},
+        ]
+        # If a role filter already set $or, AND-combine them.
+        if '$or' in query:
+            query.setdefault('$and', []).extend([{"$or": query.pop('$or')}, {"$or": my_clauses}])
+        else:
+            query['$or'] = my_clauses
+
     # Additional filters
     if status_id:
         query['status_id'] = status_id
@@ -3613,9 +3751,9 @@ async def list_leads(
         query['selling_partner_id'] = selling_partner_id
     if sales_associate_id and current_user['role'] == UserRole.SUPER_ADMIN.value:
         query['sales_associate_id'] = sales_associate_id
-    
+
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    
+
     return await enrich_leads_bulk(leads)
 
 @api_router.get("/leads/health-summary")
@@ -3673,9 +3811,14 @@ async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user))
     
     # Access control
     is_email_match_only_customer = False
-    if current_user['role'] == UserRole.SELLING_PARTNER.value and lead.get('selling_partner_id') != current_user['id']:
-        # Also allow if they're in assigned_partners (multi-partner)
-        if not any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or [])):
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        # Phase 34.7 — selling-partner sees all leads owned by their company OR where they're an assigned partner
+        sp_company_id = lead.get('selling_partner_company_id')
+        in_company = bool(sp_company_id and current_user.get('company_id') == sp_company_id)
+        is_legacy_partner = lead.get('selling_partner_id') == current_user['id']
+        is_owner = lead.get('lead_owner_id') == current_user['id']
+        in_assigned = any(p.get('partner_id') == current_user['id'] for p in (lead.get('assigned_partners') or []))
+        if not (in_company or is_legacy_partner or is_owner or in_assigned):
             raise HTTPException(status_code=403, detail="Access denied")
     elif current_user['role'] == UserRole.SALES_ASSOCIATE.value and lead.get('sales_associate_id') != current_user['id']:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -3713,17 +3856,32 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     
-    # Access control
-    if current_user['role'] == UserRole.SELLING_PARTNER.value and lead.get('selling_partner_id') != current_user['id']:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Access control (Phase 34.7 — any active user of the partner company can update too)
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        sp_company_id = lead.get('selling_partner_company_id')
+        in_company = bool(sp_company_id and current_user.get('company_id') == sp_company_id)
+        is_legacy_partner = lead.get('selling_partner_id') == current_user['id']
+        is_owner = lead.get('lead_owner_id') == current_user['id']
+        if not (in_company or is_legacy_partner or is_owner):
+            raise HTTPException(status_code=403, detail="Access denied")
     elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
         raise HTTPException(status_code=403, detail="Sales associates cannot update leads")
     elif current_user['role'] == UserRole.CUSTOMER.value and lead.get('created_by') != current_user['id']:
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
     update_data = lead_data.model_dump(exclude_unset=True, exclude_none=True)
     update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
     now = datetime.now(timezone.utc).isoformat()
+
+    # Phase 34.7 — keep lead_owner_id ↔ selling_partner_id ↔ selling_partner_company_id in sync.
+    # If admin updates lead_owner_id, derive the company from that user and update selling_partner_id too.
+    if 'lead_owner_id' in update_data:
+        new_owner_id = update_data.get('lead_owner_id')
+        if new_owner_id:
+            owner = await db.users.find_one({"id": new_owner_id}, {"_id": 0, "company_id": 1})
+            if owner and owner.get('company_id') and not update_data.get('selling_partner_company_id'):
+                update_data['selling_partner_company_id'] = owner['company_id']
+            update_data['selling_partner_id'] = new_owner_id  # keep legacy field in lockstep
     
     # Check if selling partner is being assigned to a Draft lead
     old_partner_id = lead.get('selling_partner_id')
@@ -7758,6 +7916,251 @@ async def get_won_leads_report(
     return {"period": period, "buckets": buckets, "summary": summary}
 
 
+@api_router.get("/reports/pipeline")
+async def get_pipeline_report(current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — Pipeline by status (kanban-style breakdown)."""
+    statuses = await db.lead_statuses.find({"is_active": True}, {"_id": 0}).sort("order", 1).to_list(100)
+    query = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        cid = current_user.get('company_id')
+        ors = [{"selling_partner_id": current_user['id']}, {"lead_owner_id": current_user['id']}]
+        if cid:
+            ors.append({"selling_partner_company_id": cid})
+        query['$or'] = ors
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        query['sales_associate_id'] = current_user['id']
+    leads = await db.leads.find(query, {"_id": 0}).to_list(5000)
+    stages = []
+    for s in statuses:
+        s_leads = [l for l in leads if l.get('status_id') == s['id']]
+        stages.append({
+            "id": s['id'], "name": s['name'], "color": s.get('color'), "is_won": bool(s.get('is_won')),
+            "count": len(s_leads),
+            "total_value": sum(float(l.get('deal_value') or 0) for l in s_leads),
+            "leads": [
+                {"id": l['id'], "title": l.get('title'), "customer_company": l.get('customer_company'),
+                 "deal_value": float(l.get('deal_value') or 0)}
+                for l in sorted(s_leads, key=lambda x: float(x.get('deal_value') or 0), reverse=True)[:10]
+            ],
+        })
+    return {"stages": stages, "total_count": len(leads), "total_value": sum(float(l.get('deal_value') or 0) for l in leads)}
+
+
+@api_router.get("/reports/conversion")
+async def get_conversion_report(current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — Conversion funnel + win-rate + average days-to-close per primary category."""
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(100)
+    status_map = {s['id']: s for s in statuses}
+    query = {}
+    if current_user['role'] == UserRole.SELLING_PARTNER.value:
+        cid = current_user.get('company_id')
+        ors = [{"selling_partner_id": current_user['id']}, {"lead_owner_id": current_user['id']}]
+        if cid:
+            ors.append({"selling_partner_company_id": cid})
+        query['$or'] = ors
+    elif current_user['role'] == UserRole.SALES_ASSOCIATE.value:
+        query['sales_associate_id'] = current_user['id']
+    leads = await db.leads.find(query, {"_id": 0}).to_list(5000)
+    total = len(leads)
+    assigned = sum(1 for l in leads if l.get('selling_partner_id') or l.get('lead_owner_id'))
+    won = sum(1 for l in leads if (status_map.get(l.get('status_id')) or {}).get('is_won'))
+    lost = sum(1 for l in leads if (status_map.get(l.get('status_id')) or {}).get('is_lost'))
+    closed_durations = []
+    for l in leads:
+        st = status_map.get(l.get('status_id')) or {}
+        if st.get('is_won') and l.get('start_date') and l.get('closure_date'):
+            try:
+                sd = datetime.strptime(l['start_date'][:10], "%Y-%m-%d")
+                cd = datetime.strptime(l['closure_date'][:10], "%Y-%m-%d")
+                closed_durations.append((cd - sd).days)
+            except Exception:
+                pass
+    avg_days_to_close = round(sum(closed_durations) / len(closed_durations), 1) if closed_durations else None
+    cats = await db.primary_categories.find({}, {"_id": 0}).to_list(200)
+    cat_name = {c['id']: c['name'] for c in cats}
+    cat_buckets = {}
+    for l in leads:
+        cid = l.get('primary_category_id')
+        if not cid:
+            continue
+        b = cat_buckets.setdefault(cid, {"category_id": cid, "name": cat_name.get(cid, '—'), "total": 0, "won": 0, "lost": 0, "value": 0.0})
+        b['total'] += 1
+        st = status_map.get(l.get('status_id')) or {}
+        if st.get('is_won'):
+            b['won'] += 1
+            b['value'] += float(l.get('deal_value') or 0)
+        elif st.get('is_lost'):
+            b['lost'] += 1
+    for b in cat_buckets.values():
+        decided = b['won'] + b['lost']
+        b['win_rate'] = round((b['won'] / decided * 100), 1) if decided else 0
+    return {
+        "funnel": {
+            "total": total, "assigned": assigned, "won": won, "lost": lost,
+            "win_rate": round((won / (won + lost) * 100), 1) if (won + lost) else 0,
+        },
+        "avg_days_to_close": avg_days_to_close,
+        "by_category": sorted(cat_buckets.values(), key=lambda x: x['won'], reverse=True),
+    }
+
+
+@api_router.get("/reports/partner-performance")
+async def get_partner_performance(current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — Per-selling-partner-company leaderboard. Vyapaar team only."""
+    vyapaar_roles = {UserRole.SUPER_ADMIN.value, UserRole.VYAPAAR_OPS.value, UserRole.VYAPAAR_FINANCE.value}
+    if current_user.get('role') not in vyapaar_roles and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar team only")
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(100)
+    status_map = {s['id']: s for s in statuses}
+    leads = await db.leads.find({}, {"_id": 0}).to_list(10000)
+    company_ids = list({l.get('selling_partner_company_id') for l in leads if l.get('selling_partner_company_id')})
+    companies = await db.companies.find({"id": {"$in": company_ids}}, {"_id": 0}).to_list(500)
+    company_name = {c['id']: c['name'] for c in companies}
+    rows = {}
+    for l in leads:
+        cid = l.get('selling_partner_company_id')
+        if not cid:
+            continue
+        r = rows.setdefault(cid, {"company_id": cid, "company_name": company_name.get(cid, '—'),
+                                  "total": 0, "won": 0, "lost": 0, "revenue": 0.0})
+        r['total'] += 1
+        st = status_map.get(l.get('status_id')) or {}
+        if st.get('is_won'):
+            r['won'] += 1
+            r['revenue'] += float(l.get('deal_value') or 0)
+        elif st.get('is_lost'):
+            r['lost'] += 1
+    out = []
+    for r in rows.values():
+        decided = r['won'] + r['lost']
+        r['win_rate'] = round((r['won'] / decided * 100), 1) if decided else 0
+        r['avg_deal'] = round(r['revenue'] / r['won'], 0) if r['won'] else 0
+        out.append(r)
+    out.sort(key=lambda x: x['revenue'], reverse=True)
+    return {"rows": out, "total_companies": len(out)}
+
+
+@api_router.get("/reports/lead-activity-feed")
+async def get_lead_activity_feed(limit: int = 200, current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — Recent lead activity (creations, status changes, won/lost). Vyapaar team only."""
+    vyapaar_roles = {UserRole.SUPER_ADMIN.value, UserRole.VYAPAAR_OPS.value, UserRole.VYAPAAR_FINANCE.value}
+    if current_user.get('role') not in vyapaar_roles and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar team only")
+    limit = max(10, min(500, int(limit)))
+    leads = await db.leads.find({}, {"_id": 0}).sort("updated_at", -1).to_list(limit)
+    statuses = await db.lead_statuses.find({}, {"_id": 0}).to_list(50)
+    status_map = {s['id']: s for s in statuses}
+    activities = []
+    for l in leads:
+        st = status_map.get(l.get('status_id')) or {}
+        kind = "won" if st.get('is_won') else ("lost" if st.get('is_lost') else "updated")
+        activities.append({
+            "id": l['id'], "title": l.get('title'),
+            "customer_company": l.get('customer_company') or l.get('customer_name'),
+            "status_name": st.get('name'), "status_color": st.get('color'),
+            "kind": kind, "deal_value": float(l.get('deal_value') or 0),
+            "updated_at": l.get('updated_at'),
+            "vyapaar_lead_owner_id": l.get('vyapaar_lead_owner_id'),
+            "closure_date": l.get('closure_date'),
+        })
+    return {"activities": activities, "count": len(activities)}
+
+
+# Phase 34.7 — Saved Reports ("My Reports") + Scheduled Reports
+class SavedReportCreate(BaseModel):
+    name: str
+    report_type: str  # 'won_leads', 'pipeline', 'conversion', 'partner_performance', 'lead_activity'
+    config: Dict[str, Any] = {}  # period, filters, etc.
+
+
+class ScheduledReportCreate(BaseModel):
+    saved_report_id: str
+    frequency: str  # 'daily', 'weekly', 'monthly'
+    recipients: List[str] = []  # list of email addresses
+    enabled: bool = True
+
+
+@api_router.get("/reports/saved")
+async def list_saved_reports(current_user: dict = Depends(get_current_user)):
+    rows = await db.saved_reports.find({"user_id": current_user['id']}, {"_id": 0}).sort("updated_at", -1).to_list(200)
+    return rows
+
+
+@api_router.post("/reports/saved")
+async def create_saved_report(body: SavedReportCreate, current_user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user['id'],
+        "name": body.name,
+        "report_type": body.report_type,
+        "config": body.config,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.saved_reports.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.delete("/reports/saved/{report_id}")
+async def delete_saved_report(report_id: str, current_user: dict = Depends(get_current_user)):
+    res = await db.saved_reports.delete_one({"id": report_id, "user_id": current_user['id']})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Saved report not found")
+    # Cascade — drop any schedules tied to this report
+    await db.scheduled_reports.delete_many({"saved_report_id": report_id})
+    return {"deleted": True}
+
+
+@api_router.get("/reports/scheduled")
+async def list_scheduled_reports(current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar team only")
+    rows = await db.scheduled_reports.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Hydrate saved-report name
+    sr_ids = [r['saved_report_id'] for r in rows]
+    saved_map = {}
+    if sr_ids:
+        saved_list = await db.saved_reports.find({"id": {"$in": sr_ids}}, {"_id": 0, "id": 1, "name": 1, "report_type": 1}).to_list(500)
+        saved_map = {s['id']: s for s in saved_list}
+    return [
+        {**r, "saved_report": saved_map.get(r['saved_report_id'])}
+        for r in rows
+    ]
+
+
+@api_router.post("/reports/scheduled")
+async def create_scheduled_report(body: ScheduledReportCreate, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar team only")
+    saved = await db.saved_reports.find_one({"id": body.saved_report_id}, {"_id": 0})
+    if not saved:
+        raise HTTPException(status_code=404, detail="Saved report not found")
+    if body.frequency not in ("daily", "weekly", "monthly"):
+        raise HTTPException(status_code=400, detail="Frequency must be daily/weekly/monthly")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "saved_report_id": body.saved_report_id,
+        "frequency": body.frequency,
+        "recipients": body.recipients,
+        "enabled": body.enabled,
+        "created_by": current_user['id'],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_run_at": None,
+    }
+    await db.scheduled_reports.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.delete("/reports/scheduled/{schedule_id}")
+async def delete_scheduled_report(schedule_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Vyapaar team only")
+    res = await db.scheduled_reports.delete_one({"id": schedule_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"deleted": True}
+
+
 @api_router.get("/reports/vyapaar-revenue")
 async def get_vyapaar_revenue_report(
     start_date: Optional[str] = None,
@@ -8706,6 +9109,26 @@ async def admin_run_monthly_digest(force: bool = True, current_user: dict = Depe
     return result
 
 
+@api_router.post("/admin/dispatch-weekly-war-room-digest")
+async def admin_run_weekly_war_room_digest(force: bool = True, current_user: dict = Depends(get_current_user)):
+    """Phase 34.7 — admin-only manual trigger for the weekly War Room digest.
+    Bypasses the Monday 09:xx UTC window when force=True so admins can preview.
+    Idempotent per ISO-week via `weekly_digest_runs`."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    if force:
+        now = datetime.now(timezone.utc)
+        iso_year, iso_week, _ = now.isocalendar()
+        run_key = f"{iso_year}-W{iso_week:02d}"
+        await db.weekly_digest_runs.delete_many({"key": run_key})
+    result = await _sched.dispatch_weekly_war_room_digest(db, _zepto, force=force)
+    return result
+
+
 class TestEmailRequest(BaseModel):
     to_address: EmailStr
     notification_type: Optional[str] = None  # if set, render via that template
@@ -8827,3 +9250,47 @@ async def backfill_lead_status_is_won():
                 })
     except Exception as e:
         logger.warning(f"Lead status startup backfill failed: {e}")
+
+
+@app.on_event("startup")
+async def backfill_lead_owner_fields():
+    """Phase 34.7 — Populate lead_owner_id + selling_partner_company_id from legacy selling_partner_id."""
+    try:
+        cursor = db.leads.find(
+            {
+                "selling_partner_id": {"$ne": None},
+                "$or": [{"lead_owner_id": {"$exists": False}}, {"lead_owner_id": None}],
+            },
+            {"_id": 0, "id": 1, "selling_partner_id": 1, "selling_partner_company_id": 1},
+        )
+        # Pre-fetch user → company map in one round-trip.
+        partner_ids = {l['selling_partner_id'] async for l in cursor}
+        if not partner_ids:
+            return
+        users = await db.users.find(
+            {"id": {"$in": list(partner_ids)}}, {"_id": 0, "id": 1, "company_id": 1}
+        ).to_list(2000)
+        user_company = {u['id']: u.get('company_id') for u in users}
+
+        ops = []
+        from pymongo import UpdateOne
+        async for lead in db.leads.find(
+            {
+                "selling_partner_id": {"$ne": None},
+                "$or": [{"lead_owner_id": {"$exists": False}}, {"lead_owner_id": None}],
+            },
+            {"_id": 0, "id": 1, "selling_partner_id": 1, "selling_partner_company_id": 1},
+        ):
+            sp = lead['selling_partner_id']
+            update = {"lead_owner_id": sp}
+            if not lead.get('selling_partner_company_id') and user_company.get(sp):
+                update['selling_partner_company_id'] = user_company[sp]
+            ops.append(UpdateOne({"id": lead['id']}, {"$set": update}))
+            if len(ops) >= 500:
+                await db.leads.bulk_write(ops, ordered=False)
+                ops = []
+        if ops:
+            await db.leads.bulk_write(ops, ordered=False)
+        logger.info("Phase 34.7 backfill — lead_owner_id + selling_partner_company_id populated.")
+    except Exception as e:
+        logger.warning(f"Phase 34.7 backfill failed: {e}")
