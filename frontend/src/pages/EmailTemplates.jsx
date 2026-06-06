@@ -61,6 +61,69 @@ import {
 import api from '../utils/api';
 import { toast } from 'sonner';
 
+// Phase 34.7.3 — Customer email global kill-switch
+const CustomerEmailToggle = () => {
+  const [value, setValue] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get('/system-settings/send_emails_to_customers');
+        setValue(res.data.value !== false);
+      } catch (e) {
+        // default ON if read fails
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const onChange = async (next) => {
+    setSaving(true);
+    try {
+      await api.put('/system-settings/send_emails_to_customers', { value: next });
+      setValue(next);
+      toast.success(next
+        ? 'Customer emails enabled'
+        : 'Customer emails disabled — no further emails will be sent to customer-role users');
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to update setting');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/20 dark:to-orange-950/20" data-testid="customer-email-toggle-card">
+      <CardContent className="py-4 flex items-start gap-3">
+        <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900/40">
+          <Mail className="w-5 h-5 text-amber-700 dark:text-amber-300" />
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="font-semibold text-amber-900 dark:text-amber-100">Send email notifications to customers</p>
+              <p className="text-sm text-amber-800/80 dark:text-amber-200/80 mt-0.5">
+                Controls whether users with role <strong>Customer</strong> receive ZeptoMail emails (approval requests, deal-room invites, mentions).
+                Their in-app bell notifications stay unchanged.
+              </p>
+            </div>
+            <Switch
+              checked={value}
+              onCheckedChange={onChange}
+              disabled={loading || saving}
+              data-testid="customer-emails-switch"
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+
 // Event icons mapping
 const EVENT_ICONS = {
   new_lead: FileText,
@@ -249,6 +312,9 @@ const EmailTemplates = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Phase 34.7.3 — Customer email kill-switch */}
+      <CustomerEmailToggle />
 
       {/* Templates List */}
       {loading ? (

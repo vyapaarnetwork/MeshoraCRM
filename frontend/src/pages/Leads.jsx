@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
 import {
   Select,
   SelectContent,
@@ -16,42 +18,155 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
 import SortableTable from '../components/SortableTable';
-import { 
-  Plus, 
-  Filter, 
-  MoreHorizontal, 
-  Eye, 
-  Edit, 
+import MultiSelect from '../components/MultiSelect';
+import {
+  Plus,
+  Filter,
+  MoreHorizontal,
+  Eye,
+  Edit,
   Trash2,
   FileText,
   Building2,
   Calendar,
-  Upload
+  Upload,
+  Save as SaveIcon,
+  Star,
+  StarOff,
+  Bookmark,
 } from 'lucide-react';
 import api, { formatCurrency, formatDate } from '../utils/api';
 import { toast } from 'sonner';
 import { HealthScoreBadge } from '../components/HealthScore';
 
 const HEALTH_BAND_ORDER = { at_risk: 0, cold: 1, warm: 2, hot: 3 };
+const HEALTH_OPTIONS = [
+  { value: 'hot',     label: '🔥 Hot',     color: '#dc2626' },
+  { value: 'warm',    label: '☀️ Warm',    color: '#f59e0b' },
+  { value: 'cold',    label: '❄️ Cold',    color: '#0ea5e9' },
+  { value: 'at_risk', label: '🚨 At Risk', color: '#ef4444' },
+];
 
 const Leads = () => {
   const { user, isAdmin, isCustomer, isSalesAssociate } = useAuth();
   const navigate = useNavigate();
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [healthFilter, setHealthFilter] = useState('all');
-  const [assignedToMe, setAssignedToMe] = useState(false);  // Phase 34.7
+  // Phase 34.7.3 — multi-select filters
+  const [statusFilters, setStatusFilters] = useState([]);
+  const [healthFilters, setHealthFilters] = useState([]);
+  const [assignedToMe, setAssignedToMe] = useState(false);
   const [statuses, setStatuses] = useState([]);
   const [healthByLead, setHealthByLead] = useState({});
+
+  // Phase 34.7.3 — Saved Views state
+  const [views, setViews] = useState([]);
+  const [activeViewId, setActiveViewId] = useState(null);
+  const [viewsLoaded, setViewsLoaded] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [newViewName, setNewViewName] = useState('');
+  const [newViewDefault, setNewViewDefault] = useState(false);
 
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignedToMe]);
+
+  // Phase 34.7.3 — Load saved views once and apply default if any
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get('/lead-views');
+        setViews(res.data || []);
+        const def = (res.data || []).find(v => v.is_default);
+        if (def && !viewsLoaded) {
+          applyView(def);
+        }
+      } catch (e) {
+        // non-fatal
+      } finally {
+        setViewsLoaded(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyView = (v) => {
+    if (!v || !v.filters) return;
+    setStatusFilters(v.filters.statuses || []);
+    setHealthFilters(v.filters.healths || []);
+    setAssignedToMe(Boolean(v.filters.assigned_to_me));
+    setActiveViewId(v.id);
+  };
+
+  const handleSaveView = async () => {
+    const name = newViewName.trim();
+    if (!name) { toast.error('View name is required'); return; }
+    try {
+      const payload = {
+        name,
+        is_default: newViewDefault,
+        filters: {
+          statuses: statusFilters,
+          healths: healthFilters,
+          assigned_to_me: assignedToMe,
+        },
+      };
+      const res = await api.post('/lead-views', payload);
+      // Refresh list (other defaults may have been unset server-side)
+      const list = await api.get('/lead-views');
+      setViews(list.data || []);
+      setActiveViewId(res.data.id);
+      setSaveDialogOpen(false);
+      setNewViewName('');
+      setNewViewDefault(false);
+      toast.success(`View "${name}" saved`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to save view');
+    }
+  };
+
+  const handleDeleteView = async (id) => {
+    if (!window.confirm('Delete this view?')) return;
+    try {
+      await api.delete(`/lead-views/${id}`);
+      setViews(views.filter(v => v.id !== id));
+      if (activeViewId === id) setActiveViewId(null);
+      toast.success('View deleted');
+    } catch (e) {
+      toast.error('Failed to delete view');
+    }
+  };
+
+  const handleSetDefault = async (id) => {
+    try {
+      await api.patch(`/lead-views/${id}`, { is_default: true });
+      const list = await api.get('/lead-views');
+      setViews(list.data || []);
+      toast.success('Default view updated');
+    } catch (e) {
+      toast.error('Failed to update default');
+    }
+  };
+
+  const handleClearFilters = () => {
+    setStatusFilters([]);
+    setHealthFilters([]);
+    setAssignedToMe(false);
+    setActiveViewId(null);
+  };
 
   const fetchData = async () => {
     try {
@@ -88,10 +203,10 @@ const Leads = () => {
     }
   };
 
-  // Filter by status + health band
+  // Filter by status[] + health[] (multi-select; empty = no filter)
   const filteredLeads = leads
-    .filter(lead => statusFilter === 'all' || lead.status_id === statusFilter)
-    .filter(lead => healthFilter === 'all' || healthByLead[lead.id]?.health?.band === healthFilter);
+    .filter(lead => statusFilters.length === 0 || statusFilters.includes(lead.status_id))
+    .filter(lead => healthFilters.length === 0 || healthFilters.includes(healthByLead[lead.id]?.health?.band));
 
   // Inject health onto each row + helper for sortable health column
   const leadsWithHealth = filteredLeads.map((l) => ({
@@ -264,43 +379,30 @@ const Leads = () => {
         )}
       </div>
 
-      {/* Status + Health Filters */}
+      {/* Status + Health Filters (Phase 34.7.3 — multi-select + Saved Views) */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[200px]" data-testid="status-filter">
-                <Filter className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Filter by status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                {statuses.map((status) => (
-                  <SelectItem key={status.id} value={status.id}>
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="w-2 h-2 rounded-full" 
-                        style={{ backgroundColor: status.color }}
-                      />
-                      {status.name}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={healthFilter} onValueChange={setHealthFilter}>
-              <SelectTrigger className="w-[180px]" data-testid="health-filter">
-                <Filter className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Filter by health" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Health</SelectItem>
-                <SelectItem value="at_risk">🚨 At Risk</SelectItem>
-                <SelectItem value="cold">❄️ Cold</SelectItem>
-                <SelectItem value="warm">☀️ Warm</SelectItem>
-                <SelectItem value="hot">🔥 Hot</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="w-[220px]">
+              <MultiSelect
+                options={statuses.map(s => ({ value: s.id, label: s.name, color: s.color }))}
+                value={statusFilters}
+                onChange={(v) => { setStatusFilters(v); setActiveViewId(null); }}
+                placeholder="All Statuses"
+                allLabel="All Statuses"
+                testId="status-filter"
+              />
+            </div>
+            <div className="w-[200px]">
+              <MultiSelect
+                options={HEALTH_OPTIONS}
+                value={healthFilters}
+                onChange={(v) => { setHealthFilters(v); setActiveViewId(null); }}
+                placeholder="All Health"
+                allLabel="All Health"
+                testId="health-filter"
+              />
+            </div>
             <label
               className="flex items-center gap-2 text-sm cursor-pointer select-none px-3 py-1.5 rounded-md border bg-card hover:bg-accent"
               data-testid="assigned-to-me-toggle"
@@ -308,20 +410,79 @@ const Leads = () => {
               <input
                 type="checkbox"
                 checked={assignedToMe}
-                onChange={(e) => setAssignedToMe(e.target.checked)}
+                onChange={(e) => { setAssignedToMe(e.target.checked); setActiveViewId(null); }}
                 className="h-4 w-4 accent-violet-600"
                 data-testid="assigned-to-me-checkbox"
               />
               <span className="font-medium">Assigned to Me</span>
             </label>
-            <span className="text-sm text-muted-foreground">
+
+            {/* Saved Views dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" data-testid="views-dropdown-btn">
+                  <Bookmark className="w-3.5 h-3.5 mr-1.5" />
+                  {activeViewId
+                    ? (views.find(v => v.id === activeViewId)?.name || 'View')
+                    : 'Views'}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-72">
+                <DropdownMenuLabel>Saved Views</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {views.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">No saved views yet.</div>
+                ) : (
+                  views.map(v => (
+                    <DropdownMenuItem
+                      key={v.id}
+                      className="flex items-center justify-between gap-2 cursor-pointer"
+                      onClick={() => applyView(v)}
+                      data-testid={`view-item-${v.id}`}
+                    >
+                      <span className="flex items-center gap-1.5 truncate">
+                        {v.is_default ? <Star className="w-3 h-3 text-amber-500 fill-current" /> : null}
+                        {v.name}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        {!v.is_default && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleSetDefault(v.id); }}
+                            className="p-1 rounded hover:bg-muted text-muted-foreground"
+                            title="Set as default"
+                            data-testid={`view-set-default-${v.id}`}
+                          >
+                            <StarOff className="w-3 h-3" />
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteView(v.id); }}
+                          className="p-1 rounded hover:bg-rose-100 text-rose-600"
+                          title="Delete view"
+                          data-testid={`view-delete-${v.id}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setSaveDialogOpen(true)} data-testid="save-current-view-btn">
+                  <SaveIcon className="w-3.5 h-3.5 mr-1.5" />
+                  Save current filters as view
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <span className="text-sm text-muted-foreground ml-auto">
               {filteredLeads.length} leads
             </span>
-            {(statusFilter !== 'all' || healthFilter !== 'all' || assignedToMe) && (
+            {(statusFilters.length > 0 || healthFilters.length > 0 || assignedToMe) && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setStatusFilter('all'); setHealthFilter('all'); setAssignedToMe(false); }}
+                onClick={handleClearFilters}
                 data-testid="clear-filters-btn"
               >
                 Clear filters
@@ -330,6 +491,50 @@ const Leads = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Save View Dialog */}
+      <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save view</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="view-name">Name</Label>
+              <Input
+                id="view-name"
+                value={newViewName}
+                onChange={(e) => setNewViewName(e.target.value)}
+                placeholder="e.g. Hot leads I own"
+                data-testid="view-name-input"
+                autoFocus
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={newViewDefault}
+                onChange={(e) => setNewViewDefault(e.target.checked)}
+                className="h-4 w-4 accent-violet-600"
+                data-testid="view-default-checkbox"
+              />
+              Set as default view (auto-load on Leads page open)
+            </label>
+            <div className="text-xs text-muted-foreground bg-muted p-2 rounded">
+              <strong>Saves:</strong>{' '}
+              {statusFilters.length} status filter{statusFilters.length !== 1 ? 's' : ''},{' '}
+              {healthFilters.length} health filter{healthFilters.length !== 1 ? 's' : ''}
+              {assignedToMe ? ', Assigned to Me' : ''}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveView} data-testid="confirm-save-view-btn">
+              <SaveIcon className="w-4 h-4 mr-1.5" /> Save view
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Leads Table with Sorting */}
       <Card>
@@ -350,7 +555,7 @@ const Leads = () => {
             pageSize={15}
             onRowClick={(row) => navigate(`/leads/${row.id}`)}
             emptyMessage={
-              statusFilter !== 'all' || healthFilter !== 'all'
+              statusFilters.length > 0 || healthFilters.length > 0 || assignedToMe
                 ? 'No leads match the current filters. Try clearing them.'
                 : 'No leads found. Create your first lead to get started.'
             }

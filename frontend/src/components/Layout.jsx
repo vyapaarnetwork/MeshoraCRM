@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 import { ScrollArea } from './ui/scroll-area';
+import NotificationsPanel from './NotificationsPanel';
 import { 
   LayoutDashboard, 
   Users, 
@@ -426,7 +427,7 @@ const Layout = ({ children }) => {
     if (location.pathname.startsWith('/reports')) setOpenSubmenu('/reports');
   }, [location.pathname]);
 
-  const NavLink = ({ item }) => {
+  const NavLink = useCallback(({ item }) => {
     const isActive = isPathActive(item.path);
     const Icon = item.icon;
     const hasSubmenu = Array.isArray(item.submenu) && item.submenu.length > 0;
@@ -492,9 +493,9 @@ const Layout = ({ children }) => {
         )}
       </div>
     );
-  };
+  }, [isPathActive, openSubmenu, sidebarCollapsed]);
 
-  const NavSection = ({ group }) => (
+  const NavSection = useCallback(({ group }) => (
     <div className="mb-3">
       {!sidebarCollapsed && (
         <div className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-500">
@@ -505,7 +506,7 @@ const Layout = ({ children }) => {
         {group.items.map((item) => <NavLink key={item.path} item={item} />)}
       </div>
     </div>
-  );
+  ), [NavLink, sidebarCollapsed]);
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -712,69 +713,29 @@ const Layout = ({ children }) => {
               >
                 {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </Button>
-              {/* Notifications Dropdown */}
-              <DropdownMenu open={notificationsOpen} onOpenChange={setNotificationsOpen}>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="text-slate-600 relative" data-testid="notifications-btn">
-                    <Bell className="w-5 h-5" />
-                    {unreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                        {unreadCount > 9 ? '9+' : unreadCount}
-                      </span>
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-80">
-                  <DropdownMenuLabel className="flex items-center justify-between">
-                    <span>Notifications</span>
-                    {unreadCount > 0 && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="text-xs h-auto py-1"
-                        onClick={markAllAsRead}
-                      >
-                        <Check className="w-3 h-3 mr-1" />
-                        Mark all read
-                      </Button>
-                    )}
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <ScrollArea className="h-[300px]">
-                    {notifications.length > 0 ? (
-                      notifications.map((notification) => (
-                        <DropdownMenuItem
-                          key={notification.id}
-                          className={`flex items-start gap-3 p-3 cursor-pointer ${!notification.is_read ? 'bg-blue-50' : ''}`}
-                          onClick={() => handleNotificationClick(notification)}
-                        >
-                          <div className="mt-0.5">
-                            {getNotificationIcon(notification.type)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm ${!notification.is_read ? 'font-semibold' : ''}`}>
-                              {notification.title}
-                            </p>
-                            <p className="text-xs text-muted-foreground line-clamp-2">
-                              {notification.message}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {formatTimeAgo(notification.created_at)}
-                            </p>
-                          </div>
-                          {notification.lead_id && (
-                            <ExternalLink className="w-3 h-3 text-muted-foreground" />
-                          )}
-                        </DropdownMenuItem>
-                      ))
-                    ) : (
-                      <div className="p-4 text-center text-muted-foreground text-sm">
-                        No notifications
-                      </div>
-                    )}
-                  </ScrollArea>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {/* Phase 34.7.3 — Notifications sheet (right slide-over, categorized) */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-slate-600 relative"
+                data-testid="notifications-btn"
+                onClick={() => setNotificationsOpen(true)}
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </Button>
+              <NotificationsPanel
+                open={notificationsOpen}
+                onOpenChange={setNotificationsOpen}
+                notifications={notifications}
+                unreadCount={unreadCount}
+                onNotificationClick={handleNotificationClick}
+                onMarkAllRead={markAllAsRead}
+              />
               
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

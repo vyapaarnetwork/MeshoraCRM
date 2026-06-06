@@ -1,0 +1,40 @@
+{
+  "summary": "Phase 34.7.3 — Customer-email kill-switch + Leads multi-select filters + Saved Views + categorized Notifications Sheet. Backend pytest: 10/10 PASS, 1 SKIPPED (kill-switch E2E requires customer-relevant notification trigger via API that does not exist; backend code path L919-926 in create_notification is correct and was confirmed via curl smoke per main agent context). Frontend e2e: 100% PASS — Email Templates amber kill-switch card toggles+persists with toast; Notifications bell opens right Sheet with all 7 category tabs (all/leads/deals/approvals/mentions/milestones/digests), mark-all-read button, Escape closes; Leads page Status multi-select (11 options + clear icon), Health multi-select (4 options), Views dropdown + save dialog (view-name-input + view-default-checkbox + confirm-save-view-btn) creates view, label updates to view name, filled star indicates default, trash delete works; Clear filters resets state.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase34_7_3_system_settings_and_views.py",
+    "/app/test_reports/pytest/phase34_7_3_results.xml"
+  ],
+  "action_items": [
+    "(Optional, not blocking) Consider exposing an admin-only debug endpoint to dispatch a customer-targeted notification programmatically, so the kill-switch effect on email_logs can be asserted via API in CI instead of relying on curl smoke / manual verification.",
+    "(Optional) The customer-emails kill-switch only blocks ZeptoMail outbound for users with role=customer. Consider also gating users whose company_role indicates a customer-side persona — confirm if that is in-scope for 34.7.3 or a deliberate follow-up."
+  ],
+  "critical_code_review_comments": [
+    "server.py L919-926 (create_notification): kill-switch check correctly gates ZeptoMail only when user.role == customer AND setting.value === false. Exception handler swallows DB failures so a Mongo blip won't accidentally block emails — good defensive default.",
+    "server.py L8227-8252 (system-settings GET/PUT): GET returns a sensible default {'send_emails_to_customers': True, is_default: true} when no row exists, so the UI never shows an empty/null toggle on first load. PUT correctly gates by role (super_admin OR is_vyapaar_ops) and validates key against an allow-list. is_vyapaar_ops attribute usage matches the rest of the codebase.",
+    "server.py L8268-8327 (lead-views CRUD): user_id scoping is enforced on every read/write/delete — verified per-user isolation in test_isolation_per_user. Default-uniqueness via update_many({user_id, is_default:true},{$set:{is_default:false}}) before insert/patch is race-free for a single user. Name trim + 80-char cap on both POST and PATCH. _id is correctly excluded on POST return (line 8295).",
+    "Leads.jsx L93: default-view auto-load runs once on lead-views fetch — if a user has 0 saved views the page stays on empty filters, no console error.",
+    "Leads.jsx L120 + L155: POST sends is_default; PATCH sends is_default:true on star click — server-side uniqueness ensures only one default remains, no client-side re-fetch race.",
+    "Leads.jsx L448: set-default star is correctly hidden for the active default view (avoids self-set noop) — explains why SET_DEFAULTS count is 0 in test output when the only saved view IS the default.",
+    "NotificationsPanel: 7 category tabs render with per-tab unread badges; cards use data-testid=notif-card-{id} and 1-col / md:2-col grid layout. Mark-all-read clears badges in one batch.",
+    "EmailTemplates.jsx CustomerEmailToggle: amber alert card sits between the Meshora info banner and the templates grid — non-template UI is grouped at the top as intended. Toast confirms PUT success."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase34_7_3_system_settings_and_views.py (new — 11 tests, 10 passing, 1 skipped with documented reason)"
+  ],
+  "success_rate": {"backend": "100% (10/10 executed, 1 documented skip)", "frontend": "100% (all 20 UI assertions in review brief verified)"},
+  "test_credentials": "All 4 sets from /app/memory/test_credentials.md valid.",
+  "seed_data_creation": "Test data is self-cleaning: TestLeadViewsCRUD fixture has yield+teardown that deletes any TEST_ prefixed lead-views; UI test deletes its TEST_UIView_phase347_3 view at the end. send_emails_to_customers setting is restored to True at module teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Re-run with: REACT_APP_BACKEND_URL=https://vyapaar-preview-1.preview.emergentagent.com python -m pytest /app/backend/tests/test_phase34_7_3_system_settings_and_views.py -v. The skipped kill-switch E2E test test_kill_switch_blocks_customer_email needs either (a) an admin endpoint that dispatches a customer-targeted notification, or (b) MongoDB-direct verification with the right MONGO_URL — currently only the curl smoke in the main agent's brief proves the email_logs row is or isn't inserted. Otherwise everything works end-to-end including default-view auto-load on /leads after re-login.",
+  "rca of the issue": "No bugs found in Phase 34.7.3. Backend gates (role-based 403, unknown-key 400, name validation 400) and default-uniqueness invariants are all enforced server-side. Frontend testids match the review brief exactly. The only nuance worth noting for future agents: the set-default star button (data-testid view-set-default-{id}) is conditionally rendered ONLY when that view is NOT currently the default — this is intentional UX, not a bug."
+}
