@@ -5832,15 +5832,24 @@ def _classify_war_room_bucket(lead: dict, health: dict, today: date) -> str:
 
     Phase 29.1: a manual `war_room_bucket_override` on the lead doc takes precedence
     over the computed bucket — UNLESS the lead has just been won/lost (we auto-clear
-    overrides for terminal states so won deals always land in 'recently_won')."""
+    overrides for terminal states so won deals always land in 'recently_won').
+
+    Phase 34.7.2: Lost + Dead + Disqualified are all terminal and must NOT show
+    up in any open-leads bucket (user reported them leaking into Open Leads tab).
+    """
     status_is_won = bool(lead.get('status_is_won'))
     status_is_lost = bool(lead.get('status_is_lost'))
+    # Treat Dead / Disqualified statuses as terminal too (they don't carry the
+    # is_lost flag but are functionally exit states for the open-leads board).
+    status_name = (lead.get('status_name') or '').strip().lower()
+    status_is_terminal_other = status_name in ("dead", "disqualified")
 
     override = lead.get('war_room_bucket_override')
     valid_bucket_ids = {b['id'] for b in WAR_ROOM_BUCKETS}
     if (override in valid_bucket_ids
         and not status_is_won
-        and not status_is_lost):
+        and not status_is_lost
+        and not status_is_terminal_other):
         return override
 
     # 1) Recently Won — within last 14 days (gives admin reason to celebrate)
@@ -5853,7 +5862,7 @@ def _classify_war_room_bucket(lead: dict, health: dict, today: date) -> str:
             pass
         return "recently_won"
 
-    if status_is_lost:
+    if status_is_lost or status_is_terminal_other:
         return None  # excluded from board
 
     days_inactive = health.get('days_inactive') or 0
