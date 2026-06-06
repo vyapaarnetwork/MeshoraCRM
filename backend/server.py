@@ -926,6 +926,46 @@ async def create_notification(user_id: str, notification_type: str, title: str, 
                     "commercial_id": commercial_id,
                     **(data or {}),
                 }
+                # Phase 34.7.1 — auto-enrich ctx from the lead doc so every callsite of
+                # create_notification doesn't have to pass lead_title / customer_name /
+                # category_name / deal_value separately. Without this, the email templates
+                # render "{{lead_title}}" as empty and fall back to "Untitled lead".
+                if lead_id and not ctx.get("lead_title"):
+                    try:
+                        _lead = await db.leads.find_one(
+                            {"id": lead_id},
+                            {"_id": 0, "title": 1, "customer_name": 1, "customer_email": 1,
+                             "customer_phone": 1, "customer_company": 1, "deal_value": 1,
+                             "primary_category_id": 1, "secondary_category_id": 1,
+                             "selling_partner_id": 1, "lead_owner_id": 1,
+                             "vyapaar_lead_owner_id": 1, "created_by": 1, "status_id": 1},
+                        )
+                        if _lead:
+                            ctx.setdefault("lead_title", _lead.get("title") or "Untitled lead")
+                            ctx.setdefault("customer_name", _lead.get("customer_name") or "")
+                            ctx.setdefault("customer_email", _lead.get("customer_email") or "")
+                            ctx.setdefault("customer_phone", _lead.get("customer_phone") or "")
+                            ctx.setdefault("customer_company", _lead.get("customer_company") or "")
+                            ctx.setdefault("deal_value", _lead.get("deal_value") or 0)
+                            # Resolve assigned-by / partner / category names lazily so a
+                            # missing reference doesn't blow up the email.
+                            if _lead.get("primary_category_id") and not ctx.get("category_name"):
+                                _cat = await db.primary_categories.find_one({"id": _lead["primary_category_id"]}, {"_id": 0, "name": 1})
+                                ctx.setdefault("category_name", (_cat or {}).get("name") or "")
+                            owner_id = _lead.get("lead_owner_id") or _lead.get("selling_partner_id")
+                            if owner_id and not ctx.get("partner_name"):
+                                _owner = await db.users.find_one({"id": owner_id}, {"_id": 0, "name": 1})
+                                ctx.setdefault("partner_name", (_owner or {}).get("name") or "")
+                            # created_by → assigned_by_name + created_by for new_lead template
+                            if _lead.get("created_by"):
+                                _by = await db.users.find_one({"id": _lead["created_by"]}, {"_id": 0, "name": 1})
+                                ctx.setdefault("assigned_by_name", (_by or {}).get("name") or "an admin")
+                                ctx.setdefault("created_by", (_by or {}).get("name") or "an admin")
+                            # Default lost_reason / commission_amount for downstream templates
+                            ctx.setdefault("lost_reason", "")
+                            ctx.setdefault("commission_amount", "")
+                    except Exception as _e:
+                        logger.warning("Lead-context enrichment failed for notification %s: %s", notification_id, _e)
                 if lead_id:
                     ctx.setdefault("lead_url", f"https://app.vyapaar.net/leads/{lead_id}")
                 if commercial_id:
