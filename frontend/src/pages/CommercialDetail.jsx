@@ -114,6 +114,27 @@ const CommercialDetail = () => {
     setCommercial((prev) => ({ ...prev, [field]: value }));
   };
 
+  // Phase 35 — Allow switching One-Time ↔ Recurring after creation
+  const [typeChangeDialog, setTypeChangeDialog] = useState(false);
+  const [typeChangeSaving, setTypeChangeSaving] = useState(false);
+  const changeType = async () => {
+    if (!commercial) return;
+    const nextType = commercial.type === 'one_time' ? 'recurring' : 'one_time';
+    setTypeChangeSaving(true);
+    try {
+      const res = await api.patch(`/commercials/${id}`, { type: nextType });
+      setCommercial(res.data);
+      setMilestones((res.data.milestones || []).map((m) => ({ ...m })));
+      toast.success(`Contract type changed to ${nextType === 'one_time' ? 'One-Time' : 'Recurring'}`);
+      setTypeChangeDialog(false);
+      fetchAll();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to change type');
+    } finally {
+      setTypeChangeSaving(false);
+    }
+  };
+
   const saveOverview = async () => {
     setSaving(true);
     try {
@@ -501,6 +522,17 @@ const CommercialDetail = () => {
             {isOneTime ? <Briefcase className="w-5 h-5 text-primary" /> : <Repeat className="w-5 h-5 text-primary" />}
             <h1 className="text-2xl font-bold">{commercial.lead_title}</h1>
             <Badge variant="secondary">{isOneTime ? 'One-Time Project' : 'Recurring Contract'}</Badge>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs gap-1"
+              onClick={() => setTypeChangeDialog(true)}
+              data-testid="change-commercial-type-btn"
+              title="Switch between One-Time Project and Recurring Contract"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Change type
+            </Button>
             {!isOneTime && commercial.contract_status && (
               <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200 capitalize">
                 {commercial.contract_status.replace('_', ' ')}
@@ -1143,6 +1175,32 @@ const CommercialDetail = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Phase 35 — Change Commercial Type Confirmation */}
+      <Dialog open={typeChangeDialog} onOpenChange={setTypeChangeDialog}>
+        <DialogContent data-testid="change-type-dialog">
+          <DialogHeader>
+            <DialogTitle>Change commercial type</DialogTitle>
+            <DialogDescription>
+              {commercial?.type === 'one_time'
+                ? 'Switch this One-Time Project to a Recurring Contract. A fresh billing schedule will be generated from the existing terms.'
+                : 'Switch this Recurring Contract to a One-Time Project. The existing billing schedule will be preserved for reference but new periods will not be generated.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm">
+            <p className="font-semibold text-amber-900 dark:text-amber-200">Heads-up</p>
+            <p className="text-amber-800/90 dark:text-amber-200/80 mt-0.5">
+              Already-raised invoices and recorded payments are preserved. Recheck the billing schedule / milestones after switching.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setTypeChangeDialog(false)}>Cancel</Button>
+            <Button onClick={changeType} disabled={typeChangeSaving} data-testid="confirm-change-type-btn">
+              {typeChangeSaving ? 'Switching…' : `Switch to ${commercial?.type === 'one_time' ? 'Recurring' : 'One-Time'}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Invoice dialog */}
       <Dialog open={invoiceDialog.open} onOpenChange={(o) => setInvoiceDialog((p) => ({ ...p, open: o }))}>

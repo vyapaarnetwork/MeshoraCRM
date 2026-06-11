@@ -293,6 +293,7 @@ class LeadStatusCreate(BaseModel):
     color: str = "#4169E1"
     order: int = 0
     is_won: bool = False
+    is_lost: bool = False  # Phase 35 — terminal lost flag (excluded from War Room open board)
 
 class LeadStatusResponse(BaseModel):
     id: str
@@ -301,6 +302,7 @@ class LeadStatusResponse(BaseModel):
     order: int
     is_active: bool
     is_won: bool = False
+    is_lost: bool = False
 
 class PrimaryCategoryCreate(BaseModel):
     name: str
@@ -1300,6 +1302,7 @@ NOTIFICATION_TYPE_CATALOG = [
     {"key": "commercial_created", "label": "Commercial Created", "description": "When commercials are set up for your deal"},
     {"key": "comment_mention", "label": "Mention in Comment", "description": "When someone @mentions you in a lead/deal comment"},
     {"key": "task_assigned", "label": "Task Assigned", "description": "When someone assigns a task to you"},
+    {"key": "task_due_reminder", "label": "Task Due Reminder", "description": "Email reminder ahead of an action item's due time"},
     {"key": "weekly_war_room_digest", "label": "Weekly War Room Digest", "description": "Monday summary of what's hot, blocked, and at risk"},
 ]
 
@@ -2413,6 +2416,7 @@ class EmailTemplateEvent(str, Enum):
     PAYMENT_RECEIVED = "payment_received"  # Phase 34.5
     COMMENT_MENTION = "comment_mention"  # Phase 34.5
     TASK_ASSIGNED = "task_assigned"  # Phase 34.5
+    TASK_DUE_REMINDER = "task_due_reminder"  # Phase 35 — exact-time action item reminder
     COMMERCIAL_CREATED = "commercial_created"  # Phase 34.5
     WEEKLY_WAR_ROOM_DIGEST = "weekly_war_room_digest"  # Phase 34.5
     MONTHLY_WON_DIGEST = "monthly_won_digest"  # Phase 34.5 — first-of-month Vyapaar admin digest
@@ -2546,6 +2550,16 @@ EMAIL_TEMPLATE_VARIABLES = {
         {"key": "{{assigner_name}}", "description": "Person who assigned the task"},
         {"key": "{{due_date}}", "description": "Task due date"},
         {"key": "{{priority}}", "description": "Task priority (low / medium / high)"},
+        {"key": "{{lead_url}}", "description": "URL to open the related lead"},
+        {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
+    ],
+    "task_due_reminder": [
+        {"key": "{{task_title}}", "description": "Title of the action item"},
+        {"key": "{{due_label}}", "description": "Human label e.g. 'in 2h' / 'just now'"},
+        {"key": "{{due_date}}", "description": "Action item due date/time"},
+        {"key": "{{priority}}", "description": "Priority (low / medium / high)"},
+        {"key": "{{description}}", "description": "Action item description"},
+        {"key": "{{lead_title}}", "description": "Related lead title (if any)"},
         {"key": "{{lead_url}}", "description": "URL to open the related lead"},
         {"key": "{{recipient_name}}", "description": "Name of the email recipient"},
     ],
@@ -2738,6 +2752,18 @@ DEFAULT_EMAIL_TEMPLATES = {
 </div>
 <p><a href="{{lead_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open in Meshora</a></p>"""
     },
+    "task_due_reminder": {
+        "subject": "[Meshora] Action item due {{due_label}}: {{task_title}}",
+        "body": """<p>Hi {{recipient_name}},</p>
+<p>Your action item is due <strong>{{due_label}}</strong>:</p>
+<div style="background:#fff7ed;border-left:4px solid #f59e0b;border-radius:8px;padding:14px 16px;margin:12px 0;">
+  <div style="font-size:16px;font-weight:600;">{{task_title}}</div>
+  <div style="color:#92400e;font-size:13px;margin-top:6px;">Priority: {{priority}} &middot; Due: {{due_date}}</div>
+  <div style="color:#78350f;font-size:13px;margin-top:6px;">{{description}}</div>
+</div>
+<p style="color:#6b7280;font-size:13px;">Lead: {{lead_title}}</p>
+<p><a href="{{lead_url}}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:600;">Open in Meshora</a></p>"""
+    },
     "commercial_created": {
         "subject": "[Meshora] Commercials set up: {{lead_title}}",
         "body": """<p>Hi {{recipient_name}},</p>
@@ -2807,6 +2833,7 @@ EVENT_LABELS = {
     "payment_received": "Payment Received",
     "comment_mention": "Mentioned in Comment",
     "task_assigned": "Task Assigned",
+    "task_due_reminder": "Action Item Due Reminder",
     "commercial_created": "Commercial Created",
     "weekly_war_room_digest": "Weekly War Room Digest",
     "monthly_won_digest": "Monthly Won-Deals Digest (Vyapaar Admins)",
@@ -4661,6 +4688,9 @@ async def snooze_follow_up(
             fu['scheduled_date'] = body.new_scheduled_date
             fu['snoozed_at'] = datetime.now(timezone.utc).isoformat()
             fu['snoozed_by'] = current_user['id']
+            # Phase 35 — re-arm the email reminder for the new date
+            fu['reminder_sent'] = False
+            fu.pop('reminder_skip_reason', None)
             found = True
             break
     if not found:
@@ -4863,9 +4893,10 @@ class TaskCreate(BaseModel):
     assignee_id: Optional[str] = None  # If None, defaults to creator
     lead_id: Optional[str] = None
     commercial_id: Optional[str] = None
-    due_date: Optional[str] = None  # ISO date
+    due_date: Optional[str] = None  # ISO date or ISO datetime (Phase 35: exact-time)
     priority: str = "medium"  # low | medium | high
     status: str = "todo"  # todo | in_progress | done
+    reminder_minutes_before: Optional[int] = 0  # Phase 35: 0 = no email reminder
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
@@ -4874,6 +4905,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
+    reminder_minutes_before: Optional[int] = None  # Phase 35
 
 async def _enrich_task(task: dict) -> dict:
     """Attach assignee + creator + lead names to a task doc."""
@@ -4905,6 +4937,7 @@ async def create_task(body: TaskCreate, current_user: dict = Depends(get_current
         "due_date": body.due_date,
         "priority": body.priority,
         "status": body.status,
+        "reminder_minutes_before": int(body.reminder_minutes_before or 0),  # Phase 35
         "created_by": current_user['id'],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
@@ -4974,6 +5007,9 @@ async def update_task(task_id: str, body: TaskUpdate, current_user: dict = Depen
             updates['completed_at'] = datetime.now(timezone.utc).isoformat()
         elif updates['status'] != "done":
             updates['completed_at'] = None
+    # Phase 35 — re-arm the email reminder when the due date or reminder lead-time changes
+    if 'due_date' in updates or 'reminder_minutes_before' in updates:
+        updates['task_reminder_sent'] = False
     updates['updated_at'] = datetime.now(timezone.utc).isoformat()
 
     await db.tasks.update_one({"id": task_id}, {"$set": updates})
@@ -5850,8 +5886,10 @@ def _classify_war_room_bucket(lead: dict, health: dict, today: date) -> str:
     status_is_lost = bool(lead.get('status_is_lost'))
     # Treat Dead / Disqualified statuses as terminal too (they don't carry the
     # is_lost flag but are functionally exit states for the open-leads board).
+    # Phase 35: also catch "Lost"-like names whose status doc is missing the
+    # is_lost boolean (users can rename/create statuses without setting flags).
     status_name = (lead.get('status_name') or '').strip().lower()
-    status_is_terminal_other = status_name in ("dead", "disqualified")
+    status_is_terminal_other = status_name in ("dead", "disqualified", "lost", "closed lost", "closed-lost")
 
     override = lead.get('war_room_bucket_override')
     valid_bucket_ids = {b['id'] for b in WAR_ROOM_BUCKETS}
@@ -6836,6 +6874,75 @@ async def ai_followup_suggestion(lead_id: str, current_user: dict = Depends(get_
 
 class CommandQueryRequest(BaseModel):
     query: str
+
+class AISuggestActionsRequest(BaseModel):
+    text: str
+
+def _safe_int(v, default=0):
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+@api_router.post("/leads/{lead_id}/ai/suggest-actions")
+async def ai_suggest_actions(lead_id: str, body: AISuggestActionsRequest, current_user: dict = Depends(get_current_user)):
+    """Phase 35 — analyze a discussion comment and extract one-click Action Item /
+    Customer Follow-Up suggestions. Returns {"tasks": [...], "follow_ups": [...]}
+    with normalized due dates so the UI can create them in one click."""
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    text = (body.text or '').strip()
+    if len(text) < 5:
+        return {"tasks": [], "follow_ups": []}
+    today = datetime.now(timezone.utc).date()
+    system_msg = (
+        "You are a CRM sales-operations assistant. The user gives you a discussion comment "
+        "written on a B2B lead. Extract concrete actionable items and return STRICT JSON only "
+        "(no prose, no markdown, no code fences). Schema:\n"
+        "{\n"
+        '  "tasks": [{"title": string (imperative, <=80 chars), "description": string, '
+        '"priority": one of [low, medium, high], "due_in_days": integer >= 0}],\n'
+        '  "follow_ups": [{"notes": string (what to follow up about), "due_in_days": integer >= 1, '
+        '"pending_with": one of [customer, selling_partner, null], '
+        '"time": "HH:MM" 24h string or null if no specific time mentioned}]\n'
+        "}\n"
+        "Rules: A task (action item) = internal work someone must DO (prepare doc, send proposal, fix pricing). "
+        "A follow-up = a scheduled check-in / conversation with the customer or partner. "
+        "Only extract items clearly implied by the text — do NOT invent. Max 3 of each. "
+        f"If the text mentions a specific day/date/time, convert it to due_in_days from today (today is {today.strftime('%A, %d %b %Y')}). "
+        "If nothing actionable, return empty arrays."
+    )
+    parsed = await _ai_lead_chat(lead_id, system_msg, f"Lead: {lead.get('title')}\nDiscussion comment:\n{text}\n\nReturn STRICT JSON only.")
+
+    tasks_out, followups_out = [], []
+    for t in (parsed.get('tasks') or [])[:3]:
+        title = str(t.get('title') or '').strip()
+        if not title:
+            continue
+        priority = str(t.get('priority') or 'medium').lower()
+        due_days = max(0, min(90, _safe_int(t.get('due_in_days'), 0)))
+        tasks_out.append({
+            "title": title[:120],
+            "description": str(t.get('description') or '').strip()[:500],
+            "priority": priority if priority in ('low', 'medium', 'high') else 'medium',
+            "due_date": (today + timedelta(days=due_days)).isoformat(),
+        })
+    for f in (parsed.get('follow_ups') or [])[:3]:
+        notes = str(f.get('notes') or '').strip()
+        if not notes:
+            continue
+        due_days = max(1, min(90, _safe_int(f.get('due_in_days'), 1)))
+        d = (today + timedelta(days=due_days)).isoformat()
+        tm = f.get('time')
+        scheduled = f"{d}T{tm}:00" if (isinstance(tm, str) and re.match(r'^\d{2}:\d{2}$', tm)) else d
+        pending = f.get('pending_with')
+        followups_out.append({
+            "notes": notes[:500],
+            "scheduled_date": scheduled,
+            "pending_with": pending if pending in ('customer', 'selling_partner') else None,
+        })
+    return {"tasks": tasks_out, "follow_ups": followups_out}
 
 @api_router.post("/ai/command")
 async def ai_command_bar(body: CommandQueryRequest, current_user: dict = Depends(get_current_user)):
@@ -8230,7 +8337,7 @@ async def get_system_setting(key: str, current_user: dict = Depends(get_current_
     doc = await db.system_settings.find_one({"key": key}, {"_id": 0})
     if not doc:
         # Sensible defaults so the UI shows the "ON" state until an admin flips it
-        defaults = {"send_emails_to_customers": True}
+        defaults = {"send_emails_to_customers": True, "email_scheduler_enabled": True}
         return {"key": key, "value": defaults.get(key, None), "is_default": True}
     return {"key": key, "value": doc.get('value'), "updated_at": doc.get('updated_at'), "is_default": False}
 
@@ -8240,7 +8347,7 @@ async def put_system_setting(key: str, body: SystemSettingPut, current_user: dic
     """Phase 34.7.3 — set a single system-wide setting. Admin / Vyapaar ops only."""
     if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
         raise HTTPException(status_code=403, detail="Admin only")
-    allowed_keys = {"send_emails_to_customers"}
+    allowed_keys = {"send_emails_to_customers", "email_scheduler_enabled"}
     if key not in allowed_keys:
         raise HTTPException(status_code=400, detail=f"Unknown system setting key: {key}")
     now = datetime.now(timezone.utc).isoformat()
@@ -9251,6 +9358,69 @@ async def admin_run_milestone_reminders(window_hours: int = 48, current_user: di
     return result
 
 
+@api_router.post("/admin/dispatch-task-reminders")
+async def admin_run_task_reminders(current_user: dict = Depends(get_current_user)):
+    """Phase 35 — admin-only manual trigger for the action-item (task) due reminder scan."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    result = await _sched.dispatch_due_task_reminders(db, _zepto)
+    return result
+
+
+@api_router.get("/admin/email-scheduler/status")
+async def admin_email_scheduler_status(current_user: dict = Depends(get_current_user)):
+    """Phase 35 — Email Scheduler health dashboard. Returns the global on/off flag,
+    loop liveness, 7-day send stats, pending reminder counts, last digest runs,
+    and the 50 most recent email log rows."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+
+    setting = await db.system_settings.find_one({"key": "email_scheduler_enabled"}, {"_id": 0})
+    enabled = True if setting is None else bool(setting.get('value', True))
+
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    sent_7d = await db.email_logs.count_documents({"ok": True, "created_at": {"$gte": week_ago}})
+    failed_7d = await db.email_logs.count_documents({"ok": {"$ne": True}, "created_at": {"$gte": week_ago}})
+
+    logs = await db.email_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    for l in logs:
+        l.pop('created_at', None)  # raw datetime — sent_at ISO string is the display field
+
+    pending_followups = await db.leads.count_documents({
+        "follow_ups": {"$elemMatch": {
+            "is_completed": {"$ne": True},
+            "reminder_sent": {"$ne": True},
+            "reminder_minutes_before": {"$gt": 0},
+        }}
+    })
+    pending_tasks = await db.tasks.count_documents({
+        "status": {"$ne": "done"},
+        "task_reminder_sent": {"$ne": True},
+        "reminder_minutes_before": {"$gt": 0},
+        "due_date": {"$nin": [None, ""]},
+    })
+
+    last_weekly = await db.weekly_digest_runs.find({}, {"_id": 0}).sort("ran_at", -1).to_list(1)
+    last_monthly = await db.monthly_digest_runs.find({}, {"_id": 0}).sort("ran_at", -1).to_list(1)
+
+    return {
+        "enabled": enabled,
+        "loop_running": _sched.is_loop_running(),
+        "zeptomail_configured": _zepto.is_configured(),
+        "stats_7d": {"sent": sent_7d, "failed": failed_7d},
+        "pending": {"follow_up_reminders": pending_followups, "task_reminders": pending_tasks},
+        "last_weekly_digest": (last_weekly or [None])[0],
+        "last_monthly_digest": (last_monthly or [None])[0],
+        "recent_logs": logs,
+    }
+
+
 @api_router.post("/admin/dispatch-monthly-digest")
 async def admin_run_monthly_digest(force: bool = True, current_user: dict = Depends(get_current_user)):
     """Phase 34.6 — admin-only manual trigger for the monthly won-deals digest.
@@ -9401,6 +9571,19 @@ async def backfill_lead_status_is_won():
         await db.lead_statuses.update_many(
             {"name": {"$regex": "closed.?won", "$options": "i"}},
             {"$set": {"is_won": True}}
+        )
+        # Phase 35 — backfill is_lost so War Room / digests reliably exclude Lost leads.
+        await db.lead_statuses.update_many(
+            {"is_lost": {"$exists": False}},
+            {"$set": {"is_lost": False}}
+        )
+        await db.lead_statuses.update_many(
+            {"name": {"$regex": "^lost$", "$options": "i"}},
+            {"$set": {"is_lost": True}}
+        )
+        await db.lead_statuses.update_many(
+            {"name": {"$regex": "closed.?lost", "$options": "i"}},
+            {"$set": {"is_lost": True}}
         )
         # Phase 34.6 — ensure Disqualified + Dead terminal statuses exist
         for name, color, order in [("Disqualified", "#94A3B8", 8), ("Dead", "#475569", 9)]:

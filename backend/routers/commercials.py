@@ -119,6 +119,7 @@ class CommercialCreate(BaseModel):
     contract_owner_id: Optional[str] = None
 
 class CommercialUpdate(BaseModel):
+    type: Optional[CommercialType] = None  # Phase 35 — allow switching One-Time ↔ Recurring post-creation
     notes: Optional[str] = None
     currency: Optional[str] = None
     total_value: Optional[float] = None
@@ -1295,15 +1296,24 @@ async def update_commercial(commercial_id: str, payload: CommercialUpdate, curre
     await _ensure_commercial_access(commercial, current_user, write=True)
     updates = {k: (v.value if isinstance(v, Enum) else v) for k, v in payload.model_dump(exclude_unset=True).items()}
     updates['updated_at'] = _now_iso()
-    # If billing-relevant fields changed for recurring, regenerate schedule
-    regenerate = commercial.get('type') == 'recurring' and any(
+    # Phase 35 — contract type can be edited post-creation (One-Time ↔ Recurring)
+    type_changed = 'type' in updates and updates['type'] != commercial.get('type')
+    effective_type = updates.get('type', commercial.get('type'))
+    # If billing-relevant fields changed for recurring (or we just became recurring), regenerate schedule
+    regenerate = effective_type == 'recurring' and (type_changed or any(
         k in updates for k in ('billing_frequency', 'contract_start_date', 'contract_end_date', 'contract_value')
-    )
+    ))
     await db.commercials.update_one({"id": commercial_id}, {"$set": updates})
     if regenerate:
         merged = {**commercial, **updates}
         new_schedule = _generate_billing_schedule(merged)
         await db.commercials.update_one({"id": commercial_id}, {"$set": {"billing_schedule": new_schedule}})
+    if type_changed:
+        await _log_commercial_activity(
+            commercial_id, current_user, "type_changed",
+            f"Contract type changed from {commercial.get('type')} to {updates['type']}",
+            {"from": commercial.get('type'), "to": updates['type']},
+        )
     await _log_commercial_activity(commercial_id, current_user, "updated", "Commercial updated", {"fields": list(updates.keys())})
     updated = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
     return updated

@@ -60,6 +60,7 @@ import {
 } from 'lucide-react';
 import api from '../utils/api';
 import { toast } from 'sonner';
+import EmailSchedulerPanel from '../components/EmailSchedulerPanel';
 
 // Phase 34.7.3 — Customer email global kill-switch
 const CustomerEmailToggle = () => {
@@ -315,6 +316,9 @@ const EmailTemplates = () => {
 
       {/* Phase 34.7.3 — Customer email kill-switch */}
       <CustomerEmailToggle />
+
+      {/* Phase 35 — Email Scheduler Management UI */}
+      <EmailSchedulerPanel />
 
       {/* Templates List */}
       {loading ? (

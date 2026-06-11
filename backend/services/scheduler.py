@@ -755,9 +755,131 @@ async def dispatch_weekly_war_room_digest(db, zeptomail, force: bool = False) ->
     }
 
 
+async def dispatch_due_task_reminders(db, zeptomail) -> dict:
+    """Phase 35 — scan tasks (action items) whose due_date minus
+    reminder_minutes_before has passed and dispatch a `task_due_reminder` email.
+    Idempotent via `task_reminder_sent=True` flag. Skip-with-reason audit trail
+    mirrors the follow-up dispatcher."""
+    now = datetime.now(timezone.utc)
+    cursor = db.tasks.find(
+        {
+            "status": {"$ne": "done"},
+            "task_reminder_sent": {"$ne": True},
+            "reminder_minutes_before": {"$gt": 0},
+            "due_date": {"$nin": [None, ""]},
+        },
+        {"_id": 0},
+    )
+    scanned = 0
+    sent = 0
+    async for task in cursor:
+        scanned += 1
+        try:
+            due_dt = _parse_scheduled_dt(task.get('due_date'))
+            if not due_dt:
+                await db.tasks.update_one({"id": task['id']}, {"$set": {
+                    "task_reminder_sent": True,
+                    "task_reminder_sent_at": now.isoformat(),
+                    "task_reminder_skip_reason": "unparseable_date",
+                }})
+                continue
+            reminder_due_at = due_dt - timedelta(minutes=int(task.get('reminder_minutes_before') or 0))
+            if now < reminder_due_at:
+                continue  # not yet
+
+            # Recipient: assignee → creator
+            recipient = None
+            for uid in (task.get('assignee_id'), task.get('created_by')):
+                if uid:
+                    u = await db.users.find_one({"id": uid, "is_active": {"$ne": False}}, {"_id": 0})
+                    if u and u.get('email'):
+                        recipient = u
+                        break
+            if not recipient:
+                await db.tasks.update_one({"id": task['id']}, {"$set": {
+                    "task_reminder_sent": True,
+                    "task_reminder_sent_at": now.isoformat(),
+                    "task_reminder_skip_reason": "no_recipient_resolvable",
+                }})
+                continue
+
+            prefs = recipient.get('notification_preferences') or {}
+            if prefs.get('task_due_reminder', True) is False:
+                await db.tasks.update_one({"id": task['id']}, {"$set": {
+                    "task_reminder_sent": True,
+                    "task_reminder_sent_at": now.isoformat(),
+                    "task_reminder_skip_reason": "opted_out",
+                }})
+                continue
+
+            lead_title = ""
+            lead_url = "https://app.vyapaar.net/leads"
+            if task.get('lead_id'):
+                lead = await db.leads.find_one({"id": task['lead_id']}, {"_id": 0, "title": 1})
+                lead_title = (lead or {}).get('title') or ""
+                lead_url = f"https://app.vyapaar.net/leads/{task['lead_id']}"
+
+            hours_left = _hours_until(due_dt, now)
+            ctx = {
+                "recipient_name": recipient.get('name', ''),
+                "task_title": task.get('title') or "Action item",
+                "description": task.get('description') or "",
+                "priority": task.get('priority') or "medium",
+                "due_date": due_dt.strftime('%A, %d %b %Y · %H:%M UTC'),
+                "due_label": _milestone_due_label(hours_left),
+                "lead_title": lead_title or "—",
+                "lead_url": lead_url,
+            }
+            rendered = (await zeptomail.render_with_db_override(db, "task_due_reminder", ctx)) or {}
+            result = await zeptomail.send_email(
+                to_address=recipient['email'],
+                to_name=recipient.get('name'),
+                subject=rendered.get("subject") or f"[Meshora] Action item due {ctx['due_label']}: {ctx['task_title']}",
+                html_body=rendered.get("html") or f"<p>Action item '{ctx['task_title']}' is due {ctx['due_label']}.</p>",
+                text_body=rendered.get("text"),
+                db=db,
+                notification_type="task_due_reminder",
+                user_id=recipient.get('id'),
+                correlation_id=f"task:{task['id']}",
+            )
+            update = {
+                "task_reminder_sent": True,
+                "task_reminder_sent_at": now.isoformat(),
+                "task_reminder_recipient_id": recipient.get('id'),
+                "task_reminder_result_ok": bool(result.get('ok')),
+            }
+            if not result.get('ok'):
+                update["task_reminder_error"] = str(result.get('error'))[:500]
+            await db.tasks.update_one({"id": task['id']}, {"$set": update})
+            if result.get('ok'):
+                sent += 1
+                logger.info("Task-due reminder sent: task=%s to=%s", task['id'], recipient['email'])
+        except Exception as e:
+            logger.exception("Task reminder pass failed for task %s: %s", task.get('id'), e)
+    return {"scanned": scanned, "sent": sent, "now": now.isoformat()}
+
+
+async def _scheduler_enabled(db) -> bool:
+    """Phase 35 — global kill-switch stored in system_settings. Defaults to ON."""
+    try:
+        doc = await db.system_settings.find_one({"key": "email_scheduler_enabled"}, {"_id": 0})
+        if doc is not None and doc.get('value') is False:
+            return False
+    except Exception:
+        pass
+    return True
+
+
 async def _reminder_loop(db, zeptomail) -> None:
     logger.info("Follow-up reminder loop started (interval=%ss)", SCAN_INTERVAL_SECONDS)
     while True:
+        # Phase 35 — respect the admin's global on/off toggle
+        if not await _scheduler_enabled(db):
+            try:
+                await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+            except asyncio.CancelledError:
+                raise
+            continue
         try:
             res = await dispatch_due_reminders(db, zeptomail)
             if res.get('sent'):
@@ -766,6 +888,15 @@ async def _reminder_loop(db, zeptomail) -> None:
             raise
         except Exception as e:
             logger.exception("Reminder loop iteration crashed: %s", e)
+        # Piggyback the task (action item) due-reminder scan — Phase 35.
+        try:
+            res = await dispatch_due_task_reminders(db, zeptomail)
+            if res.get('sent'):
+                logger.info("Task-due pass: scanned=%s sent=%s", res['scanned'], res['sent'])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Task-due loop iteration crashed: %s", e)
         # Piggyback the milestone-due scan on the same minute-tick.
         try:
             res = await dispatch_due_milestone_reminders(db, zeptomail)
@@ -815,3 +946,8 @@ def stop_reminder_loop() -> None:
     if _RUNNING_TASK and not _RUNNING_TASK.done():
         _RUNNING_TASK.cancel()
     _RUNNING_TASK = None
+
+
+def is_loop_running() -> bool:
+    """Phase 35 — liveness probe for the Email Scheduler admin dashboard."""
+    return bool(_RUNNING_TASK and not _RUNNING_TASK.done())

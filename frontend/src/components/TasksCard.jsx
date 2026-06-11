@@ -8,12 +8,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../components/ui/select';
 import {
-  ListChecks, Plus, Check, Trash2, Circle, Loader2, ChevronDown,
+  ListChecks, Plus, Check, Trash2, Circle, Loader2, ChevronDown, Bell,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
-import api, { formatDate } from '../utils/api';
+import api, { formatDate, formatDateTime } from '../utils/api';
 import { toast } from 'sonner';
 import SearchableUserSelect from './SearchableUserSelect';
 
@@ -24,12 +24,20 @@ const PRIORITY_COLORS = {
 };
 const STATUS_LABELS = { todo: 'To-do', in_progress: 'In progress', done: 'Done' };
 
-const TasksCard = ({ leadId }) => {
+const REMINDER_OPTIONS = [
+  { value: 0, label: 'No email reminder' },
+  { value: 30, label: 'Email 30 min before' },
+  { value: 60, label: 'Email 1 hour before' },
+  { value: 120, label: 'Email 2 hours before' },
+  { value: 1440, label: 'Email 1 day before' },
+];
+
+const TasksCard = ({ leadId, refreshKey }) => {
   const [tasks, setTasks] = useState([]);
   const [users, setUsers] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [newTask, setNewTask] = useState({
-    title: '', description: '', assignee_id: '', due_date: '', priority: 'medium',
+    title: '', description: '', assignee_id: '', due_date: '', priority: 'medium', reminder_minutes_before: 0,
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,23 +50,24 @@ const TasksCard = ({ leadId }) => {
 
   useEffect(() => {
     fetchTasks();
-    api.get('/users').then((r) => setUsers((r.data || []).filter(u => u.is_active !== false))).catch(() => {});
-  }, [fetchTasks]);
+    // Phase 35 — unified assignee pool across ALL roles (customer / partner / associate / Vyapaar team)
+    api.get('/users/assignable').then((r) => setUsers((r.data || []).filter(u => u.is_active !== false))).catch(() => {});
+  }, [fetchTasks, refreshKey]);
 
   const handleCreate = async () => {
-    if (!newTask.title.trim()) return toast.error('Task title required');
+    if (!newTask.title.trim()) return toast.error('Action item title required');
     setSubmitting(true);
     try {
       const payload = { ...newTask, lead_id: leadId };
       if (!payload.assignee_id) delete payload.assignee_id;
       if (!payload.due_date) delete payload.due_date;
       await api.post('/tasks', payload);
-      setNewTask({ title: '', description: '', assignee_id: '', due_date: '', priority: 'medium' });
+      setNewTask({ title: '', description: '', assignee_id: '', due_date: '', priority: 'medium', reminder_minutes_before: 0 });
       setShowForm(false);
-      toast.success('Task created');
+      toast.success('Action item created');
       fetchTasks();
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Failed to create task');
+      toast.error(e.response?.data?.detail || 'Failed to create action item');
     } finally {
       setSubmitting(false);
     }
@@ -74,11 +83,11 @@ const TasksCard = ({ leadId }) => {
   };
 
   const handleDelete = async (taskId) => {
-    if (!window.confirm('Delete this task?')) return;
+    if (!window.confirm('Delete this action item?')) return;
     try {
       await api.delete(`/tasks/${taskId}`);
       fetchTasks();
-      toast.success('Task deleted');
+      toast.success('Action item deleted');
     } catch (e) {
       toast.error('Failed to delete');
     }
@@ -96,7 +105,7 @@ const TasksCard = ({ leadId }) => {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <ListChecks className="w-5 h-5 text-primary" />
-            Tasks ({tasks.length})
+            Action Items ({tasks.length})
           </CardTitle>
           <Button size="sm" variant="outline" onClick={() => setShowForm(!showForm)} data-testid="add-task-btn">
             <Plus className="w-4 h-4" />
@@ -107,7 +116,7 @@ const TasksCard = ({ leadId }) => {
         {showForm && (
           <div className="p-3 border rounded-lg space-y-2 bg-muted/40 animate-scale-in">
             <Input
-              placeholder="Task title"
+              placeholder="Action item title"
               value={newTask.title}
               onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
               data-testid="task-title-input"
@@ -139,11 +148,24 @@ const TasksCard = ({ leadId }) => {
               </Select>
             </div>
             <Input
-              type="date"
+              type="datetime-local"
               value={newTask.due_date}
               onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
               data-testid="task-due-input"
             />
+            <Select
+              value={String(newTask.reminder_minutes_before || 0)}
+              onValueChange={(v) => setNewTask({ ...newTask, reminder_minutes_before: parseInt(v, 10) })}
+            >
+              <SelectTrigger className="h-9" data-testid="task-reminder-select">
+                <SelectValue placeholder="No email reminder" />
+              </SelectTrigger>
+              <SelectContent>
+                {REMINDER_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={String(opt.value)}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="flex gap-2">
               <Button size="sm" onClick={handleCreate} disabled={submitting} data-testid="save-task-btn">
                 {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Create'}
@@ -153,7 +175,7 @@ const TasksCard = ({ leadId }) => {
           </div>
         )}
         {sorted.length === 0 ? (
-          <p className="text-center text-muted-foreground text-sm py-3">No tasks yet</p>
+          <p className="text-center text-muted-foreground text-sm py-3">No action items yet</p>
         ) : (
           sorted.map((t) => (
             <div
@@ -183,9 +205,19 @@ const TasksCard = ({ leadId }) => {
                   )}
                 </div>
                 {t.description && <p className="text-xs text-muted-foreground mt-0.5 break-words">{t.description}</p>}
-                <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
+                <div className="flex gap-3 text-xs text-muted-foreground mt-0.5 flex-wrap">
                   {t.assignee_name && <span>👤 {t.assignee_name}</span>}
-                  {t.due_date && <span>📅 {formatDate(t.due_date)}</span>}
+                  {t.due_date && <span>📅 {t.due_date.includes('T') ? formatDateTime(t.due_date) : formatDate(t.due_date)}</span>}
+                  {t.reminder_minutes_before > 0 && t.status !== 'done' && (
+                    <span className="inline-flex items-center gap-0.5">
+                      <Bell className="w-3 h-3" />
+                      {t.reminder_minutes_before < 60
+                        ? `${t.reminder_minutes_before}m`
+                        : t.reminder_minutes_before < 1440
+                          ? `${Math.round(t.reminder_minutes_before / 60)}h`
+                          : `${Math.round(t.reminder_minutes_before / 1440)}d`} before
+                    </span>
+                  )}
                 </div>
               </div>
               <DropdownMenu>
