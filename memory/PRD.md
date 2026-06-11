@@ -553,6 +553,16 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **Commercials Phase 3** — AI milestone templates (Gemini 3 Pro), renewal probability, payment-delay risk, Kanban view, PDF invoice generation (Feb 24, 2026)
 - [ ] **Commercials Phase 2.6 — Email + SMS activation**: drop SendGrid + Twilio keys into `.env` and uncomment the hooks in `_emit_commercial_reminder` to enable real email/SMS sending.
 
+
+### Phase 35 — Lead Detail UX overhaul + Email Scheduler Management (Jun 11, 2026)
+- [x] **Lead Detail tab renames**: Comments → **Discussions**, Follow-Ups → **Customer Follow-Ups**, Tasks → **Action Items**
+- [x] **AI Action Suggestions panel** in Discussions (`POST /api/leads/{lead_id}/ai/suggest-actions`) — auto-extracts tasks + follow-ups from a discussion comment with one-click chips (`AIActionSuggestions.jsx`)
+- [x] **Exact-time pickers** on Action Items (datetime-local) and Customer Follow-Ups (date + time) with reminder lead-time dropdowns; backend scheduler honors ISO datetime + reminder_minutes_before
+- [x] **Email Scheduler Management UI** at `/email-templates` (`EmailSchedulerPanel.jsx`) — global on/off, loop liveness, ZeptoMail status, 7-day stats, pending reminder counts, 4 manual dispatchers, recent 50-row email log
+- [x] **Commercial Type Switch** post-creation (One-Time ↔ Recurring) via Change-Type dialog on CommercialDetail (PATCH `/api/commercials/{id}` with `{type}`)
+- [x] **War Room terminal-state exclusion** — Lost / Dead / Disqualified leads (incl. unflagged "lost"-named statuses) are excluded from all open buckets; KPI total_leads matches sum of bucket counts
+- Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
+
 ### P2 - Medium Priority
 - [x] Dark mode toggle (Feb 24, 2026)
 - [ ] Real-time notifications (WebSocket)
