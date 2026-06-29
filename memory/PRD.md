@@ -563,6 +563,18 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **War Room terminal-state exclusion** — Lost / Dead / Disqualified leads (incl. unflagged "lost"-named statuses) are excluded from all open buckets; KPI total_leads matches sum of bucket counts
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
+### Phase 36 — Internal Tasks, Document Signed-URLs, Commercials One-Time Fee + Reminders (Jun 29, 2026)
+- [x] **Document view/download bug fix (prod)** — new `/api/documents/{id}/signed-url` returns a 5-min JWT-signed query-param URL; frontend `handleView`/`handleDownload` now open the signed URL directly (no `Authorization` header → bypasses cross-domain CORS-credentials policy on app.vyapaar.net)
+- [x] **Internal Vyapaar Tasks feature** — new collection `internal_tasks`, new `routers/internal_tasks.py` with CRUD + RBAC (Vyapaar internal-only create/list via `original_role`), assignee can be ANY active user, datetime-local due dates, configurable email reminder (0–2880 min before)
+- [x] **Internal Tasks sidebar entry** under Core nav at `/internal-tasks` (`pages/InternalTasks.jsx`) with stat ring (To-do / In progress / Overdue / Due today), status/category/priority filters, mine-only toggle, inline status toggle, create/edit dialog
+- [x] **Weekly Monday 9 AM IST snapshot** scheduler — `dispatch_weekly_internal_task_digest` sends each Vyapaar internal user a personal report (overdue + due-this-week + new assignments), idempotent by ISO-week
+- [x] **Exact-time internal task reminders** — `dispatch_due_internal_task_reminders` hooked into the 60-second scheduler loop, idempotent via `reminder_sent`
+- [x] **Commercials One-Time Setup Fee on Recurring contracts** (SaaS pattern) — new fields `one_time_fee_amount/label/due_date/status/invoice_id` on Commercials; invoice flag `is_one_time_fee` auto-flips status `pending → invoiced → paid`; same commission % as base deal
+- [x] **Commercials revenue-chain reminders** — milestone-due now CCs admin + finance + Account Manager + Billing Contact via `_resolve_commercial_recipients_multi`; new `dispatch_commercial_renewal_reminders` (renewal-notice window) and `dispatch_invoice_overdue_reminders` (daily overdue scan), both hooked into the loop
+- [x] **Admin manual dispatchers** — `/api/admin/dispatch-internal-task-reminders` and `/api/admin/dispatch-internal-task-weekly-digest?force=true`
+- Backend tests: `/app/backend/tests/test_phase36.py` (15/15 PASS). Frontend smoke-tested via testing_agent_v3_fork iteration_26.
+
+
 ### P2 - Medium Priority
 - [x] Dark mode toggle (Feb 24, 2026)
 - [ ] Real-time notifications (WebSocket)

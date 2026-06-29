@@ -136,9 +136,9 @@ async def _enrich(task: dict) -> dict:
         if p:
             task["related_partner_name"] = p.get("company_name") or p.get("name")
     if task.get("related_lead_id"):
-        l = await db.leads.find_one({"id": task["related_lead_id"]}, {"_id": 0, "title": 1, "customer_company": 1})
-        if l:
-            task["related_lead_title"] = l.get("title") or l.get("customer_company")
+        lead = await db.leads.find_one({"id": task["related_lead_id"]}, {"_id": 0, "title": 1, "customer_company": 1})
+        if lead:
+            task["related_lead_title"] = lead.get("title") or lead.get("customer_company")
     return task
 
 
