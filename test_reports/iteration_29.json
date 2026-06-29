@@ -1,0 +1,33 @@
+{
+  "summary": "Phase 36.3 — frontend-only regression confirming the LeadForm fixes from iteration_28. All 4 frontend scenarios PASS: (1) Status select auto-defaults to 'Draft' on /leads/new (no longer placeholder). (2) Filling Title + Customer + Email='qa+phase363@example.com' + Phone + Primary Category (HR) + Deal Value=100000 + Vyapaar Commission (Standard 15%) + Referral (Opportunity Builder 20%) and clicking Create Lead navigates to /leads and the new lead 'TEST_Phase363_Iter29' appears in the list. (3) Re-opening the created lead in edit mode shows vyapaar-commission-template-select pre-populated as 'Standard (15%)' and referral-commission-select as 'Opportunity Builder — 20%'. (4) CommissionBreakdownPreview in edit mode shows ALL expected numbers: ₹1,00,000 deal, ₹85,000 partner keeps, ₹15,000 Vyapaar commission, ₹3,000 referral payout (Opportunity Builder 20%), ₹12,000 net to Vyapaar. The HIGH-priority LeadForm submit silent-failure bug from iteration_28 is verified FIXED. Backend regression suite was NOT re-executed in this iteration (frontend-only testing scope per request); the test file /app/backend/tests/test_phase36_3.py from iteration_28 was already 17/17 PASS and no backend code changed since.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase36_3.py",
+    "/app/test_reports/iteration_28.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "LeadForm.jsx fetchOptions() lines 142-148 — auto-default of status_id is gated by !isEditing AND !prev.status_id, so it won't clobber an in-flight user selection on re-fetch. Correct.",
+    "LeadForm.jsx handleSubmit() lines 270-282 — 422 detail handling now formats Pydantic array errors as 'field: msg • field: msg', so any future required-field misses will surface clearly instead of generic 'Failed to save lead'. Good.",
+    "Edit-mode pre-population works because fetchLead() (lines 195-196) hydrates both vyapaar_commission_template_id and referral_commission_id from the saved lead, and the Select components' value prop matches against the already-loaded options arrays — verified visually in the edit-mode screenshot."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "not retested this iteration (frontend-only scope; iteration_28 was 17/17)",
+    "frontend": "100% (4/4 LeadForm regression scenarios passed)"
+  },
+  "test_credentials": "admin@vyapaarnetwork.com / admin123 (super admin) — used for this run",
+  "seed_data_creation": "Created one lead TEST_Phase363_Iter29 (customer email qa+phase363@example.com, deal value 100000, HR category, Standard 15% template, Opportunity Builder 20% referral). Not cleaned up — main agent can delete via /api/leads/<id> or leave as visible regression evidence.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 36.3 is fully verified end-to-end. LeadForm bug from iteration_28 (HIGH priority) is closed. If backend regression needs re-running: `cd /app && REACT_APP_BACKEND_URL=https://vyapaar-preview-1.preview.emergentagent.com python -m pytest backend/tests/test_phase36_3.py -v --junitxml=test_reports/pytest/phase36_3_results.xml` — should produce 17/17 PASS. Test lead 'TEST_Phase363_Iter29' (id 1be0eca6-af8f-4103-a388-e1a99bea277f) is now persisted; subsequent regressions can re-use or delete it.",
+  "rca of the issue": "Iteration_28's HIGH-pri LeadForm submit-not-navigating bug had RCA = Status field was a required field on backend but the Select component had no default value, so submit silently 422'd and the catch-block toast text was too generic to surface the field name. Fix in /app/frontend/src/pages/LeadForm.jsx is two-pronged and BOTH verified in this iteration: (a) fetchOptions sets formData.status_id = statusesRes.data[0].id (the 'Draft' row) when !isEditing & !prev.status_id, eliminating the empty submit case; (b) handleSubmit now flattens Pydantic 422 detail arrays into a readable toast like 'status_id: field required', so future required-field regressions self-diagnose. Verified: Status select shows 'Draft' on a fresh /leads/new load, submit navigates correctly, and the lead persists with status_id resolved."
+}
