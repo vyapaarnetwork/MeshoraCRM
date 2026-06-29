@@ -635,6 +635,50 @@ def block_finance_only_write(user: dict):
             detail="Vyapaar Finance role has read-only access outside the Commercials module."
         )
 
+
+async def get_current_user_optional(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+):
+    """Phase 36 — like get_current_user but returns None instead of 401 when
+    no token is present. Used by endpoints that ALSO accept a signed-token
+    query param (e.g. document downloads opened directly by the browser)."""
+    token = request.cookies.get('access_token')
+    if not token and credentials:
+        token = credentials.credentials
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        return None
+    user = await db.users.find_one({"id": payload['user_id']}, {"_id": 0})
+    return user
+
+
+# Phase 36 — short-lived signed token for direct document downloads
+def _issue_document_token(doc_id: str, user_id: str, ttl_seconds: int = 300) -> str:
+    payload = {
+        "doc_id": doc_id,
+        "user_id": user_id,
+        "scope": "document_download",
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def _verify_document_token(token: str, doc_id: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return None
+    if payload.get("scope") != "document_download":
+        return None
+    if payload.get("doc_id") != doc_id:
+        return None
+    return payload
+
+
 def calculate_commission(deal_value: float, vyapaar_percentage: float, sales_associate_percentage: Optional[float] = None) -> CommissionBreakdown:
     vyapaar_share = deal_value * (vyapaar_percentage / 100)
     selling_partner_share = deal_value - vyapaar_share
@@ -3154,21 +3198,67 @@ async def upload_document(
     )
 
 @api_router.get("/documents/{doc_id}/download")
-async def download_document(doc_id: str, current_user: dict = Depends(get_current_user)):
-    """Download a document"""
+async def download_document(
+    doc_id: str,
+    token: Optional[str] = None,
+    inline: bool = False,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Download a document.
+
+    Phase 36 production fix: accepts either the standard auth cookie/header OR a
+    short-lived signed `token` query parameter. The signed-token path lets the
+    browser open the URL directly (window.location.href / new tab) without
+    going through axios+blob — which sidesteps the CORS-credentials policy
+    that was blocking PDF downloads on app.vyapaar.net in production.
+    """
+    # Token-based access (preferred for the browser-initiated download/view)
+    if token:
+        payload = _verify_document_token(token, doc_id)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired download token")
+    elif not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     doc = await db.documents.find_one({"id": doc_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
+
     filepath = UPLOAD_DIR / doc['filename']
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File not found on server")
-    
+
+    headers = {}
+    if inline:
+        # "inline" — let the browser try to render (PDF preview, images)
+        headers["Content-Disposition"] = f'inline; filename="{doc["original_filename"]}"'
     return FileResponse(
         path=str(filepath),
         filename=doc['original_filename'],
-        media_type=doc['content_type']
+        media_type=doc['content_type'],
+        headers=headers,
     )
+
+
+@api_router.get("/documents/{doc_id}/signed-url")
+async def get_signed_download_url(doc_id: str, current_user: dict = Depends(get_current_user)):
+    """Phase 36 — issue a short-lived signed URL the browser can open directly.
+    The browser then hits /documents/{id}/download?token=… which doesn't need
+    Authorization headers and therefore bypasses any CORS-credentials issues
+    on cross-domain deployments (e.g. app.vyapaar.net ↔ api.vyapaar.net).
+    Token TTL: 5 minutes. Tied to this single doc_id."""
+    doc = await db.documents.find_one({"id": doc_id}, {"_id": 0, "id": 1, "original_filename": 1, "content_type": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    token = _issue_document_token(doc_id, current_user['id'], ttl_seconds=300)
+    return {
+        "url": f"/api/documents/{doc_id}/download?token={token}",
+        "preview_url": f"/api/documents/{doc_id}/download?token={token}&inline=true",
+        "filename": doc.get('original_filename'),
+        "content_type": doc.get('content_type'),
+        "expires_in": 300,
+    }
+
 
 @api_router.delete("/documents/{doc_id}")
 async def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
@@ -9465,6 +9555,36 @@ async def admin_run_weekly_war_room_digest(force: bool = True, current_user: dic
     return result
 
 
+# Phase 36 — Internal Tasks dispatch endpoints
+@api_router.post("/admin/dispatch-internal-task-reminders")
+async def admin_dispatch_internal_task_reminders(current_user: dict = Depends(get_current_user)):
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    return await _sched.dispatch_due_internal_task_reminders(db, _zepto)
+
+
+@api_router.post("/admin/dispatch-internal-task-weekly-digest")
+async def admin_dispatch_internal_task_weekly_digest(force: bool = True, current_user: dict = Depends(get_current_user)):
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops'):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    if force:
+        from datetime import timedelta as _td
+        now_ist = datetime.now(timezone.utc) + _td(hours=5, minutes=30)
+        iso_year, iso_week, _ = now_ist.isocalendar()
+        run_key = f"{iso_year}-W{iso_week:02d}"
+        await db.internal_task_digest_runs.delete_many({"key": run_key})
+    return await _sched.dispatch_weekly_internal_task_digest(db, _zepto, force=force)
+
+
+
 class TestEmailRequest(BaseModel):
     to_address: EmailStr
     notification_type: Optional[str] = None  # if set, render via that template
@@ -9537,6 +9657,10 @@ api_router.include_router(commercials_router)
 # Mount deal-room router (Phase 27/27.5 — extracted to routers/deal_room.py)
 from routers.deal_room import router as deal_room_router  # noqa: E402
 api_router.include_router(deal_room_router)
+
+# Mount internal-tasks router (Phase 36 — Vyapaar internal task management)
+from routers.internal_tasks import router as internal_tasks_router  # noqa: E402
+api_router.include_router(internal_tasks_router)
 
 # Include router
 app.include_router(api_router)

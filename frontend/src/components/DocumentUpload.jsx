@@ -255,35 +255,35 @@ export const DocumentList = ({
   canDelete = false,
   emptyMessage = 'No documents uploaded yet'
 }) => {
+  // Phase 36 — production-friendly download: ask the backend for a signed URL
+  // (no Authorization header needed), then open it directly. This bypasses the
+  // axios+blob path that was failing on cross-domain deployments (app.vyapaar.net).
   const handleDownload = async (doc) => {
     try {
-      const response = await api.get(`/documents/${doc.id}/download`, {
-        responseType: 'blob'
-      });
-      
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const { data } = await api.get(`/documents/${doc.id}/signed-url`);
+      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
       const link = document.createElement('a');
-      link.href = url;
+      link.href = `${BACKEND_URL}${data.url}`;
       link.setAttribute('download', doc.original_filename);
+      link.rel = 'noopener noreferrer';
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(url);
     } catch (error) {
-      toast.error('Failed to download document');
+      const detail = error.response?.data?.detail || error.message || 'Unknown error';
+      toast.error(`Failed to download document: ${detail}`);
     }
   };
 
   const handleView = async (doc) => {
     try {
-      const response = await api.get(`/documents/${doc.id}/download`, {
-        responseType: 'blob'
-      });
-      
-      const url = window.URL.createObjectURL(new Blob([response.data], { type: doc.content_type }));
-      window.open(url, '_blank');
+      const { data } = await api.get(`/documents/${doc.id}/signed-url`);
+      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+      // Open the inline-flavoured URL in a new tab so PDFs / images render in-browser
+      window.open(`${BACKEND_URL}${data.preview_url}`, '_blank', 'noopener,noreferrer');
     } catch (error) {
-      toast.error('Failed to open document');
+      const detail = error.response?.data?.detail || error.message || 'Unknown error';
+      toast.error(`Failed to open document: ${detail}`);
     }
   };
 

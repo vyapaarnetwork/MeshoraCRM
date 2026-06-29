@@ -141,7 +141,7 @@ const CommercialDetail = () => {
       const payload = {};
       const fields = commercial.type === 'one_time'
         ? ['total_value', 'start_date', 'end_date', 'project_owner_id', 'delivery_spoc_id', 'billing_contact_id', 'notes', 'currency']
-        : ['contract_value', 'billing_frequency', 'contract_start_date', 'contract_end_date', 'auto_renewal', 'renewal_type', 'renewal_notice_days', 'account_manager_id', 'contract_owner_id', 'billing_contact_id', 'notes', 'currency', 'contract_status'];
+        : ['contract_value', 'billing_frequency', 'contract_start_date', 'contract_end_date', 'auto_renewal', 'renewal_type', 'renewal_notice_days', 'account_manager_id', 'contract_owner_id', 'billing_contact_id', 'notes', 'currency', 'contract_status', 'one_time_fee_amount', 'one_time_fee_label', 'one_time_fee_due_date'];
       fields.forEach((f) => {
         if (commercial[f] !== undefined && commercial[f] !== null && commercial[f] !== '') payload[f] = commercial[f];
         else if (commercial[f] === '') payload[f] = null;
@@ -150,6 +150,7 @@ const CommercialDetail = () => {
       if (payload.total_value !== undefined) payload.total_value = Number(payload.total_value);
       if (payload.contract_value !== undefined) payload.contract_value = Number(payload.contract_value);
       if (payload.renewal_notice_days !== undefined) payload.renewal_notice_days = Number(payload.renewal_notice_days);
+      if (payload.one_time_fee_amount !== undefined) payload.one_time_fee_amount = Number(payload.one_time_fee_amount) || 0;
       const res = await api.patch(`/commercials/${id}`, payload);
       setCommercial(res.data);
       toast.success('Saved');
@@ -357,6 +358,7 @@ const CommercialDetail = () => {
       amount: Number(form.get('amount')),
       due_date: form.get('due_date') || undefined,
       notes: form.get('notes') || undefined,
+      is_one_time_fee: form.get('is_one_time_fee') === 'on' || invoiceDialog.is_one_time_fee || false,
     };
     try {
       await api.post(`/commercials/${id}/invoices`, payload);
@@ -697,6 +699,53 @@ const CommercialDetail = () => {
                   </>
                 )}
               </div>
+              {/* Phase 36 — One-Time Setup Fee on Recurring contracts (SaaS pattern) */}
+              {!isOneTime && (
+                <Card className="border-violet-200 dark:border-violet-900 bg-gradient-to-br from-violet-50/50 to-indigo-50/30 dark:from-violet-950/20 dark:to-indigo-950/10 mt-4">
+                  <CardContent className="py-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-violet-600" />
+                      <h4 className="font-semibold text-sm">One-Time Setup Fee</h4>
+                      {commercial.one_time_fee_status && (
+                        <span className="ml-auto text-[11px] uppercase tracking-wider px-2 py-0.5 rounded bg-white/60 dark:bg-card/60 border">
+                          {commercial.one_time_fee_status}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Onboarding / implementation / customisation fee billed once at the start of the contract.
+                      Uses the same Vyapaar commission % as the base deal. Will appear as a dedicated invoice line.
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Field label="Amount">
+                        <Input
+                          type="number"
+                          value={commercial.one_time_fee_amount ?? ''}
+                          onChange={(e) => updateField('one_time_fee_amount', e.target.value)}
+                          placeholder="0"
+                          data-testid="one-time-fee-amount"
+                        />
+                      </Field>
+                      <Field label="Label">
+                        <Input
+                          value={commercial.one_time_fee_label || ''}
+                          onChange={(e) => updateField('one_time_fee_label', e.target.value)}
+                          placeholder="e.g. Onboarding fee"
+                          data-testid="one-time-fee-label"
+                        />
+                      </Field>
+                      <Field label="Due date">
+                        <Input
+                          type="date"
+                          value={commercial.one_time_fee_due_date || ''}
+                          onChange={(e) => updateField('one_time_fee_due_date', e.target.value)}
+                          data-testid="one-time-fee-due"
+                        />
+                      </Field>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
               <Field label="Notes">
                 <Textarea value={commercial.notes || ''} onChange={(e) => updateField('notes', e.target.value)} rows={3} data-testid="commercial-notes" />
               </Field>
@@ -1222,6 +1271,18 @@ const CommercialDetail = () => {
             <Field label="Notes">
               <Textarea name="notes" rows={2} />
             </Field>
+            {/* Phase 36 — flag this invoice as the recurring contract's One-Time Setup Fee */}
+            {!isOneTime && commercial?.one_time_fee_amount > 0 && (
+              <label className="flex items-center gap-2 text-sm bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-900 rounded-md p-2">
+                <input
+                  type="checkbox"
+                  name="is_one_time_fee"
+                  className="accent-violet-600"
+                  data-testid="is-one-time-fee-checkbox"
+                />
+                <span>Mark this invoice as the One-Time Setup Fee ({fmtMoney(commercial.one_time_fee_amount, commercial.currency)})</span>
+              </label>
+            )}
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setInvoiceDialog({ open: false, milestone_id: null, billing_schedule_id: null, suggestedAmount: 0 })}>Cancel</Button>
               <Button type="submit" data-testid="invoice-submit">Raise invoice</Button>

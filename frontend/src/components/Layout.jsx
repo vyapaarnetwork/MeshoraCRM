@@ -53,6 +53,7 @@ import {
   Target,
   PieChart,
   CalendarRange,
+  ListTodo,
   Save as SaveIcon,
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
@@ -294,6 +295,16 @@ const Layout = ({ children }) => {
       });
     }
 
+    // Phase 36: Internal Vyapaar Tasks — internal team only
+    if (isAdmin || isVyapaarOps || isVyapaarFinance) {
+      items.push({
+        label: 'Internal Tasks',
+        icon: ListTodo,
+        path: '/internal-tasks',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
+      });
+    }
+
     // Phase 2: Revenue Intelligence — admin-like roles + selling partners
     if (isAdmin || isFinance || isDelivery || isVyapaarOps || isVyapaarFinance || isSellingPartner) {
       items.push({
@@ -367,6 +378,7 @@ const Layout = ({ children }) => {
         items: [
           has('/dashboard') && byPath['/dashboard'],
           has('/leads') && byPath['/leads'],
+          has('/internal-tasks') && byPath['/internal-tasks'],
           has('/lead-referral') && byPath['/lead-referral'],
           has('/internal-requests') && byPath['/internal-requests'],
           has('/company-users') && byPath['/company-users'],

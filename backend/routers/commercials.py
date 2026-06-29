@@ -117,6 +117,12 @@ class CommercialCreate(BaseModel):
     renewal_notice_days: Optional[int] = 30
     account_manager_id: Optional[str] = None
     contract_owner_id: Optional[str] = None
+    # Phase 36 — One-Time Setup Fee on Recurring contracts (SaaS onboarding /
+    # implementation / customisation fee). Tracked separately from the recurring
+    # billing schedule. Uses the same commission % as the base deal.
+    one_time_fee_amount: Optional[float] = None
+    one_time_fee_label: Optional[str] = None      # e.g. "Onboarding fee", "Setup"
+    one_time_fee_due_date: Optional[str] = None
 
 class CommercialUpdate(BaseModel):
     type: Optional[CommercialType] = None  # Phase 35 — allow switching One-Time ↔ Recurring post-creation
@@ -138,6 +144,11 @@ class CommercialUpdate(BaseModel):
     account_manager_id: Optional[str] = None
     contract_owner_id: Optional[str] = None
     contract_status: Optional[ContractStatus] = None
+    # Phase 36 — editable One-Time Fee on Recurring contracts
+    one_time_fee_amount: Optional[float] = None
+    one_time_fee_label: Optional[str] = None
+    one_time_fee_due_date: Optional[str] = None
+    one_time_fee_status: Optional[str] = None  # 'pending' | 'invoiced' | 'paid' | 'waived'
 
 class MilestonesBulkInput(BaseModel):
     milestones: List[MilestoneInput]
@@ -150,6 +161,7 @@ class InvoiceCreate(BaseModel):
     due_date: Optional[str] = None
     raised_at: Optional[str] = None
     notes: Optional[str] = None
+    is_one_time_fee: Optional[bool] = False  # Phase 36 — flags an invoice as the recurring contract's One-Time Setup Fee
 
 class InvoiceUpdate(BaseModel):
     invoice_number: Optional[str] = None
@@ -313,6 +325,12 @@ async def create_commercial(payload: CommercialCreate, current_user: dict = Depe
         "account_manager_id": payload.account_manager_id,
         "contract_owner_id": payload.contract_owner_id,
         "contract_status": ContractStatus.ACTIVE.value if payload.type == CommercialType.RECURRING else None,
+        # Phase 36 — One-Time Setup Fee (SaaS onboarding etc.) on Recurring contracts
+        "one_time_fee_amount": payload.one_time_fee_amount,
+        "one_time_fee_label": (payload.one_time_fee_label or "").strip() or None,
+        "one_time_fee_due_date": payload.one_time_fee_due_date,
+        "one_time_fee_status": "pending" if payload.one_time_fee_amount else None,
+        "one_time_fee_invoice_id": None,
         "milestones": [],
         "billing_schedule": [],
     }
@@ -1308,6 +1326,16 @@ async def update_commercial(commercial_id: str, payload: CommercialUpdate, curre
         merged = {**commercial, **updates}
         new_schedule = _generate_billing_schedule(merged)
         await db.commercials.update_one({"id": commercial_id}, {"$set": {"billing_schedule": new_schedule}})
+    # Phase 36 — if a one-time fee was just added (was 0 / null, now > 0), set status=pending
+    if (
+        'one_time_fee_amount' in updates
+        and float(updates.get('one_time_fee_amount') or 0) > 0
+        and not commercial.get('one_time_fee_status')
+    ):
+        await db.commercials.update_one(
+            {"id": commercial_id},
+            {"$set": {"one_time_fee_status": "pending"}},
+        )
     if type_changed:
         await _log_commercial_activity(
             commercial_id, current_user, "type_changed",
@@ -1418,10 +1446,17 @@ async def create_invoice(commercial_id: str, payload: InvoiceCreate, current_use
         "paid_at": None,
         "amount_paid": 0.0,
         "notes": payload.notes,
+        "is_one_time_fee": bool(payload.is_one_time_fee),  # Phase 36 — track SaaS setup-fee invoices distinctly
         "created_at": _now_iso(),
         "created_by": current_user['id'],
     }
     await db.commercial_invoices.insert_one(doc)
+    # Phase 36 — flip the one-time fee status when its invoice is raised
+    if payload.is_one_time_fee and commercial.get('one_time_fee_amount'):
+        await db.commercials.update_one(
+            {"id": commercial_id},
+            {"$set": {"one_time_fee_status": "invoiced", "one_time_fee_invoice_id": invoice_id, "updated_at": _now_iso()}},
+        )
     # Link to milestone / billing schedule
     if payload.milestone_id:
         milestones = commercial.get('milestones', [])
@@ -1518,6 +1553,12 @@ async def record_payment(commercial_id: str, payload: PaymentCreate, current_use
                     if s['id'] == invoice['billing_schedule_id']:
                         s['status'] = 'paid'
                 await db.commercials.update_one({"id": commercial_id}, {"$set": {"billing_schedule": schedule}})
+            # Phase 36 — flip one_time_fee_status to 'paid' when its invoice is fully paid
+            if new_status == InvoiceStatus.PAID.value and invoice.get('is_one_time_fee'):
+                await db.commercials.update_one(
+                    {"id": commercial_id},
+                    {"$set": {"one_time_fee_status": "paid", "updated_at": _now_iso()}},
+                )
     await _log_commercial_activity(commercial_id, current_user, "payment_received", f"Payment of {commercial.get('currency','INR')} {payload.amount} received", {"payment_id": payment_id})
     return {k: v for k, v in pdoc.items() if k != '_id'}
 

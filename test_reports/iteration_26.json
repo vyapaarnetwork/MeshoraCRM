@@ -1,0 +1,37 @@
+{
+  "summary": "Phase 36 — full backend + targeted UI testing. All 15 pytest cases PASSED (signed-URL, Internal Tasks CRUD + RBAC + admin dispatchers, Commercials One-Time Setup Fee + invoice flag + payment auto-flip, type change regression). UI smoke verified Internal Tasks page renders with all 4 stat cards, New Task dialog opens with all form fields (title, description, assignee, priority, category, datetime-local due, email reminder, tags). Login + navigation work as expected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase36.py",
+    "/app/test_reports/pytest/phase36_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routers/internal_tasks.py — solid RBAC via original_role (correctly distinguishes real internal users from role-expanded UI-only super_admins). _ensure_internal returns 403 as expected. Verified.",
+    "routers/commercials.py update_commercial L1330-1338 — one_time_fee_status auto-set to 'pending' only when status was previously unset; respects waived/paid. Good.",
+    "routers/commercials.py create_invoice L1455-1458 — atomically flips one_time_fee_status to 'invoiced' AND records one_time_fee_invoice_id only when payload.is_one_time_fee AND commercial.one_time_fee_amount > 0. Defensive. Verified end-to-end.",
+    "routers/commercials.py payment handler L1556-1560 — flips one_time_fee_status to 'paid' when the linked invoice fully clears. Verified via test_record_full_payment_flips_to_paid.",
+    "DocumentUpload signed-URL flow — backend returns {url, preview_url}; fetching the signed URL without Authorization succeeds (200). CORS-credentials issue is solved by token-in-querystring approach.",
+    "Minor: internal_tasks._enrich uses `l` as variable name (E741 ambiguous) — cosmetic, not a bug."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase36.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15)",
+    "frontend": "100% (smoke — Internal Tasks page renders, all 4 stat cards present, New Task dialog opens with all fields)"
+  },
+  "test_credentials": "super_admin admin@vyapaarnetwork.com / admin123 ; customer john@testco.com / test123 used for non-admin RBAC test (403 confirmed).",
+  "seed_data_creation": "Test created and deleted: 1 internal task ('TEST_E2E task'), 1 invoice (TEST-OTF-*) on an existing recurring commercial with 15000 INR Onboarding fee and a 15000 INR payment. Commercial mutation (one_time_fee_* fields) left in 'paid' state on whichever recurring commercial was first in the list.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 36 fully verified. Backend test file at /app/backend/tests/test_phase36.py is a reusable regression suite — re-run with `pytest backend/tests/test_phase36.py -v`. The OneTimeSetupFee tests mutate the first recurring commercial returned by /api/commercials?type=recurring — if a clean test commercial is needed, create a dedicated fixture commercial. Document signed-URL test skips if no documents exist on any lead; current data has at least one document so it ran and passed."
+}

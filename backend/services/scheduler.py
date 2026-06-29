@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -216,6 +216,46 @@ async def _resolve_commercial_recipient(db, commercial: dict) -> Optional[dict]:
     return None
 
 
+async def _resolve_commercial_recipients_multi(db, commercial: dict) -> list:
+    """Phase 36 — multi-recipient resolver for commercials notifications.
+    Returns a de-duped list of {id,name,email,role} dicts containing:
+      - Account Manager
+      - Billing Contact
+      - Contract Owner / Project Owner / Delivery SPOC (if present)
+      - All active Vyapaar Super Admin + Finance users (compliance bcc-style)
+    The caller can additionally honor per-user notification_preferences."""
+    seen = set()
+    out: list = []
+
+    def _add(u: Optional[dict]):
+        if not u or not u.get('email'):
+            return
+        if u['id'] in seen:
+            return
+        seen.add(u['id'])
+        out.append(u)
+
+    role_keys = (
+        'account_manager_id', 'billing_contact_id', 'contract_owner_id',
+        'project_owner_id', 'delivery_spoc_id',
+    )
+    for k in role_keys:
+        uid = commercial.get(k)
+        if uid:
+            u = await db.users.find_one({"id": uid, "is_active": {"$ne": False}}, {"_id": 0})
+            _add(u)
+
+    # Vyapaar admin + finance team — always notified for revenue events
+    admins = await db.users.find(
+        {"is_active": {"$ne": False}, "role": {"$in": ["super_admin", "vyapaar_finance"]}},
+        {"_id": 0},
+    ).to_list(100)
+    for u in admins:
+        _add(u)
+    return out
+
+
+
 def _format_amount(amount, currency="INR") -> str:
     if amount is None:
         return ""
@@ -329,6 +369,15 @@ async def dispatch_due_milestone_reminders(db, zeptomail, window_hours: int = 48
                 )
                 continue
 
+            # Phase 36 — also CC the full Vyapaar revenue chain (admin + finance +
+            # Account Manager + Billing Contact) so they are always in the loop.
+            cc_pool = await _resolve_commercial_recipients_multi(db, c)
+            cc_emails = [
+                u['email'] for u in cc_pool
+                if u.get('email') and u['id'] != recipient.get('id')
+                and (u.get('notification_preferences') or {}).get('milestone_due', True) is not False
+            ]
+
             prefs = recipient.get('notification_preferences') or {}
             if prefs.get('milestone_due', True) is False:
                 await db.commercials.update_one(
@@ -358,6 +407,7 @@ async def dispatch_due_milestone_reminders(db, zeptomail, window_hours: int = 48
             result = await zeptomail.send_email(
                 to_address=recipient['email'],
                 to_name=recipient.get('name'),
+                cc=cc_emails or None,  # Phase 36 — keep admin/finance + AM/billing in the loop
                 subject=rendered.get("subject") or f"[Meshora] Milestone due: {ctx['milestone_name']}",
                 html_body=rendered.get("html") or f"<p>Milestone '{ctx['milestone_name']}' due {ctx['due_label']}.</p>",
                 text_body=rendered.get("text"),
@@ -382,6 +432,144 @@ async def dispatch_due_milestone_reminders(db, zeptomail, window_hours: int = 48
                 sent += 1
                 logger.info("Milestone-due reminder sent: commercial=%s milestone=%s to=%s", c['id'], m['id'], recipient['email'])
     return {"scanned": scanned, "sent": sent, "now": now.isoformat(), "window_hours": window_hours}
+
+
+async def dispatch_commercial_renewal_reminders(db, zeptomail) -> dict:
+    """Phase 36 — for every active Recurring contract whose contract_end_date is
+    within renewal_notice_days (default 30), send ONE reminder to the AM +
+    Billing Contact + admin/finance team. Idempotent via `renewal_reminder_sent`."""
+    if not zeptomail.is_configured():
+        return {"scanned": 0, "sent": 0, "skipped": "zeptomail_not_configured"}
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    cursor = db.commercials.find({
+        "type": "recurring",
+        "contract_status": {"$nin": ["expired", "cancelled"]},
+        "contract_end_date": {"$nin": [None, ""]},
+        "renewal_reminder_sent": {"$ne": True},
+    }, {"_id": 0})
+    scanned, sent = 0, 0
+    async for c in cursor:
+        scanned += 1
+        try:
+            end_str = c.get('contract_end_date') or ''
+            if not end_str:
+                continue
+            try:
+                end_d = date.fromisoformat(end_str[:10])
+            except Exception:
+                continue
+            notice_days = int(c.get('renewal_notice_days') or 30)
+            days_to_renew = (end_d - today).days
+            # Window: enter the notice window OR up to 7 days post-expiry
+            if days_to_renew > notice_days or days_to_renew < -7:
+                continue
+            recipients = await _resolve_commercial_recipients_multi(db, c)
+            if not recipients:
+                await db.commercials.update_one(
+                    {"id": c['id']},
+                    {"$set": {"renewal_reminder_sent": True, "renewal_reminder_skip_reason": "no_recipient"}},
+                )
+                continue
+            primary = recipients[0]
+            cc = [u['email'] for u in recipients[1:] if u.get('email')]
+            label = "expired" if days_to_renew < 0 else (
+                "today" if days_to_renew == 0 else f"in {days_to_renew} days"
+            )
+            subject = f"[Meshora] Contract renewal {label}: {c.get('customer_name','')}"
+            url = f"https://app.vyapaar.net/commercials/{c['id']}"
+            body = (
+                f'<p>Hi {primary.get("name","there")},</p>'
+                f'<p>The recurring contract for <strong>{c.get("customer_name","this customer")}</strong> ends on <strong>{end_str[:10]}</strong> ({label}).</p>'
+                f'<div style="background:#f9fafb;border-left:4px solid #4f46e5;padding:14px 16px;margin:12px 0;border-radius:6px;">'
+                f'<div style="font-size:16px;font-weight:600;">{c.get("lead_title","Contract")}</div>'
+                f'<div style="color:#6b7280;font-size:13px;margin-top:4px;">'
+                f'Value: {_format_amount(c.get("contract_value"), c.get("currency","INR"))} &middot; Renewal type: {c.get("renewal_type","manual")}'
+                f'</div></div>'
+                f'{zeptomail._btn("Open Commercial", url)}'  # noqa: SLF001
+            )
+            html = zeptomail._wrap("Renewal due soon", "Renewal Reminder", body)  # noqa: SLF001
+            res = await zeptomail.send_email(
+                to_address=primary['email'], to_name=primary.get('name'), cc=cc or None,
+                subject=subject, html_body=html, db=db,
+                notification_type="renewal_reminder", user_id=primary.get('id'),
+                correlation_id=f"renewal:{c['id']}",
+            )
+            await db.commercials.update_one(
+                {"id": c['id']},
+                {"$set": {
+                    "renewal_reminder_sent": True,
+                    "renewal_reminder_sent_at": now.isoformat(),
+                    "renewal_reminder_result_ok": bool(res.get('ok')),
+                }},
+            )
+            if res.get('ok'):
+                sent += 1
+        except Exception as e:
+            logger.exception("renewal reminder failed for commercial %s: %s", c.get('id'), e)
+    return {"scanned": scanned, "sent": sent, "now": now.isoformat()}
+
+
+async def dispatch_invoice_overdue_reminders(db, zeptomail) -> dict:
+    """Phase 36 — daily scan for `commercial_invoices` whose due_date < today
+    and status is in (raised, partial). Fires one reminder per invoice
+    (idempotent via `overdue_reminder_sent`)."""
+    if not zeptomail.is_configured():
+        return {"scanned": 0, "sent": 0, "skipped": "zeptomail_not_configured"}
+    now = datetime.now(timezone.utc)
+    today_iso = now.date().isoformat()
+    cursor = db.commercial_invoices.find({
+        "status": {"$in": ["raised", "partial"]},
+        "due_date": {"$lt": today_iso, "$nin": [None, ""]},
+        "overdue_reminder_sent": {"$ne": True},
+    }, {"_id": 0})
+    scanned, sent = 0, 0
+    async for inv in cursor:
+        scanned += 1
+        try:
+            c = await db.commercials.find_one({"id": inv.get('commercial_id')}, {"_id": 0})
+            if not c:
+                continue
+            recipients = await _resolve_commercial_recipients_multi(db, c)
+            if not recipients:
+                await db.commercial_invoices.update_one({"id": inv['id']}, {"$set": {"overdue_reminder_sent": True}})
+                continue
+            primary = recipients[0]
+            cc = [u['email'] for u in recipients[1:] if u.get('email')]
+            amount = _format_amount(inv.get('amount'), c.get('currency', 'INR'))
+            days_overdue = max(0, (now.date() - date.fromisoformat(inv['due_date'][:10])).days)
+            subject = f"[Meshora] Invoice overdue: {inv.get('invoice_number','')} ({amount})"
+            url = f"https://app.vyapaar.net/commercials/{c['id']}"
+            body = (
+                f'<p>Hi {primary.get("name","there")},</p>'
+                f'<p>Invoice <strong>{inv.get("invoice_number","")}</strong> for <strong>{c.get("customer_name","this customer")}</strong> is <strong>{days_overdue} day(s) overdue</strong>.</p>'
+                f'<div style="background:#fef2f2;border-left:4px solid #dc2626;padding:14px 16px;margin:12px 0;border-radius:6px;">'
+                f'<div style="font-size:16px;font-weight:600;">{amount}</div>'
+                f'<div style="color:#6b7280;font-size:13px;margin-top:4px;">Due {inv.get("due_date","")[:10]}</div>'
+                f'</div>'
+                f'{zeptomail._btn("Open Commercial", url)}'  # noqa: SLF001
+            )
+            html = zeptomail._wrap("Invoice overdue", "Invoice Overdue", body)  # noqa: SLF001
+            res = await zeptomail.send_email(
+                to_address=primary['email'], to_name=primary.get('name'), cc=cc or None,
+                subject=subject, html_body=html, db=db,
+                notification_type="invoice_overdue", user_id=primary.get('id'),
+                correlation_id=f"invoice_overdue:{inv['id']}",
+            )
+            await db.commercial_invoices.update_one(
+                {"id": inv['id']},
+                {"$set": {
+                    "overdue_reminder_sent": True,
+                    "overdue_reminder_sent_at": now.isoformat(),
+                    "status": "overdue",
+                }},
+            )
+            if res.get('ok'):
+                sent += 1
+        except Exception as e:
+            logger.exception("invoice overdue reminder failed for invoice %s: %s", inv.get('id'), e)
+    return {"scanned": scanned, "sent": sent, "now": now.isoformat()}
+
 
 
 async def dispatch_monthly_won_digest(db, zeptomail, force: bool = False) -> dict:
@@ -870,6 +1058,183 @@ async def _scheduler_enabled(db) -> bool:
     return True
 
 
+# ===========================================================================
+# Phase 36 — Internal Vyapaar Tasks: exact-time reminder + weekly Monday digest
+# ===========================================================================
+
+async def dispatch_due_internal_task_reminders(db, zeptomail) -> dict:
+    """Scan internal_tasks whose reminder window has been crossed and fire one
+    email per task. Idempotent via the `reminder_sent` flag on each task."""
+    now = datetime.now(timezone.utc)
+    scanned, sent = 0, 0
+    if not zeptomail.is_configured():
+        return {"scanned": 0, "sent": 0, "skipped": "zeptomail_not_configured"}
+    cursor = db.internal_tasks.find({
+        "status": {"$nin": ["done", "cancelled"]},
+        "reminder_minutes_before": {"$gt": 0},
+        "reminder_sent": {"$ne": True},
+        "due_date": {"$nin": [None, ""]},
+        "assignee_id": {"$nin": [None, ""]},
+    }, {"_id": 0})
+    async for task in cursor:
+        scanned += 1
+        try:
+            due = task.get("due_date") or ""
+            # Build a UTC datetime for the comparison
+            if "T" in due:
+                due_dt = datetime.fromisoformat(due.replace("Z", "+00:00"))
+                if due_dt.tzinfo is None:
+                    due_dt = due_dt.replace(tzinfo=timezone.utc)
+            else:
+                # Date-only → fire reminder at 09:00 UTC on that date
+                due_dt = datetime.fromisoformat(due + "T09:00:00+00:00")
+            fire_at = due_dt - timedelta(minutes=int(task.get("reminder_minutes_before") or 0))
+            if now < fire_at:
+                continue
+            # Look up assignee
+            assignee = await db.users.find_one({"id": task["assignee_id"]}, {"_id": 0, "name": 1, "email": 1})
+            if not (assignee and assignee.get("email")):
+                await db.internal_tasks.update_one({"id": task["id"]}, {"$set": {"reminder_sent": True}})
+                continue
+            subject = f"[Meshora] Reminder: {task.get('title','Internal Task')[:120]} is due soon"
+            url = f"https://app.vyapaar.net/internal-tasks/{task['id']}"
+            body = (
+                f'<p>Hi {assignee.get("name","there")},</p>'
+                f'<p>Your internal task is coming up <strong>{due}</strong>:</p>'
+                f'<div style="background:#f9fafb;border-left:4px solid #f59e0b;padding:14px 16px;margin:12px 0;border-radius:6px;">'
+                f'<div style="font-size:16px;font-weight:600;">{task.get("title","")}</div>'
+                f'<div style="color:#6b7280;font-size:13px;margin-top:4px;">'
+                f'Priority: {task.get("priority","medium")} · Category: {task.get("category","operations")}'
+                f'</div>'
+                f'</div>'
+                f'{zeptomail._btn("Open Task", url)}'  # noqa: SLF001
+            )
+            html = zeptomail._wrap(subject, "Internal Task Reminder", body)  # noqa: SLF001
+            res = await zeptomail.send_email(
+                to_address=assignee["email"], to_name=assignee.get("name"),
+                subject=subject, html_body=html,
+                db=db, notification_type="internal_task_due_reminder", user_id=task["assignee_id"],
+            )
+            if res.get("ok"):
+                await db.internal_tasks.update_one({"id": task["id"]}, {"$set": {"reminder_sent": True}})
+                sent += 1
+        except Exception as e:
+            logger.exception("Internal-task reminder failed for task %s: %s", task.get("id"), e)
+    return {"scanned": scanned, "sent": sent, "now": now.isoformat()}
+
+
+async def dispatch_weekly_internal_task_digest(db, zeptomail, force: bool = False) -> dict:
+    """Phase 36 — Mondays 09:xx **IST** (03:xx UTC) digest to every active
+    Vyapaar internal user. Each recipient receives THEIR personal task picture:
+      - Overdue tasks (count + top 5)
+      - Tasks due this week
+      - New tasks assigned to them in the last 7 days
+
+    Idempotent via `internal_task_digest_runs` keyed by ISO-week.
+    """
+    now_utc = datetime.now(timezone.utc)
+    # IST = UTC + 5:30
+    now_ist = now_utc + timedelta(hours=5, minutes=30)
+    iso_year, iso_week, iso_dow_ist = now_ist.isocalendar()
+    run_key = f"{iso_year}-W{iso_week:02d}"
+    if not force:
+        # Mondays in IST (iso_dow_ist == 1), 09:xx IST
+        if iso_dow_ist != 1 or now_ist.hour != 9:
+            return {"skipped": True, "reason": "outside_window", "now_ist": now_ist.isoformat()}
+        existing = await db.internal_task_digest_runs.find_one({"key": run_key})
+        if existing:
+            return {"skipped": True, "reason": "already_sent", "key": run_key}
+
+    if not zeptomail.is_configured():
+        return {"skipped": True, "reason": "zeptomail_not_configured"}
+
+    internal_roles = ["super_admin", "vyapaar_ops", "vyapaar_finance"]
+    recipients = await db.users.find({
+        "is_active": {"$ne": False},
+        "role": {"$in": internal_roles},
+    }, {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1}).to_list(200)
+
+    today = now_ist.date()
+    week_end = today + timedelta(days=6)  # Monday + 6 = Sunday
+    seven_days_ago = (now_utc - timedelta(days=7)).isoformat()
+    sent = 0
+    attempted = 0
+    for u in recipients:
+        if not u.get("email"):
+            continue
+        attempted += 1
+        # Pull tasks for this user
+        my_tasks = await db.internal_tasks.find({
+            "$or": [{"assignee_id": u["id"]}, {"created_by": u["id"]}],
+            "status": {"$nin": ["done", "cancelled"]},
+        }, {"_id": 0}).to_list(500)
+        overdue, due_this_week, new_assigned = [], [], []
+        for t in my_tasks:
+            due = (t.get("due_date") or "")[:10]
+            try:
+                due_d = date.fromisoformat(due) if due else None
+            except Exception:
+                due_d = None
+            if due_d:
+                if due_d < today:
+                    overdue.append(t)
+                elif today <= due_d <= week_end:
+                    due_this_week.append(t)
+            # Newly assigned to me in last 7 days
+            if (
+                t.get("assignee_id") == u["id"]
+                and (t.get("updated_at") or t.get("created_at") or "") >= seven_days_ago
+            ):
+                new_assigned.append(t)
+        if not (overdue or due_this_week or new_assigned):
+            continue
+        subject = f"[Meshora] Your week — {len(overdue)} overdue, {len(due_this_week)} due this week"
+        html = _render_internal_task_digest_html(u, overdue, due_this_week, new_assigned, zeptomail)
+        res = await zeptomail.send_email(
+            to_address=u["email"], to_name=u.get("name"),
+            subject=subject, html_body=html,
+            db=db, notification_type="internal_task_weekly_digest", user_id=u["id"],
+        )
+        if res.get("ok"):
+            sent += 1
+    # Persist run
+    await db.internal_task_digest_runs.update_one(
+        {"key": run_key},
+        {"$set": {"key": run_key, "ran_at": now_utc.isoformat(), "sent": sent, "attempted": attempted}},
+        upsert=True,
+    )
+    return {"key": run_key, "sent": sent, "attempted": attempted, "ran_at": now_utc.isoformat()}
+
+
+def _render_internal_task_digest_html(user, overdue, due_this_week, new_assigned, zeptomail) -> str:
+    def section(label, items, accent):
+        if not items:
+            return ""
+        rows = ""
+        for t in items[:5]:
+            due = (t.get("due_date") or "—")[:10]
+            rows += (
+                f'<tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;">'
+                f'<div style="font-weight:600;">{t.get("title","")}</div>'
+                f'<div style="color:#6b7280;font-size:12px;">Due {due} &middot; {t.get("priority","medium")}</div>'
+                f'</td></tr>'
+            )
+        extra = f"<p style=\"color:#6b7280;font-size:12px;\">+{len(items)-5} more</p>" if len(items) > 5 else ""
+        return (
+            f'<h3 style="margin:18px 0 6px;color:{accent};">{label} ({len(items)})</h3>'
+            f'<table style="width:100%;border-collapse:collapse;">{rows}</table>{extra}'
+        )
+    body = (
+        f'<p>Hi {user.get("name","there")},</p>'
+        f'<p>Here is your internal-task snapshot for the week:</p>'
+        f'{section("Overdue", overdue, "#b91c1c")}'
+        f'{section("Due this week", due_this_week, "#b45309")}'
+        f'{section("Newly assigned to you", new_assigned, "#1d4ed8")}'
+        f'{zeptomail._btn("Open Internal Tasks", "https://app.vyapaar.net/internal-tasks")}'  # noqa: SLF001
+    )
+    return zeptomail._wrap("Your week in Meshora", "Weekly Internal Tasks Digest", body)  # noqa: SLF001
+
+
 async def _reminder_loop(db, zeptomail) -> None:
     logger.info("Follow-up reminder loop started (interval=%ss)", SCAN_INTERVAL_SECONDS)
     while True:
@@ -906,6 +1271,24 @@ async def _reminder_loop(db, zeptomail) -> None:
             raise
         except Exception as e:
             logger.exception("Milestone-due loop iteration crashed: %s", e)
+        # Phase 36 — renewal-window reminders for recurring contracts
+        try:
+            res = await dispatch_commercial_renewal_reminders(db, zeptomail)
+            if res.get('sent'):
+                logger.info("Renewal-reminder pass: scanned=%s sent=%s", res['scanned'], res['sent'])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Renewal-reminder loop iteration crashed: %s", e)
+        # Phase 36 — invoice-overdue reminders
+        try:
+            res = await dispatch_invoice_overdue_reminders(db, zeptomail)
+            if res.get('sent'):
+                logger.info("Invoice-overdue pass: scanned=%s sent=%s", res['scanned'], res['sent'])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Invoice-overdue loop iteration crashed: %s", e)
         # Piggyback the monthly won-deals digest scan (fires once on 1st of month, 09:xx UTC).
         try:
             res = await dispatch_monthly_won_digest(db, zeptomail)
@@ -927,6 +1310,24 @@ async def _reminder_loop(db, zeptomail) -> None:
             raise
         except Exception as e:
             logger.exception("Weekly War Room digest iteration crashed: %s", e)
+        # Phase 36 — internal task due-reminder + Monday IST digest
+        try:
+            res = await dispatch_due_internal_task_reminders(db, zeptomail)
+            if res.get('sent'):
+                logger.info("Internal-task reminder pass: scanned=%s sent=%s", res['scanned'], res['sent'])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Internal-task reminder loop crashed: %s", e)
+        try:
+            res = await dispatch_weekly_internal_task_digest(db, zeptomail)
+            if not res.get('skipped'):
+                logger.info("Internal-task weekly digest fired: key=%s sent=%s attempted=%s",
+                            res.get('key'), res.get('sent'), res.get('attempted'))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Internal-task weekly digest crashed: %s", e)
         try:
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
         except asyncio.CancelledError:

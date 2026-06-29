@@ -40,6 +40,7 @@ import CommercialsList from './pages/CommercialsList';
 import CommercialDetail from './pages/CommercialDetail';
 import CommercialsAnalytics from './pages/CommercialsAnalytics';
 import CommercialsKanban from './pages/CommercialsKanban';
+import InternalTasks from './pages/InternalTasks';
 import './App.css';
 
 // Protected Route Component
@@ -220,6 +221,18 @@ function AppRoutes() {
       <Route path="/commercials/:id" element={
         <ProtectedRoute>
           <CommercialDetail />
+        </ProtectedRoute>
+      } />
+
+      {/* Phase 36 — Internal Vyapaar Tasks (Vyapaar internal only) */}
+      <Route path="/internal-tasks" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <InternalTasks />
+        </ProtectedRoute>
+      } />
+      <Route path="/internal-tasks/:id" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <InternalTasks />
         </ProtectedRoute>
       } />
 
