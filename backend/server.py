@@ -394,11 +394,19 @@ class LeadCreate(BaseModel):
     secondary_category_id: Optional[str] = None
     deal_value: float = 0.0
     commission_override: Optional[float] = None
+    # Phase 36.3 — Vyapaar commission template (Standard / Premium Partner / …).
+    # Resolves to the same `commission_override` % when persisted.
+    vyapaar_commission_template_id: Optional[str] = None
     sales_associate_commission: Optional[float] = None
-    # Phase 36.2 — Partner commission slab (10 / 20 / 30 / 40 / 50). Defaults to 10%.
-    # The % is applied to gross deal_value at close-won to compute the payout
-    # Vyapaar gives back to the selling partner / sales associate.
-    partner_commission_percent: Optional[float] = 10.0
+    # Phase 36.2/36.3 — Referral commission level (Lead Scout 10 / Opportunity
+    # Builder 20 / Deal Enabler 30 / Growth Catalyst 40 / Strategic Partner 50).
+    # `referral_commission_id` points to the master row; the picked percent is
+    # cached on the lead as `referral_commission_percent` for fast reads/reports.
+    referral_commission_id: Optional[str] = None
+    referral_commission_percent: Optional[float] = None  # cached for reports
+    # ⚠️ DEPRECATED: kept for back-compat with API callers that still send
+    # partner_commission_percent; treated as a referral % when no level is set.
+    partner_commission_percent: Optional[float] = None
     status_id: Optional[str] = None
     start_date: Optional[str] = None
     closure_date: Optional[str] = None
@@ -419,8 +427,11 @@ class LeadUpdate(BaseModel):
     secondary_category_id: Optional[str] = None
     deal_value: Optional[float] = None
     commission_override: Optional[float] = None
+    vyapaar_commission_template_id: Optional[str] = None  # Phase 36.3
     sales_associate_commission: Optional[float] = None
-    partner_commission_percent: Optional[float] = None  # Phase 36.2
+    referral_commission_id: Optional[str] = None  # Phase 36.3
+    referral_commission_percent: Optional[float] = None  # cached
+    partner_commission_percent: Optional[float] = None  # deprecated alias
     status_id: Optional[str] = None
     start_date: Optional[str] = None
     closure_date: Optional[str] = None
@@ -485,8 +496,15 @@ class LeadResponse(BaseModel):
     vyapaar_lead_owner_name: Optional[str] = None
     deal_value: float
     commission_override: Optional[float] = None
+    vyapaar_commission_template_id: Optional[str] = None  # Phase 36.3
     sales_associate_commission: Optional[float] = None
-    # Phase 36.2 — Partner commission slab (10/20/30/40/50) + computed amount
+    # Phase 36.3 — Referral commission (replaces partner_commission_percent).
+    # Both fields are emitted so the UI can render the level chip + the ₹ amount.
+    referral_commission_id: Optional[str] = None
+    referral_commission_level_name: Optional[str] = None  # denormalised for UI
+    referral_commission_percent: Optional[float] = None
+    referral_commission_amount: Optional[float] = None    # computed at read-time
+    # Legacy aliases (always equal to the referral_* values now)
     partner_commission_percent: Optional[float] = None
     partner_commission_amount: Optional[float] = None
     commission_breakdown: Optional[CommissionBreakdown] = None
@@ -3474,9 +3492,41 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         vyapaar_lead_owner_name=vyapaar_owner['name'] if vyapaar_owner else None,
         deal_value=lead.get('deal_value', 0),
         commission_override=lead.get('commission_override'),
+        vyapaar_commission_template_id=lead.get('vyapaar_commission_template_id'),
         sales_associate_commission=lead.get('sales_associate_commission'),
-        partner_commission_percent=lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0,
-        partner_commission_amount=lead.get('partner_commission_amount') if lead.get('partner_commission_amount') is not None else round(float(lead.get('deal_value') or 0) * float(lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0) / 100.0, 2),
+        referral_commission_id=lead.get('referral_commission_id'),
+        referral_commission_level_name=(
+            (await db.referral_commissions.find_one(
+                {"id": lead['referral_commission_id']}, {"_id": 0, "name": 1}
+            )) or {}
+        ).get('name') if lead.get('referral_commission_id') else None,
+        referral_commission_percent=(
+            lead.get('referral_commission_percent')
+            if lead.get('referral_commission_percent') is not None
+            else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+        ),
+        referral_commission_amount=round(
+            float(lead.get('deal_value') or 0) *
+            float(
+                lead.get('referral_commission_percent')
+                if lead.get('referral_commission_percent') is not None
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+            ) / 100.0, 2
+        ),
+        # Legacy aliases so any existing UI code keeps working
+        partner_commission_percent=(
+            lead.get('referral_commission_percent')
+            if lead.get('referral_commission_percent') is not None
+            else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+        ),
+        partner_commission_amount=round(
+            float(lead.get('deal_value') or 0) *
+            float(
+                lead.get('referral_commission_percent')
+                if lead.get('referral_commission_percent') is not None
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+            ) / 100.0, 2
+        ),
         commission_breakdown=commission_breakdown,
         status_id=lead.get('status_id'),
         status_name=status['name'] if status else None,
@@ -3660,9 +3710,36 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             vyapaar_lead_owner_name=(users_map.get(lead.get('vyapaar_lead_owner_id')) or {}).get('name'),
             deal_value=lead.get('deal_value', 0),
             commission_override=lead.get('commission_override'),
+            vyapaar_commission_template_id=lead.get('vyapaar_commission_template_id'),
             sales_associate_commission=lead.get('sales_associate_commission'),
-            partner_commission_percent=lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0,
-            partner_commission_amount=lead.get('partner_commission_amount') if lead.get('partner_commission_amount') is not None else round(float(lead.get('deal_value') or 0) * float(lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0) / 100.0, 2),
+            referral_commission_id=lead.get('referral_commission_id'),
+            referral_commission_level_name=None,  # filled below for bulk
+            referral_commission_percent=(
+                lead.get('referral_commission_percent')
+                if lead.get('referral_commission_percent') is not None
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+            ),
+            referral_commission_amount=round(
+                float(lead.get('deal_value') or 0) *
+                float(
+                    lead.get('referral_commission_percent')
+                    if lead.get('referral_commission_percent') is not None
+                    else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                ) / 100.0, 2
+            ),
+            partner_commission_percent=(
+                lead.get('referral_commission_percent')
+                if lead.get('referral_commission_percent') is not None
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+            ),
+            partner_commission_amount=round(
+                float(lead.get('deal_value') or 0) *
+                float(
+                    lead.get('referral_commission_percent')
+                    if lead.get('referral_commission_percent') is not None
+                    else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                ) / 100.0, 2
+            ),
             commission_breakdown=commission_breakdown,
             status_id=lead.get('status_id'),
             status_name=status['name'] if status else None,
@@ -3747,16 +3824,11 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
         "secondary_category_id": lead_data.secondary_category_id,
         "deal_value": lead_data.deal_value,
         "commission_override": lead_data.commission_override,
+        "vyapaar_commission_template_id": lead_data.vyapaar_commission_template_id,
         "sales_associate_commission": lead_data.sales_associate_commission,
-        # Phase 36.2 — partner commission slab (defaults to 10%)
-        "partner_commission_percent": (
-            lead_data.partner_commission_percent if lead_data.partner_commission_percent is not None else 10.0
-        ),
-        "partner_commission_amount": round(
-            (lead_data.deal_value or 0) * (
-                (lead_data.partner_commission_percent if lead_data.partner_commission_percent is not None else 10.0) / 100.0
-            ), 2
-        ),
+        # Phase 36.3 — referral commission (replaces partner_commission_percent)
+        "referral_commission_id": None,
+        "referral_commission_percent": None,
         "status_id": status_id,
         "follow_ups": [],
         "comments": [],
@@ -3766,7 +3838,39 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
         "start_date": start_date,
         "closure_date": closure_date,
     }
-    
+
+    # Phase 36.3 — resolve Vyapaar Commission template → commission_override
+    if lead_data.vyapaar_commission_template_id and lead_doc.get("commission_override") is None:
+        tpl = await db.commission_templates.find_one(
+            {"id": lead_data.vyapaar_commission_template_id},
+            {"_id": 0, "vyapaar_percentage": 1},
+        )
+        if tpl and tpl.get("vyapaar_percentage") is not None:
+            lead_doc["commission_override"] = float(tpl["vyapaar_percentage"])
+
+    # Phase 36.3 — resolve Referral level → cached percent + amount
+    if lead_data.referral_commission_id:
+        rc = await db.referral_commissions.find_one(
+            {"id": lead_data.referral_commission_id},
+            {"_id": 0, "percent": 1, "name": 1},
+        )
+        if rc:
+            lead_doc["referral_commission_id"] = lead_data.referral_commission_id
+            lead_doc["referral_commission_percent"] = float(rc.get("percent") or 0)
+    # Back-compat: accept legacy partner_commission_percent if no level supplied
+    elif lead_data.partner_commission_percent is not None:
+        lead_doc["referral_commission_percent"] = float(lead_data.partner_commission_percent)
+    else:
+        # Default to the master is_default row (= Lead Scout 10%)
+        default_level = await db.referral_commissions.find_one(
+            {"is_default": True, "is_active": {"$ne": False}}, {"_id": 0, "id": 1, "percent": 1},
+        )
+        if default_level:
+            lead_doc["referral_commission_id"] = default_level["id"]
+            lead_doc["referral_commission_percent"] = float(default_level.get("percent") or 10.0)
+        else:
+            lead_doc["referral_commission_percent"] = 10.0
+
     await db.leads.insert_one(lead_doc)
     
     # Create notifications for new lead
@@ -4069,13 +4173,25 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
     now = datetime.now(timezone.utc).isoformat()
 
-    # Phase 36.2 — recompute partner_commission_amount when either deal_value or
-    # partner_commission_percent changes. Default percent is 10 if never set.
-    if 'deal_value' in update_data or 'partner_commission_percent' in update_data:
-        next_value = update_data.get('deal_value', lead.get('deal_value') or 0) or 0
-        next_pct = update_data.get('partner_commission_percent',
-                                    lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
-        update_data['partner_commission_amount'] = round(float(next_value) * float(next_pct) / 100.0, 2)
+    # Phase 36.3 — Vyapaar commission template → resolves to commission_override %
+    if 'vyapaar_commission_template_id' in update_data and update_data['vyapaar_commission_template_id']:
+        tpl = await db.commission_templates.find_one(
+            {"id": update_data['vyapaar_commission_template_id']},
+            {"_id": 0, "vyapaar_percentage": 1},
+        )
+        if tpl and tpl.get('vyapaar_percentage') is not None:
+            update_data['commission_override'] = float(tpl['vyapaar_percentage'])
+
+    # Phase 36.3 — Referral commission level → resolves to cached percent
+    if 'referral_commission_id' in update_data and update_data['referral_commission_id']:
+        rc = await db.referral_commissions.find_one(
+            {"id": update_data['referral_commission_id']},
+            {"_id": 0, "percent": 1},
+        )
+        if rc:
+            update_data['referral_commission_percent'] = float(rc.get('percent') or 0)
+    elif 'partner_commission_percent' in update_data:  # legacy alias
+        update_data['referral_commission_percent'] = float(update_data['partner_commission_percent'])
 
     # Phase 34.7 — keep lead_owner_id ↔ selling_partner_id ↔ selling_partner_company_id in sync.
     # If admin updates lead_owner_id, derive the company from that user and update selling_partner_id too.
@@ -9724,6 +9840,10 @@ api_router.include_router(internal_task_categories_router)
 # Mount tax-rates router (Phase 36.2 — configurable tax master)
 from routers.tax_rates import router as tax_rates_router  # noqa: E402
 api_router.include_router(tax_rates_router)
+
+# Mount referral-commissions router (Phase 36.3 — 5-tier referral payout master)
+from routers.referral_commissions import router as referral_commissions_router  # noqa: E402
+api_router.include_router(referral_commissions_router)
 
 # Include router
 app.include_router(api_router)

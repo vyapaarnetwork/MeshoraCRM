@@ -23,6 +23,8 @@ import {
   DialogTitle,
 } from '../components/ui/dialog';
 import { Plus, Edit, Trash2, Percent, Loader2 } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+import { Switch } from '../components/ui/switch';
 import api from '../utils/api';
 import { toast } from 'sonner';
 
@@ -133,13 +135,20 @@ const Commission = () => {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Percent className="w-5 h-5 text-primary" />
-              Commission Templates
-            </CardTitle>
+      {/* Phase 36.3 — Two tabs: Vyapaar Templates + Referral Levels */}
+      <Tabs defaultValue="templates" className="w-full" data-testid="commission-tabs">
+        <TabsList>
+          <TabsTrigger value="templates" data-testid="tab-vyapaar-templates">Vyapaar Commission Templates</TabsTrigger>
+          <TabsTrigger value="referral" data-testid="tab-referral-levels">Referral Commission Levels</TabsTrigger>
+        </TabsList>
+        <TabsContent value="templates" className="mt-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Percent className="w-5 h-5 text-primary" />
+                  Commission Templates
+                </CardTitle>
             <CardDescription>
               Pre-defined commission rates for different partner tiers
             </CardDescription>
@@ -211,6 +220,14 @@ const Commission = () => {
           </Table>
         </CardContent>
       </Card>
+      {/* /Vyapaar Commission Templates */}
+        </TabsContent>
+
+        {/* === Phase 36.3 — Referral Commission Levels === */}
+        <TabsContent value="referral" className="mt-4">
+          <ReferralCommissionsTab />
+        </TabsContent>
+      </Tabs>
 
       {/* Example Calculation */}
       <Card>
@@ -360,3 +377,182 @@ const CommissionSkeleton = () => (
 );
 
 export default Commission;
+
+// ----------------------------------------------------------------------------
+// Phase 36.3 — Referral Commission Levels tab (rendered inside Commission.jsx)
+// ----------------------------------------------------------------------------
+const ReferralCommissionsTab = () => {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ name: '', percent: 0, meaning: '', is_active: true, is_default: false, sort_order: 99 });
+
+  const fetchAll = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/referral-commissions?include_inactive=true');
+      setItems(r.data || []);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to load referral levels');
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { fetchAll(); }, []);
+
+  const open = (rc = null) => {
+    setEditing(rc);
+    setForm(rc ? {
+      name: rc.name, percent: rc.percent, meaning: rc.meaning || '',
+      is_active: rc.is_active !== false, is_default: !!rc.is_default,
+      sort_order: rc.sort_order ?? 99,
+    } : { name: '', percent: 0, meaning: '', is_active: true, is_default: false, sort_order: items.length + 1 });
+    setDialogOpen(true);
+  };
+  const submit = async () => {
+    if (!form.name.trim()) return toast.error('Name is required');
+    setSaving(true);
+    try {
+      const payload = { ...form, percent: parseFloat(form.percent) || 0, sort_order: parseInt(form.sort_order, 10) || 99 };
+      if (editing) await api.patch(`/referral-commissions/${editing.id}`, payload);
+      else await api.post('/referral-commissions', payload);
+      toast.success(editing ? 'Level updated' : 'Level created');
+      setDialogOpen(false);
+      fetchAll();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to save');
+    } finally { setSaving(false); }
+  };
+  const remove = async (rc) => {
+    if (!window.confirm(`Delete "${rc.name}"?`)) return;
+    try {
+      const r = await api.delete(`/referral-commissions/${rc.id}`);
+      toast.success(r.data?.deactivated ? `Deactivated — ${r.data.in_use} lead(s) still reference it` : 'Level deleted');
+      fetchAll();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to delete');
+    }
+  };
+
+  return (
+    <>
+      <Card className="bg-indigo-50/40 dark:bg-indigo-950/20 border-indigo-200/60 dark:border-indigo-900/60 mb-3">
+        <CardContent className="pt-5">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-indigo-100 dark:bg-indigo-900/40 rounded-md">
+              <Percent className="w-5 h-5 text-indigo-600 dark:text-indigo-300" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm">5-tier Referral Commission</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Each lead can be tagged with one level. The picked % is what Vyapaar pays back to the referrer (sales associate / selling partner) on closure.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Percent className="w-5 h-5 text-indigo-600" />
+              Referral Commission Levels
+            </CardTitle>
+            <CardDescription>5 tiers, from Lead Scout (10%) to Strategic Partner (50%).</CardDescription>
+          </div>
+          <Button onClick={() => open()} data-testid="add-referral-btn">
+            <Plus className="w-4 h-4 mr-2" /> Add Level
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[60px]">Order</TableHead>
+                <TableHead>Level</TableHead>
+                <TableHead className="w-[110px]">Commission</TableHead>
+                <TableHead>Meaning</TableHead>
+                <TableHead className="w-[140px]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((rc) => (
+                <TableRow key={rc.id} data-testid={`referral-row-${rc.id}`}>
+                  <TableCell className="text-muted-foreground">{rc.sort_order}</TableCell>
+                  <TableCell className="font-medium">
+                    <span className="flex items-center gap-2">
+                      {rc.name}
+                      {rc.is_default && <Badge className="text-[10px] bg-indigo-600 text-white">Default</Badge>}
+                      {!rc.is_active && <Badge variant="outline" className="text-[10px]">Inactive</Badge>}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary" className="bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">{rc.percent}%</Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-sm">{rc.meaning || '-'}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button size="icon" variant="ghost" onClick={() => open(rc)} data-testid={`edit-referral-${rc.id}`}>
+                        <Edit className="w-4 h-4" />
+                      </Button>
+                      <Button size="icon" variant="ghost" onClick={() => remove(rc)} className="text-destructive" data-testid={`delete-referral-${rc.id}`}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {items.length === 0 && !loading && (
+                <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No referral levels yet.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent data-testid="referral-form-dialog">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Edit referral level' : 'New referral level'}</DialogTitle>
+            <DialogDescription>Used by the Lead form's Referral Commission dropdown.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Level name <span className="text-rose-500">*</span></Label>
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="ref-name" placeholder="e.g. Lead Scout" />
+            </div>
+            <div>
+              <Label className="text-xs">Commission %</Label>
+              <Input type="number" step="0.01" min="0" max="100" value={form.percent} onChange={(e) => setForm({ ...form, percent: e.target.value })} data-testid="ref-percent" />
+            </div>
+            <div>
+              <Label className="text-xs">Meaning</Label>
+              <Input value={form.meaning} onChange={(e) => setForm({ ...form, meaning: e.target.value })} placeholder="What does this level mean?" data-testid="ref-meaning" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Sort order</Label>
+                <Input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} />
+              </div>
+              <div className="flex flex-col gap-2 pt-5">
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={form.is_active} onCheckedChange={(v) => setForm({ ...form, is_active: v })} /> Active
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={form.is_default} onCheckedChange={(v) => setForm({ ...form, is_default: v })} /> Default for new leads
+                </label>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button onClick={submit} disabled={saving} data-testid="ref-submit">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : (editing ? 'Save' : 'Create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};
+

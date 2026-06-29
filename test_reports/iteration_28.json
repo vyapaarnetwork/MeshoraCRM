@@ -1,0 +1,54 @@
+{
+  "summary": "Phase 36.3 — full backend pytest (17/17 PASS) + frontend Playwright e2e for Commission tabs, ReferralCommissionLevels CRUD, LeadForm commission dropdowns, and CommissionBreakdownPreview. Backend: all CRUD on /api/referral-commissions verified (admin can create/patch/delete, customer read-allowed/write-403, Lead Scout default present, duplicate name rejected). Lead create/update with vyapaar_commission_template_id + referral_commission_id persists both fields and resolves to commission_override + referral_commission_percent. Default-on-create falls back to Lead Scout 10% when no commission supplied. Regression /leads /master/lead-status /war-room/board /commercials /internal-tasks /tax-rates all 200. Frontend: Commission page shows BOTH tabs (tab-vyapaar-templates + tab-referral-levels). Referral tab lists all 5 seeded rows (Lead Scout 10%, Opportunity Builder 20%, Deal Enabler 30%, Growth Catalyst 40%, Strategic Partner 50%) with Default badge on Lead Scout. Add-level (add-referral-btn) opens modal, fills, saves — new row appears. LeadForm has vyapaar-commission-template-select + referral-commission-select; ZERO legacy partner_commission_percent / commission_override inputs. CommissionBreakdownPreview renders correctly. NOTE: the breakdown implements referralPct% of Vyapaar's commission SHARE (₹15k * 20% = ₹3k), NOT referralPct% of deal value (would be ₹20k). Review-request wording suggested deal-value basis — please confirm intent with product (current implementation matches code in routers/referral_commissions.py docstring 'pays back to the referrer on closure'). Discrepancies/issues below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ReferralCommissionLevelsTab",
+        "issue": "Delete level: clicking trash icon does not remove row in the same flow used for confirmation dialog. May need manual verification — API delete works fine via curl/pytest. Could be missing AlertDialog confirm wiring or test selector mismatch; flag for spot-check.",
+        "selector": "tr > button (last) in referral levels table",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "LeadForm submit",
+        "issue": "Submit on /leads/new with all required fields filled (Title, Customer, Email, Phone, Category=HR, Deal=100000, Referral=Opportunity Builder) did NOT navigate away — URL stayed at /leads/new. No visible error toast captured. Status field defaulted to empty 'Select status'; this may be a required field whose validation silently blocks submit. Backend POST /api/leads works (covered by pytest). Recommend adding visible validation error OR auto-defaulting Status to first lead-status on form mount.",
+        "selector": "button:has-text('Create Lead')",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase36_3.py",
+    "/app/test_reports/pytest/phase36_3_results.xml"
+  ],
+  "action_items": [
+    "Confirm intended formula for Referral payout: spec says 'referralPct% of deal value' but UI/code computes 'referralPct% of Vyapaar share'. If spec is authoritative, change CommissionBreakdownPreview line 754 in /app/frontend/src/pages/LeadForm.jsx to: const referralPayout = (dealValue * referralPct) / 100; otherwise update spec wording.",
+    "Investigate LeadForm submit not navigating — likely Status is required and silently failing. Either auto-default Status to first lead-status master row on form mount OR show a visible validation toast on submit failure.",
+    "Spot-check Referral Commission Level delete in browser (trash icon → AlertDialog → confirm) — verify the confirm button actually invokes the DELETE call (backend DELETE works)."
+  ],
+  "critical_code_review_comments": [
+    "routers/referral_commissions.py — clean: UUID ids, _internal_only RBAC via original_role, default-flip on create/update is atomic via update_many, in-use check before delete (soft-deactivate when leads reference it). Read is open to all logged-in users (intentional for dropdown).",
+    "server.py L3843-3870 (lead create) — handles vyapaar_commission_template_id → commission_override resolution AND referral_commission_id → referral_commission_percent caching. Falls back to is_default level when neither supplied. Looks correct.",
+    "server.py L4177-4194 (lead update) — same resolution logic for PUT. Legacy partner_commission_percent alias preserved.",
+    "LeadForm.jsx CommissionBreakdownPreview uses referralPct of Vyapaar share (not deal value). Confirm with product whether this matches spec.",
+    "Commission.jsx tabs wired correctly; ReferralCommissionLevelsTab CRUD uses /referral-commissions (no /master prefix) matching the actual mount path."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase36_3.py (new — 17 pytest tests, reusable regression suite)"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17)",
+    "frontend": "~85% — tabs, seed rows, dropdowns, breakdown all verified; lead-submit on /leads/new did not navigate in e2e (likely Status required field — manual edit-mode pre-populate not verified via UI because lead never persisted, but backend GET test confirms the API returns referral_commission_id correctly so the UI should pre-populate when given a real saved lead)."
+  },
+  "test_credentials": "admin@vyapaarnetwork.com/admin123, john@testco.com/test123",
+  "seed_data_creation": "Backend tests create + clean up TEST_Phase363_* leads and one TEST_Phase363_* referral commission level (deleted). Frontend test created TEST_UI_<ts> referral level (still present — delete flow could not be verified through UI). One unsaved /leads/new attempt (TEST_Phase363_UI_*) did not persist.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 36.3 backend regression file: /app/backend/tests/test_phase36_3.py — re-run with `REACT_APP_BACKEND_URL=<url> pytest backend/tests/test_phase36_3.py -v`. Endpoint paths: /api/referral-commissions (NOT /master/...), /api/master/commission-templates, /api/master/primary-categories. Lead update is PUT (not PATCH). The router's ensure_seed() runs on first GET so seeds are guaranteed. LeadForm submit may fail silently if Status not chosen — main agent should verify the Status field is auto-defaulted on /leads/new. The CommissionBreakdownPreview formula uses referralPct% of Vyapaar share, may or may not match the product spec wording (referralPct% of deal value) — needs product confirmation.",
+  "rca of the issue": "LeadForm submit-not-navigating RCA: looking at /app/frontend/src/pages/LeadForm.jsx Lead Title, Customer Name, Customer Email and Category have HTML5 'required' attribute but Status is a custom <Select>. The backend LeadCreate model on server.py requires status_id (it has resolution logic earlier in the POST). The Select didn't auto-fetch a default status so the request likely returned 422 silently. Main agent should either (1) default formData.status_id to first lead-status on form mount, OR (2) show backend 422 error in a toast. Not a backend bug — pytest covers happy path with status auto-resolved server-side when not supplied."
+}

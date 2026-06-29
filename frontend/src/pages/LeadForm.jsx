@@ -46,7 +46,8 @@ const LeadForm = () => {
     deal_value: '',
     commission_override: '',
     sales_associate_commission: '',
-    partner_commission_percent: 10,  // Phase 36.2 — slab default 10%
+    vyapaar_commission_template_id: '',   // Phase 36.3
+    referral_commission_id: '',           // Phase 36.3
     status_id: '',
     start_date: todayIso,
     closure_date: ''
@@ -60,7 +61,9 @@ const LeadForm = () => {
     salesAssociates: [],
     sellingPartnerCompanies: [],
     companyUsers: [],
-    vyapaarTeam: []
+    vyapaarTeam: [],
+    commissionTemplates: [],    // Phase 36.3 — Vyapaar Commission templates master
+    referralCommissions: [],    // Phase 36.3 — Referral Commission levels master
   });
   const [loadingPartners, setLoadingPartners] = useState(false);
   const [loadingCompanyUsers, setLoadingCompanyUsers] = useState(false);
@@ -111,13 +114,15 @@ const LeadForm = () => {
 
   const fetchOptions = async () => {
     try {
-      const [statusesRes, primaryRes, secondaryRes, associatesRes, companiesRes, vyapaarRes] = await Promise.all([
+      const [statusesRes, primaryRes, secondaryRes, associatesRes, companiesRes, vyapaarRes, templatesRes, referralsRes] = await Promise.all([
         api.get('/master/lead-status'),
         api.get('/master/primary-categories'),
         api.get('/master/secondary-categories'),
         api.get('/users/referrers').catch(() => ({ data: [] })),
         api.get('/companies/selling-partners').catch(() => ({ data: [] })),
         api.get('/users/vyapaar-team').catch(() => ({ data: [] })),
+        api.get('/master/commission-templates').catch(() => ({ data: [] })),
+        api.get('/referral-commissions').catch(() => ({ data: [] })),
       ]);
 
       setOptions(prev => ({
@@ -128,6 +133,8 @@ const LeadForm = () => {
         salesAssociates: associatesRes.data,
         sellingPartnerCompanies: companiesRes.data,
         vyapaarTeam: vyapaarRes.data,
+        commissionTemplates: templatesRes.data || [],
+        referralCommissions: referralsRes.data || [],
       }));
     } catch (error) {
       console.error('Failed to fetch options:', error);
@@ -175,7 +182,8 @@ const LeadForm = () => {
         deal_value: lead.deal_value?.toString() || '',
         commission_override: lead.commission_override?.toString() || '',
         sales_associate_commission: lead.sales_associate_commission?.toString() || '',
-        partner_commission_percent: lead.partner_commission_percent ?? 10,
+        vyapaar_commission_template_id: lead.vyapaar_commission_template_id || '',
+        referral_commission_id: lead.referral_commission_id || '',
         status_id: lead.status_id || '',
         start_date: lead.start_date || (lead.created_at ? lead.created_at.slice(0, 10) : todayIso),
         closure_date: lead.closure_date || ''
@@ -219,9 +227,8 @@ const LeadForm = () => {
         deal_value: parseFloat(formData.deal_value) || 0,
         commission_override: formData.commission_override ? parseFloat(formData.commission_override) : null,
         sales_associate_commission: formData.sales_associate_commission ? parseFloat(formData.sales_associate_commission) : null,
-        partner_commission_percent: formData.partner_commission_percent !== '' && formData.partner_commission_percent !== null && formData.partner_commission_percent !== undefined
-          ? parseFloat(formData.partner_commission_percent)
-          : 10.0,
+        vyapaar_commission_template_id: formData.vyapaar_commission_template_id || null,
+        referral_commission_id: formData.referral_commission_id || null,
         selling_partner_id: formData.lead_owner_id || formData.selling_partner_id || null,
         selling_partner_company_id: formData.selling_partner_company_id || null,
         lead_owner_id: formData.lead_owner_id || null,
@@ -494,33 +501,6 @@ const LeadForm = () => {
                   data-testid="deal-value-input"
                 />
               </div>
-              {/* Phase 36.2 — Partner Commission Slab (default 10%) */}
-              <div className="space-y-2">
-                <Label htmlFor="partner_commission_percent">
-                  Partner Commission % <span className="text-xs text-muted-foreground">(default 10%)</span>
-                </Label>
-                <Select
-                  value={String(formData.partner_commission_percent ?? 10)}
-                  onValueChange={(v) => handleSelectChange('partner_commission_percent', parseFloat(v))}
-                >
-                  <SelectTrigger id="partner_commission_percent" data-testid="partner-commission-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[10, 20, 30, 40, 50].map((p) => (
-                      <SelectItem key={p} value={String(p)}>{p}%</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {formData.deal_value && (
-                  <p className="text-xs text-muted-foreground" data-testid="commission-amount-preview">
-                    Vyapaar will pay back ₹{(
-                      (parseFloat(formData.deal_value) || 0) *
-                      (parseFloat(formData.partner_commission_percent) || 10) / 100
-                    ).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                  </p>
-                )}
-              </div>
               {isAdmin && (
                 <>
                   {/* Phase 34.7 — split SP into Company → Lead Owner + add Vyapaar Lead Owner */}
@@ -615,54 +595,78 @@ const LeadForm = () => {
             </CardContent>
           </Card>
 
-          {/* Commission Settings (Admin Only) */}
+          {/* Commission Settings (Admin Only) — Phase 36.3 redesigned */}
           {isAdmin && (
-            <Card>
+            <Card data-testid="commission-settings-card">
               <CardHeader>
                 <CardTitle>Commission Settings</CardTitle>
-                <CardDescription>Override default commission rates</CardDescription>
+                <CardDescription>Pick a Vyapaar Commission template and a Referral Commission level. Both are managed under Manage → Commissions.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {/* Vyapaar Commission template */}
                 <div className="space-y-2">
-                  <Label htmlFor="commission_override">
-                    Vyapaar Commission Override (%)
-                  </Label>
-                  <Input
-                    id="commission_override"
-                    name="commission_override"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={formData.commission_override}
-                    onChange={handleChange}
-                    placeholder="Default: 15%"
-                    data-testid="commission-override-input"
-                  />
+                  <Label htmlFor="vyapaar_commission_template_id">Vyapaar Commission</Label>
+                  <Select
+                    value={formData.vyapaar_commission_template_id || ''}
+                    onValueChange={(v) => handleSelectChange('vyapaar_commission_template_id', v)}
+                  >
+                    <SelectTrigger id="vyapaar_commission_template_id" data-testid="vyapaar-commission-template-select">
+                      <SelectValue placeholder="Use partner default" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(options.commissionTemplates || []).map((tpl) => (
+                        <SelectItem key={tpl.id} value={tpl.id}>
+                          {tpl.name} ({tpl.vyapaar_percentage}%)
+                          {tpl.is_default ? ' — default' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <p className="text-xs text-muted-foreground">
-                    Leave empty to use partner's default rate
+                    The cut Vyapaar takes from the deal. Leave blank to use the partner's default.
                   </p>
                 </div>
+
+                {/* Referral level */}
                 <div className="space-y-2">
-                  <Label htmlFor="sales_associate_commission">
-                    Referrer Commission (% of Vyapaar share)
-                  </Label>
-                  <Input
-                    id="sales_associate_commission"
-                    name="sales_associate_commission"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={formData.sales_associate_commission}
-                    onChange={handleChange}
-                    placeholder="e.g., 10"
-                    data-testid="sa-commission-input"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Percentage of Vyapaar's share paid to the referrer (Sales Associate or Selling Partner)
-                  </p>
+                  <Label htmlFor="referral_commission_id">Referral Commission Level</Label>
+                  <Select
+                    value={formData.referral_commission_id || ''}
+                    onValueChange={(v) => handleSelectChange('referral_commission_id', v)}
+                  >
+                    <SelectTrigger id="referral_commission_id" data-testid="referral-commission-select">
+                      <SelectValue placeholder="Pick a level…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(options.referralCommissions || []).map((rc) => (
+                        <SelectItem key={rc.id} value={rc.id}>
+                          {rc.name} — {rc.percent}%
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {formData.referral_commission_id && (
+                    <p className="text-xs text-muted-foreground">
+                      {(options.referralCommissions || []).find((rc) => rc.id === formData.referral_commission_id)?.meaning || ''}
+                    </p>
+                  )}
                 </div>
+
+                {/* Calculated breakup */}
+                <CommissionBreakdownPreview
+                  dealValue={parseFloat(formData.deal_value) || 0}
+                  vyapaarPct={(() => {
+                    const tpl = (options.commissionTemplates || []).find((t) => t.id === formData.vyapaar_commission_template_id);
+                    if (tpl) return parseFloat(tpl.vyapaar_percentage);
+                    if (formData.commission_override) return parseFloat(formData.commission_override);
+                    return 15; // default fallback
+                  })()}
+                  referralPct={(() => {
+                    const rc = (options.referralCommissions || []).find((r) => r.id === formData.referral_commission_id);
+                    return rc ? parseFloat(rc.percent) : 10;
+                  })()}
+                  referralLevelName={(options.referralCommissions || []).find((r) => r.id === formData.referral_commission_id)?.name}
+                />
               </CardContent>
             </Card>
           )}
@@ -733,3 +737,57 @@ const LeadFormSkeleton = () => (
 );
 
 export default LeadForm;
+
+// ---------------------------------------------------------------------------
+// Phase 36.3 — Live commission breakdown preview (rendered inside the form)
+// ---------------------------------------------------------------------------
+const CommissionBreakdownPreview = ({ dealValue, vyapaarPct, referralPct, referralLevelName }) => {
+  if (!dealValue || dealValue <= 0) {
+    return (
+      <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground bg-muted/30">
+        Enter a deal value to see the commission breakdown.
+      </div>
+    );
+  }
+  const fmt = (n) => `₹${(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  const vyapaarShare = (dealValue * vyapaarPct) / 100;
+  const referralPayout = (vyapaarShare * referralPct) / 100;
+  const netToVyapaar = vyapaarShare - referralPayout;
+  const partnerKeeps = dealValue - vyapaarShare;
+  return (
+    <div className="rounded-lg border bg-gradient-to-br from-indigo-50/40 to-violet-50/30 dark:from-indigo-950/20 dark:to-violet-950/10 p-4 space-y-2.5" data-testid="commission-breakdown">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">Deal value</span>
+        <span className="font-semibold">{fmt(dealValue)}</span>
+      </div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">
+          Selling partner keeps <span className="text-xs">({(100 - vyapaarPct).toFixed(1)}%)</span>
+        </span>
+        <span className="font-medium">{fmt(partnerKeeps)}</span>
+      </div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-indigo-700 dark:text-indigo-300">
+          Vyapaar commission <span className="text-xs">({vyapaarPct}%)</span>
+        </span>
+        <span className="font-semibold text-indigo-700 dark:text-indigo-300">{fmt(vyapaarShare)}</span>
+      </div>
+      <div className="border-l-2 border-indigo-300 dark:border-indigo-700 ml-4 pl-3 space-y-1.5 py-1">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">
+            Referral payout {referralLevelName ? `(${referralLevelName} ${referralPct}%)` : `(${referralPct}%)`}
+          </span>
+          <span className="font-medium text-rose-600 dark:text-rose-300">– {fmt(referralPayout)}</span>
+        </div>
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Net to Vyapaar</span>
+          <span className="font-semibold text-emerald-700 dark:text-emerald-300">{fmt(netToVyapaar)}</span>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground pt-1 border-t mt-2">
+        Referral payout = {referralPct}% of Vyapaar's commission share, paid to the sales associate / selling partner that referred this lead.
+      </p>
+    </div>
+  );
+};
+
