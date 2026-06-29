@@ -395,6 +395,10 @@ class LeadCreate(BaseModel):
     deal_value: float = 0.0
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
+    # Phase 36.2 — Partner commission slab (10 / 20 / 30 / 40 / 50). Defaults to 10%.
+    # The % is applied to gross deal_value at close-won to compute the payout
+    # Vyapaar gives back to the selling partner / sales associate.
+    partner_commission_percent: Optional[float] = 10.0
     status_id: Optional[str] = None
     start_date: Optional[str] = None
     closure_date: Optional[str] = None
@@ -416,6 +420,7 @@ class LeadUpdate(BaseModel):
     deal_value: Optional[float] = None
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
+    partner_commission_percent: Optional[float] = None  # Phase 36.2
     status_id: Optional[str] = None
     start_date: Optional[str] = None
     closure_date: Optional[str] = None
@@ -481,6 +486,9 @@ class LeadResponse(BaseModel):
     deal_value: float
     commission_override: Optional[float] = None
     sales_associate_commission: Optional[float] = None
+    # Phase 36.2 — Partner commission slab (10/20/30/40/50) + computed amount
+    partner_commission_percent: Optional[float] = None
+    partner_commission_amount: Optional[float] = None
     commission_breakdown: Optional[CommissionBreakdown] = None
     status_id: Optional[str] = None
     status_name: Optional[str] = None
@@ -3467,6 +3475,8 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         deal_value=lead.get('deal_value', 0),
         commission_override=lead.get('commission_override'),
         sales_associate_commission=lead.get('sales_associate_commission'),
+        partner_commission_percent=lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0,
+        partner_commission_amount=lead.get('partner_commission_amount') if lead.get('partner_commission_amount') is not None else round(float(lead.get('deal_value') or 0) * float(lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0) / 100.0, 2),
         commission_breakdown=commission_breakdown,
         status_id=lead.get('status_id'),
         status_name=status['name'] if status else None,
@@ -3651,6 +3661,8 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             deal_value=lead.get('deal_value', 0),
             commission_override=lead.get('commission_override'),
             sales_associate_commission=lead.get('sales_associate_commission'),
+            partner_commission_percent=lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0,
+            partner_commission_amount=lead.get('partner_commission_amount') if lead.get('partner_commission_amount') is not None else round(float(lead.get('deal_value') or 0) * float(lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0) / 100.0, 2),
             commission_breakdown=commission_breakdown,
             status_id=lead.get('status_id'),
             status_name=status['name'] if status else None,
@@ -3736,6 +3748,15 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
         "deal_value": lead_data.deal_value,
         "commission_override": lead_data.commission_override,
         "sales_associate_commission": lead_data.sales_associate_commission,
+        # Phase 36.2 — partner commission slab (defaults to 10%)
+        "partner_commission_percent": (
+            lead_data.partner_commission_percent if lead_data.partner_commission_percent is not None else 10.0
+        ),
+        "partner_commission_amount": round(
+            (lead_data.deal_value or 0) * (
+                (lead_data.partner_commission_percent if lead_data.partner_commission_percent is not None else 10.0) / 100.0
+            ), 2
+        ),
         "status_id": status_id,
         "follow_ups": [],
         "comments": [],
@@ -4048,6 +4069,14 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
     update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
     now = datetime.now(timezone.utc).isoformat()
 
+    # Phase 36.2 — recompute partner_commission_amount when either deal_value or
+    # partner_commission_percent changes. Default percent is 10 if never set.
+    if 'deal_value' in update_data or 'partner_commission_percent' in update_data:
+        next_value = update_data.get('deal_value', lead.get('deal_value') or 0) or 0
+        next_pct = update_data.get('partner_commission_percent',
+                                    lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+        update_data['partner_commission_amount'] = round(float(next_value) * float(next_pct) / 100.0, 2)
+
     # Phase 34.7 — keep lead_owner_id ↔ selling_partner_id ↔ selling_partner_company_id in sync.
     # If admin updates lead_owner_id, derive the company from that user and update selling_partner_id too.
     if 'lead_owner_id' in update_data:
@@ -4342,6 +4371,18 @@ async def add_follow_up(lead_id: str, followup_data: FollowUpCreate, background_
             "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
         }
     )
+
+    # Phase 36.2 — @mentions in follow-up notes trigger an in-app notification + email
+    if followup_data.notes:
+        try:
+            await _notify_mentions(
+                followup_data.notes,
+                lead_id,
+                lead.get('title') or 'Lead',
+                current_user,
+            )
+        except Exception as e:
+            logger.warning("follow-up mention notify failed: %s", e)
     
     # Schedule email reminder
     background_tasks.add_task(
@@ -9670,6 +9711,14 @@ api_router.include_router(deal_room_router)
 # Mount internal-tasks router (Phase 36 — Vyapaar internal task management)
 from routers.internal_tasks import router as internal_tasks_router  # noqa: E402
 api_router.include_router(internal_tasks_router)
+
+# Mount internal-task-categories router (Phase 36.2 — configurable category master)
+from routers.internal_task_categories import router as internal_task_categories_router  # noqa: E402
+api_router.include_router(internal_task_categories_router)
+
+# Mount tax-rates router (Phase 36.2 — configurable tax master)
+from routers.tax_rates import router as tax_rates_router  # noqa: E402
+api_router.include_router(tax_rates_router)
 
 # Include router
 app.include_router(api_router)

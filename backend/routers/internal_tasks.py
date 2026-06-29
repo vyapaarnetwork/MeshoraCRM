@@ -143,7 +143,8 @@ class InternalTaskCreate(BaseModel):
     assignee_id: Optional[str] = None        # any active user
     due_date: Optional[str] = None           # ISO date OR ISO datetime
     priority: InternalTaskPriority = InternalTaskPriority.MEDIUM
-    category: InternalTaskCategory = InternalTaskCategory.OPERATIONS
+    category_id: Optional[str] = None         # FK → internal_task_categories.id
+    category: Optional[InternalTaskCategory] = None  # legacy free-form (back-compat for API callers)
     related_partner_id: Optional[str] = None  # link to a selling-partner user/company
     related_lead_id: Optional[str] = None     # optional cross-link
     reminder_minutes_before: int = 0          # 0 = no email reminder
@@ -156,6 +157,7 @@ class InternalTaskUpdate(BaseModel):
     assignee_id: Optional[str] = None
     due_date: Optional[str] = None
     priority: Optional[InternalTaskPriority] = None
+    category_id: Optional[str] = None
     category: Optional[InternalTaskCategory] = None
     related_partner_id: Optional[str] = None
     related_lead_id: Optional[str] = None
@@ -201,6 +203,12 @@ async def _enrich(task: dict) -> dict:
         lead = await db.leads.find_one({"id": task["related_lead_id"]}, {"_id": 0, "title": 1, "customer_company": 1})
         if lead:
             task["related_lead_title"] = lead.get("title") or lead.get("customer_company")
+    # Phase 36.2 — denormalise category master name + colour for the list UI
+    if task.get("category_id"):
+        cat = await db.internal_task_categories.find_one({"id": task["category_id"]}, {"_id": 0, "name": 1, "color": 1})
+        if cat:
+            task["category_name"] = cat.get("name")
+            task["category_color"] = cat.get("color")
     return task
 
 
@@ -276,6 +284,13 @@ async def create_internal_task(payload: InternalTaskCreate, current_user: dict =
             raise HTTPException(status_code=400, detail="Assignee user not found")
         if a.get("is_active") is False:
             raise HTTPException(status_code=400, detail="Assignee user is inactive")
+    # Phase 36.2 — resolve category from master collection (fallback to default)
+    category_id = payload.category_id
+    if not category_id:
+        default_cat = await db.internal_task_categories.find_one({"is_default": True, "is_active": {"$ne": False}}, {"_id": 0, "id": 1})
+        if not default_cat:
+            default_cat = await db.internal_task_categories.find_one({"is_active": {"$ne": False}}, {"_id": 0, "id": 1}, sort=[("sort_order", 1)])
+        category_id = (default_cat or {}).get("id")
     task = {
         "id": str(uuid.uuid4()),
         "title": payload.title.strip(),
@@ -283,7 +298,8 @@ async def create_internal_task(payload: InternalTaskCreate, current_user: dict =
         "assignee_id": payload.assignee_id,
         "due_date": payload.due_date,
         "priority": payload.priority.value,
-        "category": payload.category.value,
+        "category_id": category_id,
+        "category": payload.category.value if payload.category else None,  # back-compat
         "related_partner_id": payload.related_partner_id,
         "related_lead_id": payload.related_lead_id,
         "reminder_minutes_before": int(payload.reminder_minutes_before or 0),
@@ -310,6 +326,7 @@ async def list_internal_tasks(
     status: Optional[str] = None,
     assignee_id: Optional[str] = None,
     category: Optional[str] = None,
+    category_id: Optional[str] = None,
     priority: Optional[str] = None,
     mine: bool = False,
     q: Optional[str] = None,
@@ -326,6 +343,8 @@ async def list_internal_tasks(
         query["$or"] = [{"assignee_id": current_user["id"]}, {"created_by": current_user["id"]}]
     if category:
         query["category"] = category
+    if category_id:
+        query["category_id"] = category_id
     if priority:
         query["priority"] = priority
     if q:

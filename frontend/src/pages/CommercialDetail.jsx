@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
+import MentionTextarea from '../components/MentionTextarea';
 import { Label } from '../components/ui/label';
 import { Badge } from '../components/ui/badge';
 import { Progress } from '../components/ui/progress';
@@ -747,7 +748,14 @@ const CommercialDetail = () => {
                 </Card>
               )}
               <Field label="Notes">
-                <Textarea value={commercial.notes || ''} onChange={(e) => updateField('notes', e.target.value)} rows={3} data-testid="commercial-notes" />
+                <MentionTextarea
+                  value={commercial.notes || ''}
+                  onChange={(v) => updateField('notes', v)}
+                  users={users}
+                  rows={3}
+                  placeholder="Add context — use @ to ping a teammate"
+                  testId="commercial-notes"
+                />
               </Field>
               <div className="flex gap-2">
                 <Button onClick={saveOverview} disabled={saving} data-testid="save-overview-btn">

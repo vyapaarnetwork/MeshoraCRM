@@ -123,6 +123,8 @@ class CommercialCreate(BaseModel):
     one_time_fee_amount: Optional[float] = None
     one_time_fee_label: Optional[str] = None      # e.g. "Onboarding fee", "Setup"
     one_time_fee_due_date: Optional[str] = None
+    # Phase 36.2 — Tax rate (flat %) attached to this commercial. Master in tax_rates.
+    tax_rate_id: Optional[str] = None
 
 class CommercialUpdate(BaseModel):
     type: Optional[CommercialType] = None  # Phase 35 — allow switching One-Time ↔ Recurring post-creation
@@ -149,6 +151,8 @@ class CommercialUpdate(BaseModel):
     one_time_fee_label: Optional[str] = None
     one_time_fee_due_date: Optional[str] = None
     one_time_fee_status: Optional[str] = None  # 'pending' | 'invoiced' | 'paid' | 'waived'
+    # Phase 36.2 — editable tax rate
+    tax_rate_id: Optional[str] = None
 
 class MilestonesBulkInput(BaseModel):
     milestones: List[MilestoneInput]
@@ -189,6 +193,15 @@ class BillingScheduleUpdate(BaseModel):
 # ---- Helpers ----
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _resolve_default_tax_rate_id() -> Optional[str]:
+    """Phase 36.2 — pick the master row flagged is_default, fall back to None."""
+    try:
+        row = await db.tax_rates.find_one({"is_default": True, "is_active": {"$ne": False}}, {"_id": 0, "id": 1})
+        return (row or {}).get("id")
+    except Exception:
+        return None
 
 async def _log_commercial_activity(commercial_id: str, current_user: dict, activity_type: str, message: str, meta: dict = None):
     await db.commercial_activity.insert_one({
@@ -331,6 +344,8 @@ async def create_commercial(payload: CommercialCreate, current_user: dict = Depe
         "one_time_fee_due_date": payload.one_time_fee_due_date,
         "one_time_fee_status": "pending" if payload.one_time_fee_amount else None,
         "one_time_fee_invoice_id": None,
+        # Phase 36.2 — tax_rate_id (defaults to the master "is_default" row if not provided)
+        "tax_rate_id": payload.tax_rate_id or (await _resolve_default_tax_rate_id()),
         "milestones": [],
         "billing_schedule": [],
     }
@@ -1342,6 +1357,21 @@ async def update_commercial(commercial_id: str, payload: CommercialUpdate, curre
             f"Contract type changed from {commercial.get('type')} to {updates['type']}",
             {"from": commercial.get('type'), "to": updates['type']},
         )
+    # Phase 36.2 — @mentions on commercial notes ping new handles only
+    if 'notes' in updates and (updates.get('notes') or ''):
+        try:
+            from server import _parse_mentions as _pm, _notify_mentions as _nm
+            prev = set(_pm(commercial.get('notes') or ''))
+            now_set = set(_pm(updates.get('notes') or ''))
+            newly_added = now_set - prev
+            if newly_added:
+                # Reuse the lead-mention notifier but synthesise the title from commercial
+                pseudo_lead_title = f"Commercial: {commercial.get('customer_name','')}"
+                pseudo_lead_id = commercial.get('lead_id') or commercial_id
+                synthetic = " ".join(f"@{h}" for h in newly_added) + " — " + (updates.get('notes') or '')
+                await _nm(synthetic, pseudo_lead_id, pseudo_lead_title, current_user)
+        except Exception as e:
+            logger.warning("commercial-notes mention notify failed: %s", e)
     await _log_commercial_activity(commercial_id, current_user, "updated", "Commercial updated", {"fields": list(updates.keys())})
     updated = await db.commercials.find_one({"id": commercial_id}, {"_id": 0})
     return updated

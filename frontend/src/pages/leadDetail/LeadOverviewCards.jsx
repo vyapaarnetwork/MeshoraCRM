@@ -16,7 +16,11 @@ const InfoItem = ({ icon: Icon, label, value }) => (
   </div>
 );
 
-export const LeadOverviewCard = ({ lead }) => (
+export const LeadOverviewCard = ({ lead }) => {
+  // Phase 36.2 — Partner commission slab (default 10%) shown to all Vyapaar users.
+  const pct = lead.partner_commission_percent ?? 10;
+  const commissionAmount = lead.partner_commission_amount ?? ((lead.deal_value || 0) * pct / 100);
+  return (
   <Card>
     <CardHeader>
       <div className="flex items-start justify-between">
@@ -46,6 +50,14 @@ export const LeadOverviewCard = ({ lead }) => (
           <InfoItem icon={Tag} label="Sub-category" value={lead.secondary_category_name} />
         )}
         <InfoItem icon={DollarSign} label="Deal Value" value={formatCurrency(lead.deal_value)} />
+        {/* Phase 36.2 — Partner commission slab (visible to all Vyapaar users) */}
+        {(lead.partner_commission_percent || lead.partner_commission_amount) && (
+          <InfoItem
+            icon={Percent}
+            label={`Partner Commission (${pct}%)`}
+            value={formatCurrency(commissionAmount)}
+          />
+        )}
         {lead.selling_partner_name && (
           <InfoItem icon={Building2} label="Selling Partner" value={lead.selling_partner_name} />
         )}
@@ -55,7 +67,8 @@ export const LeadOverviewCard = ({ lead }) => (
       </div>
     </CardContent>
   </Card>
-);
+  );
+};
 
 export const CustomerInfoCard = ({ lead }) => (
   <Card>

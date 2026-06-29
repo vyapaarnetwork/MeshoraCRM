@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Textarea } from '../../components/ui/textarea';
+import MentionTextarea from '../../components/MentionTextarea';
 import { Calendar } from '../../components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover';
 import {
@@ -180,11 +181,13 @@ export const FollowUpsCard = ({
               </Select>
             </div>
 
-            <Textarea
-              placeholder="Notes (optional)"
+            <MentionTextarea
+              placeholder="Notes (optional) — use @ to ping a teammate"
               value={newFollowUp.notes}
-              onChange={(e) => setNewFollowUp({ ...newFollowUp, notes: e.target.value })}
+              onChange={(v) => setNewFollowUp({ ...newFollowUp, notes: v })}
+              users={assignableUsers}
               rows={2}
+              testId="followup-notes-input"
             />
             <div className="flex gap-2">
               <Button size="sm" onClick={onAdd} data-testid="save-followup-btn">Schedule</Button>

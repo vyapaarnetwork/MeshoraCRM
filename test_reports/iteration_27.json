@@ -1,0 +1,45 @@
+{
+  "summary": "Phase 36.2 — full backend pytest (13 tests, 12 PASS / 1 FAIL) + frontend smoke for all 4 UI items. PASSED: Internal Task Categories CRUD + RBAC + seed (6 default cats, Operations default), is_default flip, customer 403; Internal Tasks category_id flow with denormalised category_name/color; Tax Rates seed (5 rows incl. No tax default), customer read-allowed/write-403, default flip; Lead partner_commission_percent + amount (backfill verified on existing leads, recalc on percent change to 30, recalc on deal_value change); Branded New Lead email (subject '[Meshora] New lead:' verified in email_logs, _render_new_lead HTML directly verified: Meshora brand, lead title, customer rows, /leads/{id} CTA href, 'Open in Meshora' button text); Customer Follow-Up @-mention creates lead_mention notification. FAILED: Commercial notes @-mention delta — REAL BACKEND BUG: when adding a new handle to existing notes, ALL handles in the new notes get pinged again (not just the new one). Frontend smoke confirms all 4 UI items work.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PATCH /api/commercials/{id}",
+        "issue": "Commercial @-mention delta is NOT delta-aware: when 3rd PATCH adds a fresh @ops handle to notes that already contained @finance, the synthetic string at routers/commercials.py:1371 appends the FULL updated notes (which still contains @finance), so _notify_mentions re-parses both handles and pings finance a second time. fin count went 5→6 after only @ops was newly added.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase36_2.py",
+    "/app/test_reports/pytest/phase36_2_results.xml"
+  ],
+  "action_items": [
+    "Fix routers/commercials.py line ~1371: the synthetic content sent to _notify_mentions must NOT include the original full notes. Send only the @mentions for the newly-added handles (e.g. synthetic = ' '.join(f'@{h}' for h in newly_added)) — otherwise old @handles in the notes get re-notified on every subsequent edit."
+  ],
+  "critical_code_review_comments": [
+    "routers/internal_task_categories.py — clean RBAC via original_role/role, is_default flip atomic, soft-delete-when-in-use vs hard-delete-when-unused is correct.",
+    "routers/tax_rates.py — read open to all logged-in users (intentional, dropdown needs it), write 403 for non-internal users verified. is_default flip works on both POST and PATCH.",
+    "server.py LeadCreate/LeadUpdate.partner_commission_percent + auto-recompute on deal_value change works correctly (verified by changing deal_value alone with persisted 30% → amount recalc).",
+    "services/zeptomail.py _render_new_lead — registered under both 'new_lead' and 'new_referral'; renders Meshora-branded wrapper + CTA. Note: email_logs collection does NOT persist html_body, only metadata; HTML can only be verified by calling the renderer directly.",
+    "routers/commercials.py L1371 — DELTA LOGIC BUG (see action_items). prev/now_set/newly_added computation is correct, but the synthetic payload includes the full notes which defeats the delta."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase36_2.py (new — 13 pytest tests, reusable regression suite)"
+  ],
+  "success_rate": {
+    "backend": "92% (12/13 — 1 real bug in commercial mention delta)",
+    "frontend": "100% (4/4 smoke items — /internal-task-categories shows 6 rows with Operations Default, /tax-rates shows 5 rows with No tax Default, /leads/new has Partner Commission % select with [10,20,30,40,50], Lead Detail shows 'Partner Commission (20%)' with ₹10,000 amount)"
+  },
+  "test_credentials": "admin@vyapaarnetwork.com/admin123, ops_test@meshora.com/ops123456, fin_test@meshora.com/fin123456, john@testco.com/test123",
+  "seed_data_creation": "Tests create+delete: 1 TEST_Cat_* category, 1 TEST_Tax_* rate, 1 TEST_IT_Phase362_* internal task, 1 TEST_BrandedEmail_* lead. One commercial[0]'s notes field is mutated through the delta test (final state: notes contains @fin_test and @ops_test handles with TEST_ marker text). No production data altered.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 36.2 verified. Backend regression file at /app/backend/tests/test_phase36_2.py — re-run with `pytest backend/tests/test_phase36_2.py -v`. The Commercial delta test mutates commercials[0].notes; if you want a clean run, the test now resets notes to '' first. The branded-email body is NOT stored in db.email_logs (only subject/status are) — the test verifies HTML by calling _render_new_lead directly. Mongo collection naming: it's `email_logs`, not `notification_logs` (review request had wrong name). Leads PUT not PATCH (no PATCH route on /api/leads/{id}). FollowUpCreate requires scheduled_date.",
+  "rca of the issue": "Commercial @-mention delta bug RCA: routers/commercials.py:1361-1374. The author correctly computes `newly_added = now_set - prev` to detect new handles. However at L1371, the synthetic content passed to _notify_mentions is `' '.join(f'@{h}' for h in newly_added) + ' — ' + (updates.get('notes') or '')`. _notify_mentions then calls _parse_mentions on this synthetic, which re-extracts ALL @handles present in the appended full notes — including the old ones. As a result, every PATCH that adds even one new handle will re-notify every previously-mentioned user. Reproduction: PATCH commercial notes to 'Hi @fin_test ...', then PATCH again with 'Hi @fin_test ... cc @ops_test ...' — fin_test receives a second notification despite no change to their handle. Fix: drop the ' — ' + notes suffix from the synthetic, OR build a notes string that contains ONLY the newly_added handles (e.g. synthetic = ' '.join(f'@{h}' for h in newly_added))."
+}

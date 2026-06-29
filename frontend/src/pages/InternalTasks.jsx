@@ -83,14 +83,15 @@ const InternalTasks = () => {
   const [counts, setCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState([]);
-  const [filters, setFilters] = useState({ status: 'all', category: 'all', priority: 'all', mine: false, q: '' });
+  const [categories, setCategories] = useState([]);  // Phase 36.2 — master from /internal-task-categories
+  const [filters, setFilters] = useState({ status: 'all', category_id: 'all', priority: 'all', mine: false, q: '' });
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const blankForm = () => ({
     title: '', description: '', assignee_id: '', due_date: '',
-    priority: 'medium', category: 'operations', reminder_minutes_before: 0,
+    priority: 'medium', category_id: '', reminder_minutes_before: 0,
     related_partner_id: '', related_lead_id: '', tags: '',
   });
   const [form, setForm] = useState(blankForm());
@@ -100,7 +101,7 @@ const InternalTasks = () => {
     try {
       const params = new URLSearchParams();
       if (filters.status !== 'all') params.set('status', filters.status);
-      if (filters.category !== 'all') params.set('category', filters.category);
+      if (filters.category_id !== 'all') params.set('category_id', filters.category_id);
       if (filters.priority !== 'all') params.set('priority', filters.priority);
       if (filters.mine) params.set('mine', 'true');
       if (filters.q.trim()) params.set('q', filters.q.trim());
@@ -120,6 +121,9 @@ const InternalTasks = () => {
     api.get('/internal-tasks/_meta/assignable-users')
       .then((r) => setUsers(r.data || []))
       .catch(() => {});
+    api.get('/internal-task-categories')
+      .then((r) => setCategories(r.data || []))
+      .catch(() => {});
   }, []);
 
   const openCreate = () => {
@@ -135,7 +139,7 @@ const InternalTasks = () => {
       assignee_id: t.assignee_id || '',
       due_date: t.due_date || '',
       priority: t.priority || 'medium',
-      category: t.category || 'operations',
+      category_id: t.category_id || '',
       reminder_minutes_before: t.reminder_minutes_before || 0,
       related_partner_id: t.related_partner_id || '',
       related_lead_id: t.related_lead_id || '',
@@ -154,7 +158,7 @@ const InternalTasks = () => {
         assignee_id: form.assignee_id || null,
         due_date: form.due_date || null,
         priority: form.priority,
-        category: form.category,
+        category_id: form.category_id || null,
         reminder_minutes_before: Number(form.reminder_minutes_before || 0),
         related_partner_id: form.related_partner_id || null,
         related_lead_id: form.related_lead_id || null,
@@ -250,11 +254,13 @@ const InternalTasks = () => {
               {Object.entries(STATUS_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={filters.category} onValueChange={(v) => setFilters((p) => ({ ...p, category: v }))}>
+          <Select value={filters.category_id} onValueChange={(v) => setFilters((p) => ({ ...p, category_id: v }))}>
             <SelectTrigger className="w-44" data-testid="filter-category"><SelectValue placeholder="Category" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All categories</SelectItem>
-              {Object.entries(CATEGORY_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+              {categories.map((c) => (
+                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select value={filters.priority} onValueChange={(v) => setFilters((p) => ({ ...p, priority: v }))}>
@@ -322,8 +328,8 @@ const InternalTasks = () => {
                   </button>
                   <Badge className={`text-[10px] ${PRIORITY_STYLES[t.priority]}`}>{t.priority}</Badge>
                   <Badge className={`text-[10px] ${STATUS_STYLES[t.status]}`}>{STATUS_LABELS[t.status]}</Badge>
-                  <Badge variant="outline" className="text-[10px]">
-                    {CATEGORY_LABELS[t.category] || t.category}
+                  <Badge variant="outline" className="text-[10px]" style={t.category_color ? { borderColor: t.category_color, color: t.category_color } : undefined}>
+                    {t.category_name || CATEGORY_LABELS[t.category] || t.category || '—'}
                   </Badge>
                   {t.is_overdue && (
                     <Badge className="text-[10px] bg-rose-600 text-white">Overdue</Badge>
@@ -448,14 +454,22 @@ const InternalTasks = () => {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">Category</Label>
-                <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                  <SelectTrigger data-testid="form-category"><SelectValue /></SelectTrigger>
+                <Select value={form.category_id || ''} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                  <SelectTrigger data-testid="form-category"><SelectValue placeholder="Pick a category…" /></SelectTrigger>
                   <SelectContent>
-                    {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-                      <SelectItem key={k} value={k}>{v}</SelectItem>
+                    {categories.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        <span className="inline-flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full" style={{ background: c.color || '#4f46e5' }} />
+                          {c.name}
+                        </span>
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Manage categories under <a href="/internal-task-categories" className="underline">Settings → Internal Task Categories</a>
+                </p>
               </div>
               <div>
                 <Label className="text-xs">Due (date &amp; optional time)</Label>

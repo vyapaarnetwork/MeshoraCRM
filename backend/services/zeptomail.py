@@ -470,6 +470,60 @@ def _render_milestone_due(ctx):
             "text": f"Milestone '{milestone_name}' is due {due_label}. {commercial_url}"}
 
 
+def _render_new_lead(ctx):
+    """Phase 36.2 — branded 'New Lead Created' email.
+    Replaces the bare one-line fallback the user saw in production. Surfaces
+    title / customer / company / phone / email / category / deal value / partner.
+    """
+    title = "New Lead Created"
+    lead_title = ctx.get("lead_title") or "Untitled lead"
+    lead_url = ctx.get("lead_url") or (
+        f"https://app.vyapaar.net/leads/{ctx.get('lead_id','')}" if ctx.get("lead_id") else None
+    )
+    rows = []
+
+    def _row(label: str, value):
+        if value is None or value == "":
+            return
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:6px 12px 6px 0;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top;">{label}</td>'
+            f'<td style="padding:6px 0;color:#111827;font-size:13px;font-weight:500;">{value}</td>'
+            f'</tr>'
+        )
+
+    _row("Customer", ctx.get("customer_name"))
+    _row("Company", ctx.get("customer_company"))
+    _row("Email", ctx.get("customer_email"))
+    _row("Phone", ctx.get("customer_phone"))
+    _row("Category", ctx.get("category_name"))
+    deal_value = ctx.get("deal_value")
+    if deal_value:
+        try:
+            deal_value = f"₹{int(float(deal_value)):,}"
+        except Exception:
+            pass
+        _row("Deal value", deal_value)
+    _row("Created by", ctx.get("created_by") or ctx.get("assigned_by_name"))
+    _row("Assigned partner", ctx.get("partner_name"))
+
+    body = (
+        f'<p style="color:#111827;">Hi {ctx.get("recipient_name","there")},</p>'
+        f'<p style="color:#374151;">A new lead has just been added to Meshora:</p>'
+        f'<div style="background:#f9fafb;border-left:4px solid #4f46e5;padding:16px 18px;margin:14px 0;border-radius:6px;">'
+        f'<div style="font-size:17px;font-weight:700;color:#111827;">{lead_title}</div>'
+        f'<table style="border-collapse:collapse;margin-top:8px;">{"".join(rows)}</table>'
+        f'</div>'
+        f'{_btn("Open in Meshora", lead_url) if lead_url else ""}'
+        f'<p style="color:#9ca3af;font-size:12px;margin-top:24px;">You are receiving this because you are a Vyapaar team member or assigned partner for this category.</p>'
+    )
+    return {
+        "subject": f"[Meshora] New lead: {lead_title}"[:255],
+        "html": _wrap(title, title, body),
+        "text": f"New lead '{lead_title}' created in Meshora. {lead_url or ''}".strip(),
+    }
+
+
 def _render_generic(ctx):
     """Fallback for notification types without a dedicated template."""
     title = ctx.get("title") or "Notification"
@@ -487,6 +541,8 @@ def _render_generic(ctx):
 
 _RENDERERS = {
     "lead_assigned": _render_lead_assigned,
+    "new_lead": _render_new_lead,
+    "new_referral": _render_new_lead,
     "follow_up_reminder": _render_follow_up_reminder,
     "deal_room_invite": _render_deal_room_invite,
     "approval_requested": _render_approval_requested,

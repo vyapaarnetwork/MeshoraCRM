@@ -41,6 +41,8 @@ import CommercialDetail from './pages/CommercialDetail';
 import CommercialsAnalytics from './pages/CommercialsAnalytics';
 import CommercialsKanban from './pages/CommercialsKanban';
 import InternalTasks from './pages/InternalTasks';
+import InternalTaskCategories from './pages/InternalTaskCategories';
+import TaxRates from './pages/TaxRates';
 import './App.css';
 
 // Protected Route Component
@@ -233,6 +235,16 @@ function AppRoutes() {
       <Route path="/internal-tasks/:id" element={
         <ProtectedRoute allowedRoles={['super_admin']}>
           <InternalTasks />
+        </ProtectedRoute>
+      } />
+      <Route path="/internal-task-categories" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <InternalTaskCategories />
+        </ProtectedRoute>
+      } />
+      <Route path="/tax-rates" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <TaxRates />
         </ProtectedRoute>
       } />
 

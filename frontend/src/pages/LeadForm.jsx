@@ -46,6 +46,7 @@ const LeadForm = () => {
     deal_value: '',
     commission_override: '',
     sales_associate_commission: '',
+    partner_commission_percent: 10,  // Phase 36.2 — slab default 10%
     status_id: '',
     start_date: todayIso,
     closure_date: ''
@@ -174,6 +175,7 @@ const LeadForm = () => {
         deal_value: lead.deal_value?.toString() || '',
         commission_override: lead.commission_override?.toString() || '',
         sales_associate_commission: lead.sales_associate_commission?.toString() || '',
+        partner_commission_percent: lead.partner_commission_percent ?? 10,
         status_id: lead.status_id || '',
         start_date: lead.start_date || (lead.created_at ? lead.created_at.slice(0, 10) : todayIso),
         closure_date: lead.closure_date || ''
@@ -217,6 +219,9 @@ const LeadForm = () => {
         deal_value: parseFloat(formData.deal_value) || 0,
         commission_override: formData.commission_override ? parseFloat(formData.commission_override) : null,
         sales_associate_commission: formData.sales_associate_commission ? parseFloat(formData.sales_associate_commission) : null,
+        partner_commission_percent: formData.partner_commission_percent !== '' && formData.partner_commission_percent !== null && formData.partner_commission_percent !== undefined
+          ? parseFloat(formData.partner_commission_percent)
+          : 10.0,
         selling_partner_id: formData.lead_owner_id || formData.selling_partner_id || null,
         selling_partner_company_id: formData.selling_partner_company_id || null,
         lead_owner_id: formData.lead_owner_id || null,
@@ -488,6 +493,33 @@ const LeadForm = () => {
                   placeholder="0"
                   data-testid="deal-value-input"
                 />
+              </div>
+              {/* Phase 36.2 — Partner Commission Slab (default 10%) */}
+              <div className="space-y-2">
+                <Label htmlFor="partner_commission_percent">
+                  Partner Commission % <span className="text-xs text-muted-foreground">(default 10%)</span>
+                </Label>
+                <Select
+                  value={String(formData.partner_commission_percent ?? 10)}
+                  onValueChange={(v) => handleSelectChange('partner_commission_percent', parseFloat(v))}
+                >
+                  <SelectTrigger id="partner_commission_percent" data-testid="partner-commission-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[10, 20, 30, 40, 50].map((p) => (
+                      <SelectItem key={p} value={String(p)}>{p}%</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {formData.deal_value && (
+                  <p className="text-xs text-muted-foreground" data-testid="commission-amount-preview">
+                    Vyapaar will pay back ₹{(
+                      (parseFloat(formData.deal_value) || 0) *
+                      (parseFloat(formData.partner_commission_percent) || 10) / 100
+                    ).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </p>
+                )}
               </div>
               {isAdmin && (
                 <>
