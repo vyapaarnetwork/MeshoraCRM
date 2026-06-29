@@ -563,6 +563,14 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **War Room terminal-state exclusion** — Lost / Dead / Disqualified leads (incl. unflagged "lost"-named statuses) are excluded from all open buckets; KPI total_leads matches sum of bucket counts
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
+### Phase 36.1 — @-mentions in Internal Tasks (Jun 29, 2026)
+- [x] **`@handle` autocomplete** in Internal Task description via new `MentionTextarea` component (Up/Down/Enter/Tab/Esc keyboard nav)
+- [x] **In-app + email notifications** on mention via `internal_task_mention` notification type (added to catalog + role matrix so partners/associates also receive them); deep-links to `/internal-tasks?focus={id}`
+- [x] **Delta-aware re-notify** — editing an existing description re-pings ONLY newly-added handles (`_notify_mentions(only_tokens=…)`); re-saving with the same handles does nothing
+- [x] **Inline mention chips** rendered in the task list (`@handle` → violet pill)
+- [x] **Skip rules**: author and assignee are auto-excluded from mention notifications (assignee already gets a dedicated assignment email)
+- Verified end-to-end via curl + Playwright: dropdown opens with 6 matches, 1 create + 1 delta-update fired 2 notifications total (not 3) — exactly the desired behaviour.
+
 ### Phase 36 — Internal Tasks, Document Signed-URLs, Commercials One-Time Fee + Reminders (Jun 29, 2026)
 - [x] **Document view/download bug fix (prod)** — new `/api/documents/{id}/signed-url` returns a 5-min JWT-signed query-param URL; frontend `handleView`/`handleDownload` now open the signed URL directly (no `Authorization` header → bypasses cross-domain CORS-credentials policy on app.vyapaar.net)
 - [x] **Internal Vyapaar Tasks feature** — new collection `internal_tasks`, new `routers/internal_tasks.py` with CRUD + RBAC (Vyapaar internal-only create/list via `original_role`), assignee can be ANY active user, datetime-local due dates, configurable email reminder (0–2880 min before)

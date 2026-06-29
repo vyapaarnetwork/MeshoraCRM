@@ -141,6 +141,10 @@ const Layout = ({ children }) => {
     if (notification.commercial_id && (notification.type || '').startsWith('commercial_')) {
       navigate(`/commercials/${notification.commercial_id}`);
       setNotificationsOpen(false);
+    } else if ((notification.type || '').startsWith('internal_task_') && notification.data?.internal_task_id) {
+      // Phase 36 — Internal Task mentions / assignments deep-link to the task page
+      navigate(`/internal-tasks?focus=${notification.data.internal_task_id}`);
+      setNotificationsOpen(false);
     } else if (notification.lead_id) {
       navigate(`/leads/${notification.lead_id}`);
       setNotificationsOpen(false);
@@ -161,6 +165,9 @@ const Layout = ({ children }) => {
         return <Briefcase className="w-4 h-4 text-red-500" />;
       case 'commercial_renewal_window':
         return <Briefcase className="w-4 h-4 text-blue-500" />;
+      case 'internal_task_mention':
+      case 'internal_task_assigned':
+        return <ListTodo className="w-4 h-4 text-violet-500" />;
       case 'lead_status_change':
         return <Tag className="w-4 h-4 text-purple-500" />;
       case 'lead_updated':

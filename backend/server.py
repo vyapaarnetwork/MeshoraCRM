@@ -237,6 +237,9 @@ class NotificationType(str, Enum):
     COMMERCIAL_BILLING_DUE = "commercial_billing_due"
     # Phase 1 (Revenue OS): collaboration mentions
     LEAD_MENTION = "lead_mention"
+    # Phase 36: Internal Vyapaar Tasks
+    INTERNAL_TASK_ASSIGNED = "internal_task_assigned"
+    INTERNAL_TASK_MENTION = "internal_task_mention"
     # Phase 1.5: Task assignments
     TASK_ASSIGNED = "task_assigned"
     # Phase 2: Smart Notification rules
@@ -1348,6 +1351,8 @@ NOTIFICATION_TYPE_CATALOG = [
     {"key": "task_assigned", "label": "Task Assigned", "description": "When someone assigns a task to you"},
     {"key": "task_due_reminder", "label": "Task Due Reminder", "description": "Email reminder ahead of an action item's due time"},
     {"key": "weekly_war_room_digest", "label": "Weekly War Room Digest", "description": "Monday summary of what's hot, blocked, and at risk"},
+    {"key": "internal_task_mention", "label": "Internal Task Mention", "description": "When someone @mentions you in an Internal Vyapaar Task"},
+    {"key": "internal_task_assigned", "label": "Internal Task Assigned", "description": "When an internal Vyapaar task is assigned to you"},
 ]
 
 # Phase 34.5 — Role → allowed notification types matrix.
@@ -1362,6 +1367,7 @@ ROLE_NOTIFICATION_MATRIX: Dict[str, Any] = {
         "follow_up_reminder", "follow_up_overdue",
         *_DEAL_CLOSED_TYPES,
         "comment_mention", "task_assigned",
+        "internal_task_mention", "internal_task_assigned",
     ],
     "selling_partner": {
         "sales": [
@@ -1370,15 +1376,18 @@ ROLE_NOTIFICATION_MATRIX: Dict[str, Any] = {
             "approval_requested", "deal_room_invite",
             *_DEAL_CLOSED_TYPES,
             "comment_mention", "task_assigned",
+            "internal_task_mention", "internal_task_assigned",
         ],
         "operations": [
             "milestone_due", "approval_requested", "deal_room_invite",
             *_DEAL_CLOSED_TYPES,
             "comment_mention", "task_assigned",
+            "internal_task_mention", "internal_task_assigned",
         ],
         "finance": [
             "milestone_due", "invoice_overdue", "payment_received",
             "comment_mention", "task_assigned",
+            "internal_task_mention", "internal_task_assigned",
         ],
         "founder": "*",
         None: "*",

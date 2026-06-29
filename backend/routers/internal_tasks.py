@@ -19,6 +19,7 @@ pattern as routers/commercials.py.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone, timedelta, date
 from enum import Enum
@@ -34,9 +35,70 @@ from server import (
     get_current_user,
     UserRole,
     logger,
+    create_notification,
 )
 
 router = APIRouter()
+
+_MENTION_RE = re.compile(r'(?<!\w)@([a-zA-Z][a-zA-Z0-9_.\-]{1,40})')
+
+
+def _parse_mentions(text: str) -> List[str]:
+    """Extract @mention handles from a free-text description. Returns lowercased name fragments."""
+    return [m.lower() for m in _MENTION_RE.findall(text or "")]
+
+
+async def _notify_mentions(task: dict, content: str, author: dict, kind: str = "created", only_tokens: Optional[List[str]] = None):
+    """Resolve @mentions in an internal-task description, fire an in-app
+    notification + email to each matched active user (skips the author and the
+    assignee — the assignee already gets a dedicated assignment email).
+
+    If `only_tokens` is supplied, ONLY notify those handles (used by PATCH to
+    avoid re-pinging already-mentioned teammates). The `content` is still used
+    for the email/notification preview text.
+    """
+    tokens = [t.lower() for t in (only_tokens or _parse_mentions(content))]
+    if not tokens:
+        return
+    seen: set = set()
+    seen.add(author.get("id"))
+    if task.get("assignee_id"):
+        seen.add(task["assignee_id"])
+    url_path = f"/internal-tasks/{task['id']}"
+    full_url = f"https://app.vyapaar.net{url_path}"
+    short = (content or "")[:160].replace("\n", " ").strip()
+    for token in tokens:
+        if not token:
+            continue
+        cursor = db.users.find({
+            "is_active": {"$ne": False},
+            "$or": [
+                {"name": {"$regex": f"^{re.escape(token)}", "$options": "i"}},
+                {"email": {"$regex": f"^{re.escape(token)}@", "$options": "i"}},
+            ],
+        }, {"_id": 0, "id": 1, "name": 1, "email": 1})
+        async for u in cursor:
+            uid = u.get("id")
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            try:
+                await create_notification(
+                    user_id=uid,
+                    notification_type="internal_task_mention",
+                    title=f'{author.get("name","Someone")} mentioned you in an internal task',
+                    message=f'On "{task.get("title","")}": {short}',
+                    data={
+                        "internal_task_id": task["id"],
+                        "url": url_path,
+                        "cta_url": full_url,
+                        "author_id": author.get("id"),
+                        "author_name": author.get("name"),
+                        "kind": kind,
+                    },
+                )
+            except Exception as e:
+                logger.warning("internal-task mention notify failed for %s: %s", uid, e)
 
 # ============================================================================
 # Models
@@ -235,6 +297,9 @@ async def create_internal_task(payload: InternalTaskCreate, current_user: dict =
     await db.internal_tasks.insert_one(task.copy())
     if task["assignee_id"] and task["assignee_id"] != current_user["id"]:
         await _send_assignment_email(task, kind="assigned")
+    # Phase 36 — fire @mention notifications from the description
+    if task.get("description"):
+        await _notify_mentions(task, task["description"], current_user, kind="created")
     enriched = await _enrich({k: v for k, v in task.items() if k != "_id"})
     enriched["is_overdue"] = _is_overdue(enriched)
     return enriched
@@ -334,6 +399,19 @@ async def update_internal_task(task_id: str, payload: InternalTaskUpdate, curren
     # Notify if assignee changed to a different person
     if "assignee_id" in updates and updates["assignee_id"] and updates["assignee_id"] != existing.get("assignee_id"):
         await _send_assignment_email(fresh, kind="reassigned")
+    # Phase 36 — fire @mention notifications only for NEW handles in the description
+    if "description" in updates and (updates.get("description") or ""):
+        prev_handles = set(_parse_mentions(existing.get("description") or ""))
+        new_handles = set(_parse_mentions(updates["description"] or ""))
+        newly_added = new_handles - prev_handles
+        if newly_added:
+            await _notify_mentions(
+                fresh,
+                updates["description"] or "",
+                current_user,
+                kind="updated",
+                only_tokens=list(newly_added),
+            )
     await _enrich(fresh)
     fresh["is_overdue"] = _is_overdue(fresh)
     return fresh

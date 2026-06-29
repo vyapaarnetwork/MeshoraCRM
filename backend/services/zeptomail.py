@@ -499,4 +499,6 @@ _RENDERERS = {
     "follow_up_overdue": _render_generic,
     "commercial_created": _render_generic,
     "weekly_war_room_digest": _render_generic,
+    "internal_task_mention": _render_generic,
+    "internal_task_assigned": _render_generic,
 }

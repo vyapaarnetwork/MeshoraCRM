@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
 import { Label } from '../components/ui/label';
 import {
@@ -22,6 +21,7 @@ import {
 import api, { formatDate, formatDateTime, getRoleLabel } from '../utils/api';
 import { toast } from 'sonner';
 import SearchableUserSelect from '../components/SearchableUserSelect';
+import MentionTextarea from '../components/MentionTextarea';
 
 const PRIORITY_STYLES = {
   low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
@@ -55,6 +55,27 @@ const REMINDER_OPTIONS = [
   { value: 1440, label: '1 day before' },
   { value: 2880, label: '2 days before' },
 ];
+
+// Phase 36 — Render free-text with @handles styled as inline chips.
+const MENTION_RE = /(^|\s)@([a-zA-Z][a-zA-Z0-9_.\-]{1,40})/g;
+const renderWithMentions = (text) => {
+  if (!text) return text;
+  const parts = [];
+  let i = 0;
+  let m;
+  MENTION_RE.lastIndex = 0;
+  while ((m = MENTION_RE.exec(text)) !== null) {
+    if (m.index + m[1].length > i) parts.push(text.slice(i, m.index + m[1].length));
+    parts.push(
+      <span key={m.index} className="inline-block px-1 rounded bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300 font-medium">
+        @{m[2]}
+      </span>
+    );
+    i = m.index + m[1].length + 1 + m[2].length;
+  }
+  if (i < text.length) parts.push(text.slice(i));
+  return parts;
+};
 
 const InternalTasks = () => {
   const navigate = useNavigate();
@@ -309,7 +330,7 @@ const InternalTasks = () => {
                   )}
                 </div>
                 {t.description && (
-                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{t.description}</p>
+                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{renderWithMentions(t.description)}</p>
                 )}
                 <div className="flex flex-wrap gap-3 text-xs text-muted-foreground mt-1">
                   {t.assignee_name && (
@@ -390,12 +411,14 @@ const InternalTasks = () => {
               />
             </div>
             <div>
-              <Label className="text-xs">Description</Label>
-              <Textarea
+              <Label className="text-xs">Description (use <span className="font-mono bg-muted px-1 rounded">@</span> to mention &amp; email a teammate)</Label>
+              <MentionTextarea
                 value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                onChange={(v) => setForm({ ...form, description: v })}
+                users={users}
                 rows={3}
-                data-testid="form-description"
+                placeholder="Add context… @teammate to ping them via email + notification"
+                testId="form-description"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
