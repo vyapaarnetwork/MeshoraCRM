@@ -136,6 +136,16 @@ const LeadForm = () => {
         commissionTemplates: templatesRes.data || [],
         referralCommissions: referralsRes.data || [],
       }));
+
+      // Phase 36.3 — Auto-default Status to the first available lead-status when creating
+      // a new lead so the form never silently fails on missing status_id.
+      if (!isEditing) {
+        setFormData(prev => {
+          if (prev.status_id) return prev;
+          const firstStatus = (statusesRes.data || [])[0];
+          return firstStatus ? { ...prev, status_id: firstStatus.id } : prev;
+        });
+      }
     } catch (error) {
       console.error('Failed to fetch options:', error);
     }
@@ -258,7 +268,18 @@ const LeadForm = () => {
 
       navigate('/leads');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to save lead');
+      // Phase 36.3 — surface validation errors clearly (422 returns array of {loc, msg})
+      const detail = error.response?.data?.detail;
+      let message = 'Failed to save lead';
+      if (typeof detail === 'string') {
+        message = detail;
+      } else if (Array.isArray(detail) && detail.length > 0) {
+        message = detail.map((d) => {
+          const field = Array.isArray(d.loc) ? d.loc[d.loc.length - 1] : '';
+          return field ? `${field}: ${d.msg}` : d.msg;
+        }).join(' • ');
+      }
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }
