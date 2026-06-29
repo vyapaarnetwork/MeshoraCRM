@@ -564,6 +564,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 36.3 — Referral Commission Levels + LeadForm template-driven commissions (Feb 9, 2026)
+- [x] **Referral Commission master** (`/api/referral-commissions`) — full CRUD + RBAC (read open, write Vyapaar-internal-only). 5 default levels seeded: Lead Scout 10%, Opportunity Builder 20%, Deal Enabler 30%, Growth Catalyst 40%, Strategic Partner 50%. Lead Scout marked `is_default=true`. Atomic default-flip on create/update via `update_many`; in-use deletes soft-deactivate instead.
+- [x] **Commission tab consolidation** — Referral Commission Levels now rendered as a 2nd tab inside `Commission.jsx` (`tab-referral-levels`), no separate menu. Existing Vyapaar Commission Templates remain in the 1st tab.
+- [x] **LeadForm template-driven commissions** — replaced legacy `partner_commission_percent` / `commission_override` manual inputs with two dropdowns: `vyapaar-commission-template-select` and `referral-commission-select`. Backend (`server.py` lead create + update) resolves template_id → `commission_override` and referral_id → `referral_commission_percent`; falls back to `is_default` Lead Scout 10% if neither supplied.
+- [x] **CommissionBreakdownPreview** — live, in-form preview showing Deal value → Selling partner keeps → Vyapaar commission (vyapaarPct%) → Referral payout (referralPct% × Vyapaar share) → Net to Vyapaar. Re-renders on every dropdown / deal-value change.
+- [x] **LeadForm submit silent-fail fix** — `status_id` now auto-defaults to the first lead-status row on `/leads/new` mount, eliminating the previous silent 422. `handleSubmit` catch-block now flattens Pydantic 422 detail arrays into readable toasts (`field: msg • field: msg`).
+- Backend tests: `/app/backend/tests/test_phase36_3.py` (17/17 PASS — iteration_28). Frontend e2e: iteration_29 verified all 4 scenarios (status auto-default, create lead navigates, edit-mode pre-population, breakdown numbers).
+
+
 ### Phase 36.2 — Masters + Commission + Branded Emails + @mention extension (Jun 29, 2026)
 - [x] **Internal Task Category master** (`/internal-task-categories`) — full CRUD + RBAC + soft-delete-when-in-use; 6 default categories seeded; default flag flips others. Internal Tasks now reference it via `category_id`, denormalised as `category_name`/`category_color` for UI.
 - [x] **Tax Rate master** (`/tax-rates`) — flat-% tax (No tax / GST 5/12/18/28 seeded); attached to each Commercial via `tax_rate_id` (auto-default). Read open to all logged-in users (dropdown), write Vyapaar-internal-only.
