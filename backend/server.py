@@ -4464,9 +4464,14 @@ def _parse_mentions(content: str) -> List[str]:
     """Extract @mentioned usernames from comment content. Returns lowercased name fragments."""
     return [m.lower() for m in re.findall(r'@([a-zA-Z][a-zA-Z0-9_.\-]{1,40})', content or '')]
 
-async def _notify_mentions(content: str, lead_id: str, lead_title: str, author: dict):
-    """Resolve @mentions in a comment and emit in-app notifications to matched users."""
-    mentions = _parse_mentions(content)
+async def _notify_mentions(content: str, lead_id: str, lead_title: str, author: dict, only_tokens: Optional[List[str]] = None):
+    """Resolve @mentions in a comment and emit in-app notifications to matched users.
+
+    If `only_tokens` is supplied, ONLY notify those handles (caller has already
+    computed the delta). The `content` string is kept solely for the message
+    preview — its handles are NOT re-parsed when `only_tokens` is provided.
+    """
+    mentions = [t.lower() for t in (only_tokens or _parse_mentions(content))]
     if not mentions:
         return
     # Match by case-insensitive name OR email-local-part. Limit to active users.

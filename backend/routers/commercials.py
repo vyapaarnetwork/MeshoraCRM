@@ -1357,7 +1357,7 @@ async def update_commercial(commercial_id: str, payload: CommercialUpdate, curre
             f"Contract type changed from {commercial.get('type')} to {updates['type']}",
             {"from": commercial.get('type'), "to": updates['type']},
         )
-    # Phase 36.2 — @mentions on commercial notes ping new handles only
+    # Phase 36.2 — @mentions on commercial notes ping new handles only (delta-aware)
     if 'notes' in updates and (updates.get('notes') or ''):
         try:
             from server import _parse_mentions as _pm, _notify_mentions as _nm
@@ -1365,11 +1365,18 @@ async def update_commercial(commercial_id: str, payload: CommercialUpdate, curre
             now_set = set(_pm(updates.get('notes') or ''))
             newly_added = now_set - prev
             if newly_added:
-                # Reuse the lead-mention notifier but synthesise the title from commercial
                 pseudo_lead_title = f"Commercial: {commercial.get('customer_name','')}"
                 pseudo_lead_id = commercial.get('lead_id') or commercial_id
-                synthetic = " ".join(f"@{h}" for h in newly_added) + " — " + (updates.get('notes') or '')
-                await _nm(synthetic, pseudo_lead_id, pseudo_lead_title, current_user)
+                # Pass the full updated notes for the preview text, but restrict
+                # notification fan-out via only_tokens so previously-mentioned
+                # users are NOT re-pinged.
+                await _nm(
+                    updates.get('notes') or '',
+                    pseudo_lead_id,
+                    pseudo_lead_title,
+                    current_user,
+                    only_tokens=list(newly_added),
+                )
         except Exception as e:
             logger.warning("commercial-notes mention notify failed: %s", e)
     await _log_commercial_activity(commercial_id, current_user, "updated", "Commercial updated", {"fields": list(updates.keys())})

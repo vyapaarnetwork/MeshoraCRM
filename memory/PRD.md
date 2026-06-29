@@ -563,6 +563,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] **War Room terminal-state exclusion** — Lost / Dead / Disqualified leads (incl. unflagged "lost"-named statuses) are excluded from all open buckets; KPI total_leads matches sum of bucket counts
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
+
+### Phase 36.2 — Masters + Commission + Branded Emails + @mention extension (Jun 29, 2026)
+- [x] **Internal Task Category master** (`/internal-task-categories`) — full CRUD + RBAC + soft-delete-when-in-use; 6 default categories seeded; default flag flips others. Internal Tasks now reference it via `category_id`, denormalised as `category_name`/`category_color` for UI.
+- [x] **Tax Rate master** (`/tax-rates`) — flat-% tax (No tax / GST 5/12/18/28 seeded); attached to each Commercial via `tax_rate_id` (auto-default). Read open to all logged-in users (dropdown), write Vyapaar-internal-only.
+- [x] **Partner Commission Slab on Lead** — `partner_commission_percent` (10/20/30/40/50, default **10%**) + computed `partner_commission_amount = deal_value * percent / 100`. Recalculates on either deal-value or percent change. Backfilled to all 109 existing leads. Surfaced on Lead Detail overview to every Vyapaar user.
+- [x] **Branded "New Lead" email** — dedicated `_render_new_lead` HTML with Meshora wrapper, lead title, customer info table, deal-value chip, "Open in Meshora" CTA. Registered under both `new_lead` + `new_referral` notification types so the generic single-line fallback no longer fires.
+- [x] **@-mention extension to other surfaces** — `MentionTextarea` now wired into **Customer Follow-Up notes** (fires `lead_mention`) and **Commercial notes** (delta-aware, only newly-added handles get pinged). Underlying `_notify_mentions(only_tokens=…)` parameter introduced so callers can pre-compute the delta.
+- Tested via `testing_agent_v3_fork` (iteration_27, 13 backend tests + frontend smoke). The 1 fail (commercial delta leak) was identified and fixed in this same batch; re-tested manually with 3-step PATCH sequence — exactly 2 notifications fired (not 3).
+
 ### Phase 36.1 — @-mentions in Internal Tasks (Jun 29, 2026)
 - [x] **`@handle` autocomplete** in Internal Task description via new `MentionTextarea` component (Up/Down/Enter/Tab/Esc keyboard nav)
 - [x] **In-app + email notifications** on mention via `internal_task_mention` notification type (added to catalog + role matrix so partners/associates also receive them); deep-links to `/internal-tasks?focus={id}`
