@@ -43,6 +43,9 @@ import CommercialsKanban from './pages/CommercialsKanban';
 import InternalTasks from './pages/InternalTasks';
 import InternalTaskCategories from './pages/InternalTaskCategories';
 import TaxRates from './pages/TaxRates';
+import FinanceDashboard from './pages/FinanceDashboard';
+import { CommissionRegister, RevenueEventDetail } from './pages/FinanceRegister';
+import FinanceReports from './pages/FinanceReports';
 import './App.css';
 
 // Protected Route Component
@@ -333,6 +336,28 @@ function AppRoutes() {
       <Route path="/grid-report" element={
         <ProtectedRoute allowedRoles={['super_admin']}>
           <GridReport />
+        </ProtectedRoute>
+      } />
+
+      {/* Phase 38 — Finance & Commission Management (Admin / Finance / Ops) */}
+      <Route path="/finance" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <FinanceDashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/finance/register" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <CommissionRegister />
+        </ProtectedRoute>
+      } />
+      <Route path="/finance/events/:id" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <RevenueEventDetail />
+        </ProtectedRoute>
+      } />
+      <Route path="/finance/reports" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <FinanceReports />
         </ProtectedRoute>
       } />
 

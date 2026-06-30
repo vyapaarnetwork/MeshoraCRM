@@ -4288,6 +4288,17 @@ async def update_lead(lead_id: str, lead_data: LeadUpdate, current_user: dict = 
             message=f"Lead '{updated_lead['title']}' status changed to {status_name}",
             lead_id=lead_id
         )
+        # Phase 37 — Auto-fire quick-setup-commercials when lead transitions to Won
+        # (idempotent; safe to re-run). Only fires if no commercial exists yet.
+        if new_status_doc and new_status_doc.get('is_won') and float(updated_lead.get('deal_value') or 0) > 0:
+            try:
+                existing_commercial = await db.commercials.find_one({"lead_id": lead_id}, {"_id": 0, "id": 1, "approval_status": 1})
+                if not existing_commercial:
+                    from routers.finance import quick_setup_commercials, QuickSetupPayload  # noqa: E402
+                    await quick_setup_commercials(lead_id, QuickSetupPayload(type="one_time"), current_user)
+                    logger.info(f"Auto-fired quick-setup-commercials for newly Won lead {lead_id}")
+            except Exception as exc:
+                logger.warning(f"Auto quick-setup on Won failed for lead {lead_id}: {exc}")
     
     return await enrich_lead(updated_lead)
 

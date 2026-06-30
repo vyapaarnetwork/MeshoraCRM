@@ -314,6 +314,52 @@ class TestDashboardAndFilters:
 
 
 # =====================================================================
+# Scenario G — Auto-fire quick-setup when status flips to Won
+# =====================================================================
+class TestAutoFireOnWon:
+    def test_status_flip_to_won_auto_generates_revenue_schedule(self, admin_token):
+        # Seed a NOT-won lead first
+        statuses = requests.get(f"{API}/master/lead-status", headers=_auth(admin_token)).json()
+        cats = requests.get(f"{API}/master/primary-categories", headers=_auth(admin_token)).json()
+        not_won = next((s for s in statuses if not s.get('is_won')), statuses[0])
+        won = next((s for s in statuses if s.get('is_won')), None)
+        if not won:
+            pytest.skip("no won status seeded")
+        cat = cats[0]
+        payload = {
+            "title": f"TEST_AutoFire_{uuid.uuid4().hex[:6]}",
+            "customer_name": "Auto-fire Cust",
+            "customer_email": f"autofire-{uuid.uuid4().hex[:6]}@example.com",
+            "customer_phone": "9000000111",
+            "primary_category_id": cat['id'],
+            "deal_value": 50000,
+            "commission_override": 15,
+            "status_id": not_won['id'],
+        }
+        r = requests.post(f"{API}/leads", json=payload, headers=_auth(admin_token))
+        assert r.status_code in (200, 201), r.text
+        lead = r.json()
+        # No commercial exists yet
+        coms_before = requests.get(f"{API}/commercials", headers=_auth(admin_token)).json()
+        assert not any(c.get('lead_id') == lead['id'] for c in coms_before)
+        # Flip to Won
+        r = requests.put(f"{API}/leads/{lead['id']}", json={"status_id": won['id']}, headers=_auth(admin_token))
+        assert r.status_code == 200, r.text
+        # Now a commercial should exist and be approved
+        import time
+        time.sleep(0.5)
+        coms_after = requests.get(f"{API}/commercials", headers=_auth(admin_token)).json()
+        matching = [c for c in coms_after if c.get('lead_id') == lead['id']]
+        assert len(matching) == 1, f"expected 1 auto-created commercial, got {len(matching)}"
+        c = matching[0]
+        assert c.get('approval_status') == 'approved'
+        # Revenue events should be present
+        evs = requests.get(f"{API}/commercials/{c['id']}/revenue-events", headers=_auth(admin_token)).json()
+        assert len(evs) >= 1
+        assert evs[0]['expected_amount'] == 50000
+
+
+# =====================================================================
 # Scenario F — Quick setup (one-click from Lead Detail)
 # =====================================================================
 class TestQuickSetup:

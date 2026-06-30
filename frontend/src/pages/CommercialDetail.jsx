@@ -14,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '../components/ui/dropdown-menu';
-import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle, Wand2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle, Wand2, CheckCircle2 } from 'lucide-react';
 import SearchableUserSelect from '../components/SearchableUserSelect';
 import { toast } from 'sonner';
 
@@ -557,6 +557,17 @@ const CommercialDetail = () => {
         </div>
       </div>
 
+      <FinanceApprovalBanner
+        commercialId={commercial.id}
+        approvalStatus={commercial.approval_status}
+        approvedAt={commercial.approved_at}
+        approvedByName={commercial.approved_by_name}
+        onChange={async () => {
+          const res = await api.get(`/commercials/${commercial.id}`);
+          setCommercial(res.data);
+        }}
+      />
+
       {/* Summary KPIs */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <KPI label={isOneTime ? 'Project Value' : 'Contract Value'} value={fmtMoney(isOneTime ? commercial.total_value : commercial.contract_value, commercial.currency)} />
@@ -968,7 +979,7 @@ const CommercialDetail = () => {
                         </tr>
                       ))}
                       {milestones.length === 0 && (
-                        <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No milestones yet. Click "Add milestone" to begin.</td></tr>
+                        <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No milestones yet. Click &ldquo;Add milestone&rdquo; to begin.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -1391,3 +1402,120 @@ const UserSelect = ({ value, onChange, users, testid }) => (
 );
 
 export default CommercialDetail;
+
+// ---------------------------------------------------------------------------
+// Phase 38 — Finance approval banner + Revenue Events panel
+// ---------------------------------------------------------------------------
+const FinanceApprovalBanner = ({ commercialId, approvalStatus, approvedAt, approvedByName, onChange }) => {
+  const [busy, setBusy] = useState(false);
+  const [events, setEvents] = useState([]);
+  const isApproved = approvalStatus === 'approved';
+
+  const loadEvents = useCallback(async () => {
+    try {
+      const r = await api.get(`/commercials/${commercialId}/revenue-events`);
+      setEvents(r.data || []);
+    } catch { /* may 403 for non-finance users; ignore */ }
+  }, [commercialId]);
+
+  useEffect(() => {
+    if (isApproved) loadEvents();
+  }, [isApproved, loadEvents]);
+
+  const approve = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/commercials/${commercialId}/approve`);
+      const evs = r.data?.events || [];
+      setEvents(evs);
+      toast.success(r.data?.generated ? `Approved — ${evs.length} revenue event(s) generated.` : 'Already approved.');
+      if (onChange) await onChange();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Approval failed');
+    } finally { setBusy(false); }
+  };
+
+  const regenerate = async () => {
+    if (!window.confirm('Wipe and rebuild all revenue events for this commercial? Only allowed if none have progressed past Created.')) return;
+    setBusy(true);
+    try {
+      const r = await api.post(`/commercials/${commercialId}/regenerate-revenue-schedule`);
+      setEvents(r.data?.events || []);
+      toast.success('Revenue schedule regenerated.');
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Regenerate failed');
+    } finally { setBusy(false); }
+  };
+
+  if (!isApproved) {
+    return (
+      <Card className="bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900" data-testid="approval-banner-pending">
+        <CardContent className="pt-4 pb-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+            <div>
+              <div className="font-semibold text-sm">Approval pending</div>
+              <div className="text-xs text-muted-foreground">Approve this commercial to auto-generate the Revenue Schedule and unlock Finance tracking.</div>
+            </div>
+          </div>
+          <Button onClick={approve} disabled={busy} className="bg-amber-600 hover:bg-amber-700 text-white" data-testid="approve-commercial-btn">
+            <CheckCircle2 className="w-4 h-4 mr-2" /> {busy ? 'Approving…' : 'Approve & generate revenue schedule'}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900" data-testid="approval-banner-approved">
+      <CardContent className="pt-4 pb-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5" />
+            <div>
+              <div className="font-semibold text-sm">Approved</div>
+              <div className="text-xs text-muted-foreground">
+                By {approvedByName || 'Vyapaar Finance'}{approvedAt ? ` on ${new Date(approvedAt).toLocaleDateString()}` : ''} — {events.length} revenue event(s) generated.
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to="/finance/register">
+              <Button size="sm" variant="outline" data-testid="open-register-from-commercial">Open in Register</Button>
+            </Link>
+            <Button size="sm" variant="ghost" onClick={regenerate} disabled={busy} data-testid="regenerate-revenue-schedule-btn">
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Regenerate
+            </Button>
+          </div>
+        </div>
+        {events.length > 0 && (
+          <div className="border rounded-lg overflow-x-auto bg-background">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/40">
+                <tr><th className="text-left p-2">Event</th><th className="text-left p-2">Type</th><th className="text-right p-2">Expected</th><th className="text-right p-2">Vyapaar</th><th className="text-right p-2">Net</th><th className="text-left p-2">Due</th><th className="text-left p-2">Status</th></tr>
+              </thead>
+              <tbody>
+                {events.slice(0, 8).map(e => (
+                  <tr key={e.id} className="border-t hover:bg-muted/30">
+                    <td className="p-2"><Link to={`/finance/events/${e.id}`} className="hover:underline font-medium">{e.name}</Link></td>
+                    <td className="p-2 capitalize">{(e.revenue_type || '').replace(/_/g, ' ')}</td>
+                    <td className="p-2 text-right tabular-nums">{formatCurrency(e.expected_amount)}</td>
+                    <td className="p-2 text-right tabular-nums text-indigo-700 dark:text-indigo-300">{formatCurrency(e.vyapaar_amount)}</td>
+                    <td className="p-2 text-right tabular-nums text-emerald-700 dark:text-emerald-300">{formatCurrency(e.net_revenue)}</td>
+                    <td className="p-2">{e.due_date || '—'}</td>
+                    <td className="p-2 capitalize">{(e.lifecycle_status || '').replace(/_/g, ' ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {events.length > 8 && (
+              <div className="text-center py-2 text-xs text-muted-foreground border-t">
+                Showing 8 of {events.length} — <Link to="/finance/register" className="text-indigo-600 hover:underline">see all in Register</Link>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};

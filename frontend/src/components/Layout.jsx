@@ -54,6 +54,7 @@ import {
   PieChart,
   CalendarRange,
   ListTodo,
+  IndianRupee,
   Save as SaveIcon,
 } from 'lucide-react';
 import { getRoleLabel } from '../utils/api';
@@ -277,6 +278,28 @@ const Layout = ({ children }) => {
       }
     }
 
+    // Phase 38 — Finance & Commission Management (Vyapaar Finance / Admin / Ops only)
+    if (isAdmin || isFinance || isVyapaarOps || isVyapaarFinance) {
+      items.push({
+        label: 'Finance',
+        icon: IndianRupee,
+        path: '/finance',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
+      });
+      items.push({
+        label: 'Commission Register',
+        icon: FileText,
+        path: '/finance/register',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
+      });
+      items.push({
+        label: 'Finance Reports',
+        icon: BarChart3,
+        path: '/finance/reports',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
+      });
+    }
+
     items.push({
       label: 'Reports',
       icon: BarChart3,
@@ -413,6 +436,9 @@ const Layout = ({ children }) => {
           has('/commercials') && byPath['/commercials'],
           has('/commercials/kanban') && byPath['/commercials/kanban'],
           has('/commercials/analytics') && byPath['/commercials/analytics'],
+          has('/finance') && byPath['/finance'],
+          has('/finance/register') && byPath['/finance/register'],
+          has('/finance/reports') && byPath['/finance/reports'],
         ].filter(Boolean),
       },
       {
