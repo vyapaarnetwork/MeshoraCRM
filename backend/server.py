@@ -385,6 +385,12 @@ class LeadCreate(BaseModel):
     customer_email: EmailStr
     customer_phone: Optional[str] = None
     customer_company: Optional[str] = None
+    # Phase 40.2 — link this lead's customer to a row in the Companies master.
+    # When set, customer_name/email/phone/company can be sourced from the
+    # company's contact details (selling partners can also raise leads for their
+    # own internal requirements, hence we accept both Customer and Selling
+    # Partner type companies).
+    customer_company_id: Optional[str] = None
     selling_partner_id: Optional[str] = None
     selling_partner_company_id: Optional[str] = None  # Phase 34.7 — company-level assignment
     lead_owner_id: Optional[str] = None  # Phase 34.7 — primary user-level owner inside the partner company
@@ -418,6 +424,7 @@ class LeadUpdate(BaseModel):
     customer_email: Optional[EmailStr] = None
     customer_phone: Optional[str] = None
     customer_company: Optional[str] = None
+    customer_company_id: Optional[str] = None  # Phase 40.2 — link to Companies master
     selling_partner_id: Optional[str] = None
     selling_partner_company_id: Optional[str] = None  # Phase 34.7
     lead_owner_id: Optional[str] = None  # Phase 34.7
@@ -474,6 +481,8 @@ class LeadResponse(BaseModel):
     customer_email: str
     customer_phone: Optional[str] = None
     customer_company: Optional[str] = None
+    customer_company_id: Optional[str] = None  # Phase 40.2 — link to Companies master
+    customer_company_type: Optional[str] = None  # Phase 40.2 — 'customer' | 'selling_partner' (denormalised for UI)
     selling_partner_id: Optional[str] = None  # The winning partner (for backward compatibility)
     selling_partner_name: Optional[str] = None
     sales_associate_id: Optional[str] = None
@@ -3406,6 +3415,14 @@ async def enrich_lead(lead: dict) -> LeadResponse:
     sp_company = None
     if lead.get('selling_partner_company_id'):
         sp_company = await db.companies.find_one({"id": lead['selling_partner_company_id']}, {"_id": 0})
+
+    # Phase 40.2 — denormalise customer company type (for UI badge)
+    customer_company_type = None
+    if lead.get('customer_company_id'):
+        cust_co = await db.companies.find_one({"id": lead['customer_company_id']}, {"_id": 0, "type": 1})
+        if cust_co:
+            customer_company_type = cust_co.get('type')
+    lead.setdefault('customer_company_type', customer_company_type)
     lead_owner = None
     if lead.get('lead_owner_id'):
         lead_owner = await db.users.find_one({"id": lead['lead_owner_id']}, {"_id": 0})
@@ -3471,6 +3488,8 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         customer_email=lead['customer_email'],
         customer_phone=lead.get('customer_phone'),
         customer_company=lead.get('customer_company'),
+        customer_company_id=lead.get('customer_company_id'),
+        customer_company_type=lead.get('customer_company_type'),
         selling_partner_id=lead.get('selling_partner_id'),
         selling_partner_name=selling_partner['name'] if selling_partner else None,
         sales_associate_id=lead.get('sales_associate_id'),
@@ -3503,28 +3522,28 @@ async def enrich_lead(lead: dict) -> LeadResponse:
         referral_commission_percent=(
             lead.get('referral_commission_percent')
             if lead.get('referral_commission_percent') is not None
-            else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+            else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
         ),
         referral_commission_amount=round(
             float(lead.get('deal_value') or 0) *
             float(
                 lead.get('referral_commission_percent')
                 if lead.get('referral_commission_percent') is not None
-                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
             ) / 100.0, 2
         ),
         # Legacy aliases so any existing UI code keeps working
         partner_commission_percent=(
             lead.get('referral_commission_percent')
             if lead.get('referral_commission_percent') is not None
-            else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+            else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
         ),
         partner_commission_amount=round(
             float(lead.get('deal_value') or 0) *
             float(
                 lead.get('referral_commission_percent')
                 if lead.get('referral_commission_percent') is not None
-                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
             ) / 100.0, 2
         ),
         commission_breakdown=commission_breakdown,
@@ -3689,6 +3708,8 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             customer_email=lead['customer_email'],
             customer_phone=lead.get('customer_phone'),
             customer_company=lead.get('customer_company'),
+            customer_company_id=lead.get('customer_company_id'),
+            customer_company_type=lead.get('customer_company_type'),
             selling_partner_id=lead.get('selling_partner_id'),
             selling_partner_name=selling_partner['name'] if selling_partner else None,
             sales_associate_id=lead.get('sales_associate_id'),
@@ -3717,27 +3738,27 @@ async def enrich_leads_bulk(leads: List[dict]) -> List[LeadResponse]:
             referral_commission_percent=(
                 lead.get('referral_commission_percent')
                 if lead.get('referral_commission_percent') is not None
-                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
             ),
             referral_commission_amount=round(
                 float(lead.get('deal_value') or 0) *
                 float(
                     lead.get('referral_commission_percent')
                     if lead.get('referral_commission_percent') is not None
-                    else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                    else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
                 ) / 100.0, 2
             ),
             partner_commission_percent=(
                 lead.get('referral_commission_percent')
                 if lead.get('referral_commission_percent') is not None
-                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
             ),
             partner_commission_amount=round(
                 float(lead.get('deal_value') or 0) *
                 float(
                     lead.get('referral_commission_percent')
                     if lead.get('referral_commission_percent') is not None
-                    else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 10.0)
+                    else (lead.get('partner_commission_percent') if lead.get('partner_commission_percent') is not None else 0.0)
                 ) / 100.0, 2
             ),
             commission_breakdown=commission_breakdown,
@@ -3815,6 +3836,7 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
         "customer_email": lead_data.customer_email,
         "customer_phone": lead_data.customer_phone,
         "customer_company": lead_data.customer_company,
+        "customer_company_id": lead_data.customer_company_id,  # Phase 40.2 — link to Companies master
         "selling_partner_id": selling_partner_id_final,
         "selling_partner_company_id": sp_company_id,
         "lead_owner_id": lead_owner_id,
@@ -3860,16 +3882,9 @@ async def create_lead(lead_data: LeadCreate, current_user: dict = Depends(get_cu
     # Back-compat: accept legacy partner_commission_percent if no level supplied
     elif lead_data.partner_commission_percent is not None:
         lead_doc["referral_commission_percent"] = float(lead_data.partner_commission_percent)
-    else:
-        # Default to the master is_default row (= Lead Scout 10%)
-        default_level = await db.referral_commissions.find_one(
-            {"is_default": True, "is_active": {"$ne": False}}, {"_id": 0, "id": 1, "percent": 1},
-        )
-        if default_level:
-            lead_doc["referral_commission_id"] = default_level["id"]
-            lead_doc["referral_commission_percent"] = float(default_level.get("percent") or 10.0)
-        else:
-            lead_doc["referral_commission_percent"] = 10.0
+    # Phase 40.2 — when neither the level nor a legacy percent is supplied, leave the
+    # referral fields empty. Previously we silently defaulted to Lead Scout 10%, which
+    # made the breakdown UI mis-attribute a 10% payout to leads with no referrer.
 
     await db.leads.insert_one(lead_doc)
     

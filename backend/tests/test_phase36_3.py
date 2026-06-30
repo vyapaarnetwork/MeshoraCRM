@@ -178,13 +178,17 @@ class TestLeadCommissionFields:
         assert body.get("vyapaar_commission_template_id") == vyapaar_template_id
         requests.delete(f"{API}/leads/{lead_id}", headers=_auth(admin_token))
 
-    def test_create_without_commission_defaults_to_lead_scout(self, admin_token, primary_category_id):
+    def test_create_without_commission_omits_referral(self, admin_token, primary_category_id):
+        # Phase 40.2 — When no referral_commission_id is supplied at lead create,
+        # referral_commission_percent should be empty/zero (NOT auto-defaulted to
+        # Lead Scout 10%). The UI now only shows a referral payout when a level
+        # is explicitly picked.
         lead = self._make_lead(admin_token, primary_category_id)
         lead_id = lead["id"]
         r = requests.get(f"{API}/leads/{lead_id}", headers=_auth(admin_token))
         body = r.json()
-        # Default should be Lead Scout 10%
-        assert float(body.get("referral_commission_percent") or 0) == 10.0
+        assert not body.get("referral_commission_id"), "Should not auto-link Lead Scout when no referral is picked"
+        assert float(body.get("referral_commission_percent") or 0) == 0.0
         requests.delete(f"{API}/leads/{lead_id}", headers=_auth(admin_token))
 
     def test_update_changes_referral_level(self, admin_token, levels, primary_category_id):

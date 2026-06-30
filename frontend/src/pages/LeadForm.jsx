@@ -15,10 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { ArrowLeft, Loader2, Save, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, AlertCircle, Search, Building2, X, Check } from 'lucide-react';
 import api from '../utils/api';
 import { toast } from 'sonner';
 import SearchableUserSelect from '../components/SearchableUserSelect';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from '../components/ui/command';
+import { Badge } from '../components/ui/badge';
 
 const LeadForm = () => {
   const { id } = useParams();
@@ -36,6 +39,7 @@ const LeadForm = () => {
     customer_email: '',
     customer_phone: '',
     customer_company: '',
+    customer_company_id: '',     // Phase 40.2 — link to Companies master
     selling_partner_id: '',
     selling_partner_company_id: '',
     lead_owner_id: '',
@@ -64,6 +68,7 @@ const LeadForm = () => {
     vyapaarTeam: [],
     commissionTemplates: [],    // Phase 36.3 — Vyapaar Commission templates master
     referralCommissions: [],    // Phase 36.3 — Referral Commission levels master
+    allCompanies: [],           // Phase 40.2 — Companies master (Customer + Selling Partner) for lead-customer picker
   });
   const [loadingPartners, setLoadingPartners] = useState(false);
   const [loadingCompanyUsers, setLoadingCompanyUsers] = useState(false);
@@ -114,7 +119,7 @@ const LeadForm = () => {
 
   const fetchOptions = async () => {
     try {
-      const [statusesRes, primaryRes, secondaryRes, associatesRes, companiesRes, vyapaarRes, templatesRes, referralsRes] = await Promise.all([
+      const [statusesRes, primaryRes, secondaryRes, associatesRes, companiesRes, vyapaarRes, templatesRes, referralsRes, allCompaniesRes] = await Promise.all([
         api.get('/master/lead-status'),
         api.get('/master/primary-categories'),
         api.get('/master/secondary-categories'),
@@ -123,6 +128,9 @@ const LeadForm = () => {
         api.get('/users/vyapaar-team').catch(() => ({ data: [] })),
         api.get('/master/commission-templates').catch(() => ({ data: [] })),
         api.get('/referral-commissions').catch(() => ({ data: [] })),
+        // Phase 40.2 — load all companies (Customer + Selling Partner types) so the
+        // customer picker can attach a lead to any existing company in the master.
+        api.get('/companies').catch(() => ({ data: [] })),
       ]);
 
       setOptions(prev => ({
@@ -135,6 +143,7 @@ const LeadForm = () => {
         vyapaarTeam: vyapaarRes.data,
         commissionTemplates: templatesRes.data || [],
         referralCommissions: referralsRes.data || [],
+        allCompanies: allCompaniesRes.data || [],
       }));
 
       // Phase 36.3 — Auto-default Status to the first available lead-status when creating
@@ -182,6 +191,7 @@ const LeadForm = () => {
         customer_email: lead.customer_email || '',
         customer_phone: lead.customer_phone || '',
         customer_company: lead.customer_company || '',
+        customer_company_id: lead.customer_company_id || '',  // Phase 40.2
         selling_partner_id: lead.selling_partner_id || '',
         selling_partner_company_id: lead.selling_partner_company_id || '',
         lead_owner_id: lead.lead_owner_id || lead.selling_partner_id || '',
@@ -448,11 +458,67 @@ const LeadForm = () => {
           <Card>
             <CardHeader>
               <CardTitle>Customer Information</CardTitle>
-              <CardDescription>Details about the customer</CardDescription>
+              <CardDescription>
+                Pick an existing company from the master, or {(isAdmin) ? 'enter a new customer below' : 'ask Vyapaar to add the new customer first'}.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Phase 40.2 — Customer picker from Companies master */}
+              <CustomerPicker
+                companies={options.allCompanies}
+                selectedId={formData.customer_company_id}
+                onSelect={(c) => {
+                  if (c) {
+                    setFormData(prev => ({
+                      ...prev,
+                      customer_company_id: c.id,
+                      customer_company: c.name || '',
+                      customer_email: c.contact_email || prev.customer_email,
+                      customer_phone: c.contact_phone || prev.customer_phone,
+                      // Keep Customer Name editable (Companies master holds contact, not contact-person name)
+                      customer_name: prev.customer_name || c.name || '',
+                    }));
+                  } else {
+                    // Unlink
+                    setFormData(prev => ({ ...prev, customer_company_id: '' }));
+                  }
+                }}
+              />
+
+              {/* Linked badge OR manual-entry banner */}
+              {formData.customer_company_id && (
+                <Alert className="border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30">
+                  <AlertDescription className="flex items-center justify-between gap-2 text-xs">
+                    <span>
+                      <strong>Linked</strong> to{' '}
+                      {options.allCompanies.find(c => c.id === formData.customer_company_id)?.name || 'a company in the master'}.
+                      Edit contact details in Companies → master to keep this lead in sync.
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFormData(prev => ({ ...prev, customer_company_id: '' }))}
+                      className="h-6 text-xs"
+                      data-testid="customer-unlink-btn"
+                    >
+                      Unlink
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
+              {!formData.customer_company_id && !isAdmin && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    No company selected. Only Vyapaar team can add a new customer to the master — please pick one above, or contact your Vyapaar Network admin to add this customer.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Manual entry fields — read-only when linked OR when non-admin without selection */}
               <div className="space-y-2">
-                <Label htmlFor="customer_name">Customer Name *</Label>
+                <Label htmlFor="customer_name">Customer Contact Name *</Label>
                 <Input
                   id="customer_name"
                   name="customer_name"
@@ -460,6 +526,7 @@ const LeadForm = () => {
                   onChange={handleChange}
                   placeholder="John Doe"
                   required
+                  readOnly={!isAdmin && !formData.customer_company_id ? false : false}
                   data-testid="customer-name-input"
                 />
               </div>
@@ -473,6 +540,7 @@ const LeadForm = () => {
                   onChange={handleChange}
                   placeholder="john@company.com"
                   required
+                  disabled={!isAdmin && !formData.customer_company_id}
                   data-testid="customer-email-input"
                 />
               </div>
@@ -484,6 +552,7 @@ const LeadForm = () => {
                   value={formData.customer_phone}
                   onChange={handleChange}
                   placeholder="+91 98765 43210"
+                  disabled={!isAdmin && !formData.customer_company_id}
                   data-testid="customer-phone-input"
                 />
               </div>
@@ -495,6 +564,7 @@ const LeadForm = () => {
                   value={formData.customer_company}
                   onChange={handleChange}
                   placeholder="Company Name"
+                  disabled={!isAdmin && !formData.customer_company_id}
                   data-testid="customer-company-input"
                 />
               </div>
@@ -683,8 +753,11 @@ const LeadForm = () => {
                     return 15; // default fallback
                   })()}
                   referralPct={(() => {
+                    // Phase 40.2 — only show referral payout when a level is EXPLICITLY picked.
+                    // Without an explicit selection we no longer assume Lead Scout 10% in the UI.
+                    if (!formData.referral_commission_id) return 0;
                     const rc = (options.referralCommissions || []).find((r) => r.id === formData.referral_commission_id);
-                    return rc ? parseFloat(rc.percent) : 10;
+                    return rc ? parseFloat(rc.percent) : 0;
                   })()}
                   referralLevelName={(options.referralCommissions || []).find((r) => r.id === formData.referral_commission_id)?.name}
                 />
@@ -793,22 +866,112 @@ const CommissionBreakdownPreview = ({ dealValue, vyapaarPct, referralPct, referr
         </span>
         <span className="font-semibold text-indigo-700 dark:text-indigo-300">{fmt(vyapaarShare)}</span>
       </div>
-      <div className="border-l-2 border-indigo-300 dark:border-indigo-700 ml-4 pl-3 space-y-1.5 py-1">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">
-            Referral payout {referralLevelName ? `(${referralLevelName} ${referralPct}%)` : `(${referralPct}%)`}
-          </span>
-          <span className="font-medium text-rose-600 dark:text-rose-300">– {fmt(referralPayout)}</span>
-        </div>
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Net to Vyapaar</span>
-          <span className="font-semibold text-emerald-700 dark:text-emerald-300">{fmt(netToVyapaar)}</span>
-        </div>
-      </div>
-      <p className="text-[11px] text-muted-foreground pt-1 border-t mt-2">
-        Referral payout = {referralPct}% of Vyapaar's commission share, paid to the sales associate / selling partner that referred this lead.
-      </p>
+      {referralPct > 0 ? (
+        <>
+          <div className="border-l-2 border-indigo-300 dark:border-indigo-700 ml-4 pl-3 space-y-1.5 py-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">
+                Referral payout {referralLevelName ? `(${referralLevelName} ${referralPct}%)` : `(${referralPct}%)`}
+              </span>
+              <span className="font-medium text-rose-600 dark:text-rose-300">– {fmt(referralPayout)}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Net to Vyapaar</span>
+              <span className="font-semibold text-emerald-700 dark:text-emerald-300">{fmt(netToVyapaar)}</span>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground pt-1 border-t mt-2">
+            Referral payout = {referralPct}% of Vyapaar&apos;s commission share, paid to the sales associate / selling partner that referred this lead.
+          </p>
+        </>
+      ) : (
+        <p className="text-[11px] text-muted-foreground pt-1 border-t mt-2">
+          No referral commission applies. Pick a Referral Commission Level above if a sales associate / selling partner referred this lead.
+        </p>
+      )}
     </div>
   );
 };
 
+
+
+// ============================ Phase 40.2 — Customer Picker ============================
+// Searchable popover that lets the user pick an existing company from the master
+// (both Customer and Selling Partner types — selling partners can raise leads
+// for their own internal requirements). On select the parent form auto-fills
+// customer_company, contact email & phone from the picked company.
+const CustomerPicker = ({ companies, selectedId, onSelect }) => {
+  const [open, setOpen] = useState(false);
+  const selected = companies.find((c) => c.id === selectedId);
+  const sorted = [...companies].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  return (
+    <div className="space-y-1.5">
+      <Label>Select existing customer or company</Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className="w-full justify-between font-normal"
+            data-testid="customer-picker-trigger"
+          >
+            <span className="flex items-center gap-2 truncate">
+              <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
+              {selected ? (
+                <>
+                  <span className="truncate">{selected.name}</span>
+                  <Badge variant="outline" className="text-[10px] capitalize">{(selected.type || "").replace(/_/g, " ")}</Badge>
+                </>
+              ) : (
+                <span className="text-muted-foreground">Search & pick from {companies.length} compan{companies.length === 1 ? "y" : "ies"} in master…</span>
+              )}
+            </span>
+            <Search className="w-4 h-4 opacity-50 shrink-0" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+          <Command>
+            <CommandInput placeholder="Type to search companies…" data-testid="customer-picker-search" />
+            <CommandList>
+              <CommandEmpty>No matching company. Ask Vyapaar to add it first.</CommandEmpty>
+              <CommandGroup>
+                {sorted.map((c) => (
+                  <CommandItem
+                    key={c.id}
+                    value={`${c.name} ${c.contact_email || ""} ${c.type || ""}`}
+                    onSelect={() => {
+                      onSelect(c);
+                      setOpen(false);
+                    }}
+                    data-testid={`customer-picker-option-${c.id}`}
+                  >
+                    <Check className={`mr-2 h-4 w-4 ${selectedId === c.id ? "opacity-100" : "opacity-0"}`} />
+                    <Building2 className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm truncate">{c.name}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{c.contact_email || "no email on file"}</div>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] capitalize ml-2">{(c.type || "").replace(/_/g, " ")}</Badge>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {selected && (
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mt-0.5"
+          data-testid="customer-picker-clear"
+        >
+          <X className="w-3 h-3" /> Clear selection
+        </button>
+      )}
+    </div>
+  );
+};

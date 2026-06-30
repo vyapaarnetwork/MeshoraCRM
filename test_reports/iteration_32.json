@@ -1,0 +1,32 @@
+{
+  "summary": "Phase 40.2 bug-fix verification — 'commission breakdown showing 10% referral by default even when no referral partner picked'. End-to-end PASS on both backend and frontend. (a) Backend 44/44 PASS: ran /app/backend/tests/test_phase36_3.py + /app/backend/tests/test_phase37_finance.py with REACT_APP_BACKEND_URL pointing at the preview URL — 44 passed in 17.24s, including the renamed test_create_without_commission_omits_referral which now asserts referral_commission_id is empty AND referral_commission_percent==0.0 (not the old auto-default to Lead Scout 10%). Also verified test_create_with_referral_commission_id (Opportunity Builder → 20%), test_update_changes_referral_level (Strategic Partner → 50%), and the 6 regression endpoint pings. (b) Frontend verified live on https://vyapaar-preview-1.preview.emergentagent.com/leads/new as admin: with deal_value=10,000 and 'Pick a level...' UNSELECTED, CommissionBreakdownPreview renders ONLY the 3 expected lines (Deal value ₹10,000 / Selling partner keeps 85% ₹8,500 / Vyapaar commission 15% ₹1,500) + the new info note 'No referral commission applies. Pick a Referral Commission Level above if a sales associate / selling partner referred this lead.' — confirmed NO 'Referral payout' or 'Net to Vyapaar' lines (regex-asserted via inner_text). (c) After picking 'Opportunity Builder — 20%' from the dropdown, the preview re-renders live with: 'Referral payout (Opportunity Builder 20%) –₹300', 'Net to Vyapaar ₹1,200', plus footer 'Referral payout = 20% of Vyapaar's commission share, paid to the sales associate / selling partner that referred this lead.' All 8 assertions PASS. (d) Customer Picker confirmation: data-testid='customer-picker-trigger' is rendered ('Search & pick from 37 companies in master…') AND the manual-entry inputs (customer_name, customer_email, customer_phone, customer_company) coexist for the case where the user wants to type a new customer not in the master — both options are available as the user requested.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase36_3.py",
+    "/app/backend/tests/test_phase37_finance.py",
+    "/app/test_reports/pytest/phase40_2_iter32.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "LeadForm.jsx L755-761 (referralPct memo) and L869-891 (conditional referral block + info note) are clean — referralPct returns 0 only when formData.referral_commission_id is falsy, so the breakdown collapses gracefully without any flicker. The else-branch info note uses the exact copy spec'd in the bug report.",
+    "Backend create_lead correctly omits the referral_commission_id field entirely when none is supplied (no silent fallback to Lead Scout). enrich_lead + enrich_leads_bulk fall back to 0.0 (not 10.0), so legacy reads also reflect 'no referral picked' as 0%.",
+    "Pre-existing react/no-unescaped-entities warnings in LeadForm.jsx around the apostrophes in the new info note + the existing footer copy — they don't break the build (CRA shows them as warnings, not errors) and are out of scope for this bug fix per the agent-to-agent note. Optional: replace ' with &apos; or HTML entities in those literal strings to silence the lint warning. NOT a blocker.",
+    "Legacy data caveat: leads CREATED BEFORE this deploy still carry referral_commission_percent=10.0 cached in Mongo. The enrich-side fallback in this fix only kicks in when the field is null/missing — pre-existing 10.0 values remain (correct behaviour, no retro-migration). The other_misc_info note in the review is accurate; to verify end-to-end always create a fresh lead post-deploy."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (44/44)",
+    "frontend": "100% (no-referral case + with-referral case both verified live)"
+  },
+  "test_credentials": "admin@vyapaarnetwork.com / admin123 (super admin); john@testco.com / test123 (customer for RBAC tests in phase36_3)",
+  "seed_data_creation": "Pytest fixtures created+deleted TEST_Phase363_* referral commission rows and TEST_Phase363_Lead_* leads (all cleaned up via DELETE in same test). No persistent test data left behind. Frontend test ran on /leads/new without submitting the form, so no Mongo writes from the UI session.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug fix for 'default 10% referral commission shown when no referral picked' is fully resolved on backend and frontend. To rerun the regression: `cd /app && REACT_APP_BACKEND_URL=https://vyapaar-preview-1.preview.emergentagent.com python -m pytest backend/tests/test_phase36_3.py backend/tests/test_phase37_finance.py -v` (expect 44/44 PASS in ~17s). The renamed test_create_without_commission_omits_referral is the canonical guard against regression of this bug. On the UI side, the data-testid='commission-breakdown' element's inner_text is the most reliable assertion vector — check (1) absence of 'Net to Vyapaar' / 'Referral payout' when no level picked, (2) presence + correct numbers (₹300 referral payout, ₹1,200 net) after picking Opportunity Builder.",
+  "rca of the issue": "Root cause: (1) backend create_lead silently defaulted referral_commission_id to the Lead Scout (10%) row when the client omitted it, and (2) enrich_lead used 10.0 as the percent fallback for legacy leads with missing referral fields. Fix: removed the auto-default at create-time (server.py L3873-3888) and changed the enrich fallback to 0.0 (server.py L3522-3548 + L3738-3764). Frontend mirror: CommissionBreakdownPreview now treats referralPct=0 as 'no referral applies' and renders an info note instead of zero-valued referral payout / net-to-Vyapaar lines (LeadForm.jsx L755-761 + L865-895). Verified live with admin login + deal_value=10,000 + no level picked → only 3 lines + info note; then pick Opportunity Builder → 5 lines + footer copy."
+}
