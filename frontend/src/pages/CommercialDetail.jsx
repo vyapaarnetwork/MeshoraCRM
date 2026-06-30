@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '../components/ui/dropdown-menu';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle, Wand2, CheckCircle2 } from 'lucide-react';
 import SearchableUserSelect from '../components/SearchableUserSelect';
 import { toast } from 'sonner';
@@ -1489,25 +1490,35 @@ const FinanceApprovalBanner = ({ commercialId, approvalStatus, approvedAt, appro
           </div>
         </div>
         {events.length > 0 && (
-          <div className="border rounded-lg overflow-x-auto bg-background">
-            <table className="w-full text-xs">
-              <thead className="bg-muted/40">
-                <tr><th className="text-left p-2">Event</th><th className="text-left p-2">Type</th><th className="text-right p-2">Expected</th><th className="text-right p-2">Vyapaar</th><th className="text-right p-2">Net</th><th className="text-left p-2">Due</th><th className="text-left p-2">Status</th></tr>
-              </thead>
-              <tbody>
+          <div className="rounded-lg overflow-x-auto bg-background border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Event</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Expected</TableHead>
+                  <TableHead className="text-right">Vyapaar</TableHead>
+                  <TableHead className="text-right">Net</TableHead>
+                  <TableHead>Due</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {events.slice(0, 8).map(e => (
-                  <tr key={e.id} className="border-t hover:bg-muted/30">
-                    <td className="p-2"><Link to={`/finance/events/${e.id}`} className="hover:underline font-medium">{e.name}</Link></td>
-                    <td className="p-2 capitalize">{(e.revenue_type || '').replace(/_/g, ' ')}</td>
-                    <td className="p-2 text-right tabular-nums">{formatCurrency(e.expected_amount)}</td>
-                    <td className="p-2 text-right tabular-nums text-indigo-700 dark:text-indigo-300">{formatCurrency(e.vyapaar_amount)}</td>
-                    <td className="p-2 text-right tabular-nums text-emerald-700 dark:text-emerald-300">{formatCurrency(e.net_revenue)}</td>
-                    <td className="p-2">{e.due_date || '—'}</td>
-                    <td className="p-2 capitalize">{(e.lifecycle_status || '').replace(/_/g, ' ')}</td>
-                  </tr>
+                  <TableRow key={e.id} className="hover:bg-muted/30">
+                    <TableCell>
+                      <Link to={`/finance/events/${e.id}`} className="hover:underline font-medium">{e.name}</Link>
+                    </TableCell>
+                    <TableCell className="capitalize">{(e.revenue_type || '').replace(/_/g, ' ')}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCurrency(e.expected_amount)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-indigo-700 dark:text-indigo-300">{formatCurrency(e.vyapaar_amount)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-emerald-700 dark:text-emerald-300">{formatCurrency(e.net_revenue)}</TableCell>
+                    <TableCell>{e.due_date || '—'}</TableCell>
+                    <TableCell className="capitalize">{(e.lifecycle_status || '').replace(/_/g, ' ')}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
             {events.length > 8 && (
               <div className="text-center py-2 text-xs text-muted-foreground border-t">
                 Showing 8 of {events.length} — <Link to="/finance/register" className="text-indigo-600 hover:underline">see all in Register</Link>
