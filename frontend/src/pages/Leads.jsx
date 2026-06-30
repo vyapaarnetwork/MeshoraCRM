@@ -81,7 +81,6 @@ const Leads = () => {
 
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignedToMe]);
 
   // Phase 34.7.3 — Load saved views once and apply default if any
@@ -100,7 +99,6 @@ const Leads = () => {
         setViewsLoaded(true);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyView = (v) => {
@@ -459,7 +457,7 @@ const Leads = () => {
                           onClick={(e) => { e.stopPropagation(); handleDeleteView(v.id); }}
                           className="p-1 rounded hover:bg-rose-100 text-rose-600"
                           title="Delete view"
-                          data-testid={`view-delete-${v.id}`}
+                          data-testid={`delete-view-btn-${v.id}`}
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -494,7 +492,7 @@ const Leads = () => {
 
       {/* Save View Dialog */}
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
-        <DialogContent>
+        <DialogContent data-testid="save-view-dialog">
           <DialogHeader>
             <DialogTitle>Save view</DialogTitle>
           </DialogHeader>
@@ -506,7 +504,7 @@ const Leads = () => {
                 value={newViewName}
                 onChange={(e) => setNewViewName(e.target.value)}
                 placeholder="e.g. Hot leads I own"
-                data-testid="view-name-input"
+                data-testid="save-view-name-input"
                 autoFocus
               />
             </div>
@@ -516,7 +514,7 @@ const Leads = () => {
                 checked={newViewDefault}
                 onChange={(e) => setNewViewDefault(e.target.checked)}
                 className="h-4 w-4 accent-violet-600"
-                data-testid="view-default-checkbox"
+                data-testid="save-view-default-checkbox"
               />
               Set as default view (auto-load on Leads page open)
             </label>
@@ -528,8 +526,8 @@ const Leads = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSaveView} data-testid="confirm-save-view-btn">
+            <Button variant="outline" onClick={() => setSaveDialogOpen(false)} data-testid="save-view-cancel-btn">Cancel</Button>
+            <Button onClick={handleSaveView} data-testid="save-view-confirm-btn">
               <SaveIcon className="w-4 h-4 mr-1.5" /> Save view
             </Button>
           </DialogFooter>

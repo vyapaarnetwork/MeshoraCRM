@@ -564,6 +564,19 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 40.1.2 — Lead Views testid alignment (Feb 9, 2026)
+- [x] **Save-View Dialog testids** wired per testing agent's request:
+  - `data-testid="save-view-dialog"` on the DialogContent
+  - `data-testid="save-view-name-input"` (was `view-name-input`)
+  - `data-testid="save-view-default-checkbox"` (was `view-default-checkbox`)
+  - `data-testid="save-view-confirm-btn"` (was `confirm-save-view-btn`)
+  - `data-testid="save-view-cancel-btn"` (new — Cancel button)
+  - `data-testid="delete-view-btn-{view_id}"` per view row (was `view-delete-{id}`)
+- [x] **Bonus cleanup**: removed 2 more unused `eslint-disable-next-line` directives in `Leads.jsx` (L84, L103). Total of 6 unused-directive lint warnings fixed across the codebase this session.
+- [x] **Live smoke-tested**: dialog opens via testid lookup, all 4 inner testids resolve to visible elements (screenshot confirms).
+- The Save-View → reload → delete flow is now fully automatable by future testing-agent runs without flaky locators.
+
+
 ### Phase 40.1.1 — Code-review remediation pass (Feb 9, 2026)
 - **Code-review findings triaged**:
   - ✅ **Circular import (`server.py` ↔ `routers/lead_views.py`)** — confirmed as a known code-smell, NOT a runtime bug. Works because routers are mounted AFTER server module finishes loading. All 7 existing routers (commercials, deal_room, finance, internal_tasks, internal_task_categories, tax_rates, referral_commissions) use the same pattern. Proper leaf-module refactor deferred to Phase 41 backlog.
