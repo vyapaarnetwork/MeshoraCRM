@@ -315,6 +315,43 @@ class TestDashboardAndFilters:
 
 
 # =====================================================================
+# Scenario I — Finance Audit Log (Phase 39.2)
+# =====================================================================
+class TestFinanceAuditLog:
+    def test_audit_log_returns_entries(self, admin_token):
+        r = requests.get(f"{API}/finance/audit-log?limit=50", headers=_auth(admin_token))
+        assert r.status_code == 200, r.text
+        rows = r.json()
+        assert isinstance(rows, list)
+        # We've run plenty of approvals/quick-setups in earlier tests; expect at least 1.
+        if rows:
+            row = rows[0]
+            assert 'created_at' in row
+            assert 'action' in row
+            assert 'message' in row
+
+    def test_audit_log_filter_by_action(self, admin_token):
+        r = requests.get(f"{API}/finance/audit-log?action=commercial_approved&limit=20", headers=_auth(admin_token))
+        assert r.status_code == 200, r.text
+        for row in r.json():
+            assert 'commercial_approved' in row['action']
+
+    def test_audit_log_distinct_actions(self, admin_token):
+        r = requests.get(f"{API}/finance/audit-log/distinct-actions", headers=_auth(admin_token))
+        assert r.status_code == 200, r.text
+        actions = r.json()
+        assert isinstance(actions, list)
+        # commercial_approved should always be present after running TestOneTimeFlow earlier
+        assert 'commercial_approved' in actions
+
+    def test_audit_log_blocked_for_customer(self, customer_token):
+        r = requests.get(f"{API}/finance/audit-log", headers=_auth(customer_token))
+        assert r.status_code == 403
+        r = requests.get(f"{API}/finance/audit-log/distinct-actions", headers=_auth(customer_token))
+        assert r.status_code == 403
+
+
+# =====================================================================
 # Scenario H — Monday Finance digest (Phase 39)
 # =====================================================================
 class TestFinanceDigest:

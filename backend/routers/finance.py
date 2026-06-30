@@ -525,6 +525,51 @@ async def quick_setup_commercials(lead_id: str, payload: QuickSetupPayload = Qui
     }
 
 
+@router.get("/finance/audit-log")
+async def finance_audit_log(
+    user_id: Optional[str] = None,
+    action: Optional[str] = None,
+    commercial_id: Optional[str] = None,
+    revenue_event_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = Query(500, le=2000),
+    current_user: dict = Depends(get_current_user),
+):
+    """Phase 39.2 — Global Finance audit log. Surfaces the entire
+    `finance_timeline` collection across all commercials + revenue events
+    as one searchable feed for Finance + compliance.
+    """
+    _require_finance(current_user)
+    query: Dict[str, Any] = {}
+    if user_id:
+        query["user_id"] = user_id
+    if action:
+        query["action"] = {"$regex": action, "$options": "i"}
+    if commercial_id:
+        query["commercial_id"] = commercial_id
+    if revenue_event_id:
+        query["revenue_event_id"] = revenue_event_id
+    if date_from or date_to:
+        rng: Dict[str, Any] = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            # inclusive end-of-day
+            rng["$lte"] = f"{date_to}T23:59:59.999999+00:00"
+        query["created_at"] = rng
+    rows = await db.finance_timeline.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return rows
+
+
+@router.get("/finance/audit-log/distinct-actions")
+async def finance_audit_log_distinct_actions(current_user: dict = Depends(get_current_user)):
+    """Returns the list of unique action strings in the timeline for filter UX."""
+    _require_finance(current_user)
+    actions = await db.finance_timeline.distinct("action")
+    return sorted([a for a in actions if a])
+
+
 @router.post("/commercials/{commercial_id}/regenerate-revenue-schedule")
 async def regenerate_revenue_schedule(commercial_id: str, current_user: dict = Depends(get_current_user)):
     """Wipe and rebuild the Revenue Schedule. Only available BEFORE any event has

@@ -46,6 +46,7 @@ import TaxRates from './pages/TaxRates';
 import FinanceDashboard from './pages/FinanceDashboard';
 import { CommissionRegister, RevenueEventDetail } from './pages/FinanceRegister';
 import FinanceReports from './pages/FinanceReports';
+import FinanceAuditLog from './pages/FinanceAuditLog';
 import './App.css';
 
 // Protected Route Component
@@ -358,6 +359,11 @@ function AppRoutes() {
       <Route path="/finance/reports" element={
         <ProtectedRoute allowedRoles={['super_admin']}>
           <FinanceReports />
+        </ProtectedRoute>
+      } />
+      <Route path="/finance/audit-log" element={
+        <ProtectedRoute allowedRoles={['super_admin']}>
+          <FinanceAuditLog />
         </ProtectedRoute>
       } />
 

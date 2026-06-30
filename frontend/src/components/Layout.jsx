@@ -298,6 +298,12 @@ const Layout = ({ children }) => {
         path: '/finance/reports',
         roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
       });
+      items.push({
+        label: 'Audit Log',
+        icon: Activity,
+        path: '/finance/audit-log',
+        roles: ['super_admin', 'vyapaar_ops', 'vyapaar_finance'],
+      });
     }
 
     items.push({
@@ -439,6 +445,7 @@ const Layout = ({ children }) => {
           has('/finance') && byPath['/finance'],
           has('/finance/register') && byPath['/finance/register'],
           has('/finance/reports') && byPath['/finance/reports'],
+          has('/finance/audit-log') && byPath['/finance/audit-log'],
         ].filter(Boolean),
       },
       {

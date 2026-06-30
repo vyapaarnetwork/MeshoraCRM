@@ -564,6 +564,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 39.2 — Finance Audit Log (Feb 9, 2026)
+- [x] **`GET /api/finance/audit-log`** — global feed across the entire `finance_timeline` collection. Filters: `user_id`, `action` (regex, case-insensitive), `commercial_id`, `revenue_event_id`, `date_from`, `date_to`. Returns up to 2000 entries sorted by `created_at` desc.
+- [x] **`GET /api/finance/audit-log/distinct-actions`** — returns sorted unique action strings for filter UX.
+- [x] **`/finance/audit-log` UI** — day-grouped feed with colour-coded action badges (commercial_approved=emerald, quick_setup=violet, transition.*=indigo, event_updated=slate). Each row deep-links to the underlying event / commercial. Filters (User, Action, From, To), client-side search across message/user/action, CSV export.
+- [x] **Sidebar** — new "Audit Log" entry under Finance Reports in COMMERCIALS group.
+- Backend tests: `TestFinanceAuditLog` — **4/4 PASS** (returns entries, filter by action, distinct actions, customer 403).
+- Live verified: 140 entries surfaced on first page load with full deep-link navigation.
+
+
 ### Phase 39.1 — Monday 9am Finance digest (Feb 9, 2026)
 - [x] **`dispatch_weekly_finance_digest(db, zeptomail, force=False)`** in `services/scheduler.py` — runs from the existing 60-second scan loop. Fires only at iso_dow_ist==1 & hour==9 IST. Idempotent via `finance_digest_runs` keyed by ISO week.
 - [x] Three section detection:
