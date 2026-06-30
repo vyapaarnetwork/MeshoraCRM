@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   IndianRupee, FileText, AlertTriangle, TrendingUp, Repeat,
-  CalendarClock, Activity, Receipt, Wallet, ArrowRight, RefreshCw, Mail,
+  CalendarClock, Activity, Receipt, Wallet, ArrowRight, RefreshCw, Mail, Upload, Inbox,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import api, { formatCurrency } from '../utils/api';
 import { toast } from 'sonner';
@@ -48,10 +49,13 @@ const SectionCard = ({ title, description, icon: Icon, children }) => (
 );
 
 const FinanceDashboard = () => {
+  const navigate = useNavigate();
   const [kpi, setKpi] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [digestSending, setDigestSending] = useState(false);
+  const [pending, setPending] = useState({ count: 0, items: [] });
+  const [pendingLoading, setPendingLoading] = useState(true);
 
   const sendDigestNow = async () => {
     setDigestSending(true);
@@ -86,9 +90,28 @@ const FinanceDashboard = () => {
     }
   };
 
+  const fetchPending = async () => {
+    setPendingLoading(true);
+    try {
+      const r = await api.get('/finance/pending-invoice-uploads?limit=25');
+      setPending(r.data || { count: 0, items: [] });
+    } catch (e) {
+      // Non-blocking; surface a single toast and leave list empty.
+      const detail = e.response?.data?.detail;
+      if (detail) toast.error(detail);
+    } finally {
+      setPendingLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchKpi();
+    fetchPending();
   }, []);
+
+  const openUploadForEvent = (it) => {
+    navigate(`/commercials/${it.commercial_id}?tab=invoice-uploads&event=${it.id}`);
+  };
 
   const r = kpi?.receivables || {};
   const p = kpi?.payables || {};
@@ -175,6 +198,81 @@ const FinanceDashboard = () => {
                    sub={`${r.overdue_collections_count || 0} event(s)`} />
         </div>
       </SectionCard>
+
+      {/* Pending Invoice Upload Inbox (Phase 40.3) */}
+      <Card data-testid="pending-invoice-uploads-card" className="border-amber-200 dark:border-amber-900">
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base text-amber-700 dark:text-amber-300">
+                <Inbox className="w-4 h-4" />
+                Pending Invoice Uploads
+                <Badge variant="outline" className="ml-1 text-[10px]" data-testid="pending-invoice-count">
+                  {pendingLoading ? '…' : pending.count}
+                </Badge>
+              </CardTitle>
+              <CardDescription className="text-xs mt-0.5">
+                Revenue events that are ready (or further) but the Vyapaar Commission invoice file hasn’t been uploaded yet.
+              </CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={fetchPending} disabled={pendingLoading} data-testid="refresh-pending-uploads-btn">
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${pendingLoading ? 'animate-spin' : ''}`} /> Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {pendingLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+            </div>
+          ) : pending.count === 0 ? (
+            <div className="text-xs text-muted-foreground py-6 text-center border-2 border-dashed rounded-md" data-testid="pending-invoice-empty">
+              All caught up. No revenue events are waiting for an invoice upload.
+            </div>
+          ) : (
+            <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
+              {pending.items.map((it) => (
+                <div
+                  key={it.id}
+                  data-testid={`pending-invoice-row-${it.id}`}
+                  className="flex items-center gap-3 p-2.5 rounded-md hover:bg-muted/40 border cursor-pointer transition-colors"
+                  onClick={() => openUploadForEvent(it)}
+                >
+                  <FileText className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate flex items-center gap-2 flex-wrap">
+                      <span>{it.name}</span>
+                      <Badge variant="outline" className="text-[10px] capitalize">{(it.lifecycle_status || '').replace(/_/g, ' ')}</Badge>
+                      {it.days_overdue != null && it.days_overdue > 0 && (
+                        <Badge variant="destructive" className="text-[10px]" data-testid={`overdue-pill-${it.id}`}>
+                          {it.days_overdue}d overdue
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                      <span>{it.customer_name || '—'}</span>
+                      <span>·</span>
+                      <span>{it.lead_title || ''}</span>
+                      {it.due_date && (<><span>·</span><span>Due {it.due_date}</span></>)}
+                      <span>·</span>
+                      <span className="font-medium text-foreground">{formatCurrency(it.vyapaar_amount || 0)}</span>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/30"
+                    onClick={(e) => { e.stopPropagation(); openUploadForEvent(it); }}
+                    data-testid={`upload-invoice-btn-${it.id}`}
+                  >
+                    <Upload className="w-3.5 h-3.5 mr-1" /> Upload
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Payables */}
       <SectionCard title="Payables" description="What Vyapaar owes to referrers" icon={Receipt}>

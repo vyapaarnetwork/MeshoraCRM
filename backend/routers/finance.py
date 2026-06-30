@@ -668,6 +668,86 @@ async def revenue_events_for_commercial(commercial_id: str, current_user: dict =
     return items
 
 
+# Phase 40.3 — Pending Invoice Upload inbox (Finance Dashboard widget)
+# Surfaces revenue events that are ready_for_invoice (or have already moved into
+# invoice_raised / invoice_sent / awaiting_payment) but for which the Vyapaar
+# Commission invoice file has NOT yet been uploaded. This is the actionable
+# work-queue for the Finance team.
+_INVOICE_DUE_LIFECYCLE_STATES = [
+    LifecycleStatus.READY_FOR_INVOICE.value,
+    LifecycleStatus.INVOICE_RAISED.value,
+    LifecycleStatus.INVOICE_SENT.value,
+    LifecycleStatus.AWAITING_PAYMENT.value,
+]
+
+
+@router.get("/finance/pending-invoice-uploads")
+async def pending_invoice_uploads(
+    limit: int = Query(50, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    """Revenue events whose Vyapaar Commission invoice file has not been uploaded yet.
+
+    Filter: lifecycle_status ∈ {ready_for_invoice, invoice_raised, invoice_sent, awaiting_payment}
+            AND no `documents` row exists with `revenue_event_id=event.id`
+                AND `entity_type='commercial:vyapaar_commission'`.
+
+    Sorted by due_date (oldest first → most urgent).
+    """
+    _require_finance(current_user)
+
+    events = await db.revenue_events.find(
+        {"lifecycle_status": {"$in": _INVOICE_DUE_LIFECYCLE_STATES}},
+        {"_id": 0},
+    ).sort("due_date", 1).to_list(1000)
+
+    if not events:
+        return {"count": 0, "items": []}
+
+    event_ids = [ev["id"] for ev in events]
+    uploaded_docs = await db.documents.find(
+        {
+            "revenue_event_id": {"$in": event_ids},
+            "entity_type": "commercial:vyapaar_commission",
+        },
+        {"_id": 0, "revenue_event_id": 1},
+    ).to_list(5000)
+    uploaded_event_ids = {d["revenue_event_id"] for d in uploaded_docs if d.get("revenue_event_id")}
+
+    pending = [ev for ev in events if ev["id"] not in uploaded_event_ids][:limit]
+
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    items = []
+    for ev in pending:
+        due = ev.get("due_date")
+        days_overdue = None
+        if due and due < today_iso:
+            try:
+                days_overdue = (
+                    datetime.fromisoformat(today_iso).date()
+                    - datetime.fromisoformat(due).date()
+                ).days
+            except Exception:
+                days_overdue = None
+        items.append({
+            "id": ev["id"],
+            "commercial_id": ev.get("commercial_id"),
+            "lead_id": ev.get("lead_id"),
+            "lead_title": ev.get("lead_title"),
+            "customer_name": ev.get("customer_name"),
+            "selling_partner_name": ev.get("selling_partner_name"),
+            "name": ev.get("name"),
+            "revenue_type": ev.get("revenue_type"),
+            "due_date": due,
+            "expected_amount": ev.get("expected_amount") or 0,
+            "vyapaar_amount": ev.get("vyapaar_amount") or 0,
+            "lifecycle_status": ev.get("lifecycle_status"),
+            "days_overdue": days_overdue,
+        })
+
+    return {"count": len(items), "items": items}
+
+
 # ============================ Mutate / Lifecycle ============================
 
 @router.patch("/finance/revenue-events/{event_id}")

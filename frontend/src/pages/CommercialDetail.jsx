@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import api, { formatCurrency, formatDate, formatDateTime } from '../utils/api';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
@@ -64,10 +64,14 @@ const newMilestone = (idx) => ({
 const CommercialDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const initialTab = queryParams.get('tab') || 'overview';
+  const initialEventId = queryParams.get('event') || '';
   const [commercial, setCommercial] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState(initialTab);
   const [users, setUsers] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -1134,7 +1138,7 @@ const CommercialDetail = () => {
 
         {/* === Phase 40.3 — INVOICE FILES (3-level upload) === */}
         <TabsContent value="invoice-uploads">
-          <CommercialInvoiceUploads commercialId={commercial.id} />
+          <CommercialInvoiceUploads commercialId={commercial.id} initialRevenueEventId={initialEventId} />
         </TabsContent>
 
         {/* === DOCUMENTS === */}

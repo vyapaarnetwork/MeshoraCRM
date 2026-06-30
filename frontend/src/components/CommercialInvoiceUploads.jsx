@@ -57,10 +57,21 @@ const fmtSize = (b) => {
   return `${(b / 1048576).toFixed(2)} MB`;
 };
 
-const InvoiceSection = ({ section, commercialId, docs, revenueEvents, onUploaded, onDeleted, canEdit }) => {
+const InvoiceSection = ({ section, commercialId, docs, revenueEvents, onUploaded, onDeleted, canEdit, highlight, defaultRevenueEventId }) => {
   const [uploading, setUploading] = useState(false);
-  const [revenueEventId, setRevenueEventId] = useState('');
+  const [revenueEventId, setRevenueEventId] = useState(defaultRevenueEventId || '');
   const inputRef = useRef(null);
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    if (defaultRevenueEventId) setRevenueEventId(defaultRevenueEventId);
+  }, [defaultRevenueEventId]);
+
+  useEffect(() => {
+    if (highlight && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlight]);
 
   const handleSelect = (e) => {
     const file = e.target.files?.[0];
@@ -112,7 +123,7 @@ const InvoiceSection = ({ section, commercialId, docs, revenueEvents, onUploaded
 
   const Icon = section.icon;
   return (
-    <Card className={`border-l-4 ${section.tone}`} data-testid={`invoice-section-${section.key.split(':')[1]}`}>
+    <Card ref={cardRef} className={`border-l-4 ${section.tone} ${highlight ? 'ring-2 ring-amber-400 dark:ring-amber-500 shadow-md' : ''}`} data-testid={`invoice-section-${section.key.split(':')[1]}`}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
@@ -197,7 +208,7 @@ const InvoiceSection = ({ section, commercialId, docs, revenueEvents, onUploaded
   );
 };
 
-const CommercialInvoiceUploads = ({ commercialId, currentUser }) => {
+const CommercialInvoiceUploads = ({ commercialId, currentUser, initialRevenueEventId }) => {
   const [docs, setDocs] = useState([]);
   const [revenueEvents, setRevenueEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -239,18 +250,23 @@ const CommercialInvoiceUploads = ({ commercialId, currentUser }) => {
 
   return (
     <div className="space-y-4" data-testid="commercial-invoice-uploads">
-      {SECTIONS.map((s) => (
-        <InvoiceSection
-          key={s.key}
-          section={s}
-          commercialId={commercialId}
-          docs={grouped[s.key] || []}
-          revenueEvents={revenueEvents}
-          canEdit={canEdit}
-          onUploaded={(doc) => setDocs((d) => [doc, ...d])}
-          onDeleted={(id) => setDocs((d) => d.filter((x) => x.id !== id))}
-        />
-      ))}
+      {SECTIONS.map((s) => {
+        const isVyapaarSection = s.key === 'commercial:vyapaar_commission';
+        return (
+          <InvoiceSection
+            key={s.key}
+            section={s}
+            commercialId={commercialId}
+            docs={grouped[s.key] || []}
+            revenueEvents={revenueEvents}
+            canEdit={canEdit}
+            defaultRevenueEventId={isVyapaarSection ? initialRevenueEventId : ''}
+            highlight={isVyapaarSection && !!initialRevenueEventId}
+            onUploaded={(doc) => setDocs((d) => [doc, ...d])}
+            onDeleted={(id) => setDocs((d) => d.filter((x) => x.id !== id))}
+          />
+        );
+      })}
     </div>
   );
 };
