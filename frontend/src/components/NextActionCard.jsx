@@ -32,8 +32,12 @@ const URGENCY_CONFIG = {
   },
 };
 
-/** "Next Action" sticky card — sits at the top of the lead detail sidebar. */
-const NextActionCard = ({ nextAction, onAction }) => {
+/** "Next Action" sticky card — sits at the top of the lead detail sidebar.
+ *
+ *  Optional `secondaryAction` renders an additional CTA below the primary one
+ *  (e.g. "One-click setup" for setup_commercials).
+ */
+const NextActionCard = ({ nextAction, onAction, secondaryAction }) => {
   if (!nextAction) return null;
   const cfg = URGENCY_CONFIG[nextAction.urgency] || URGENCY_CONFIG.medium;
   const Icon = cfg.icon;
@@ -60,16 +64,28 @@ const NextActionCard = ({ nextAction, onAction }) => {
           <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
             {nextAction.reason}
           </p>
+          {secondaryAction && (
+            <Button
+              size="sm"
+              className="mt-3 h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
+              onClick={secondaryAction.onClick}
+              disabled={secondaryAction.loading}
+              data-testid="next-action-primary-btn"
+            >
+              {secondaryAction.loading ? 'Setting up…' : secondaryAction.label}
+              {!secondaryAction.loading && <ArrowRight className="w-3 h-3 ml-1" />}
+            </Button>
+          )}
           {onAction && (
             <Button
               size="sm"
-              variant="secondary"
-              className="mt-3 h-7 text-xs"
+              variant={secondaryAction ? "ghost" : "secondary"}
+              className={`${secondaryAction ? 'mt-1 ml-1' : 'mt-3'} h-7 text-xs`}
               onClick={() => onAction(nextAction)}
               data-testid="next-action-btn"
             >
-              Take action
-              <ArrowRight className="w-3 h-3 ml-1" />
+              {secondaryAction ? 'Open full wizard' : 'Take action'}
+              {!secondaryAction && <ArrowRight className="w-3 h-3 ml-1" />}
             </Button>
           )}
         </div>

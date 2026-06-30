@@ -314,6 +314,68 @@ class TestDashboardAndFilters:
 
 
 # =====================================================================
+# Scenario F — Quick setup (one-click from Lead Detail)
+# =====================================================================
+class TestQuickSetup:
+    def test_quick_setup_creates_and_approves_one_time(self, admin_token):
+        lead = _seed_won_lead(admin_token, title_suffix="quicksetup-ot")
+        _ensure_no_existing_commercial(admin_token, lead['id'])
+        r = requests.post(f"{API}/leads/{lead['id']}/quick-setup-commercials",
+                          json={"type": "one_time"}, headers=_auth(admin_token))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body['existed'] is False
+        assert body['generated'] is True
+        assert body['type'] == 'one_time'
+        assert len(body['events']) == 1
+        ev = body['events'][0]
+        # 100k deal × 15% = 15k Vyapaar; 20% of 15k = 3k referral; net 12k
+        assert ev['expected_amount'] == 100000
+        assert ev['vyapaar_amount'] == 15000
+        assert ev['referral_amount'] == 3000
+        assert ev['net_revenue'] == 12000
+        assert ev['lifecycle_status'] == 'created'
+
+    def test_quick_setup_idempotent(self, admin_token):
+        lead = _seed_won_lead(admin_token, title_suffix="quicksetup-idem")
+        _ensure_no_existing_commercial(admin_token, lead['id'])
+        r1 = requests.post(f"{API}/leads/{lead['id']}/quick-setup-commercials",
+                           json={"type": "one_time"}, headers=_auth(admin_token))
+        assert r1.status_code == 200
+        cid1 = r1.json()['commercial_id']
+        # Second call should not double-create
+        r2 = requests.post(f"{API}/leads/{lead['id']}/quick-setup-commercials",
+                           json={"type": "one_time"}, headers=_auth(admin_token))
+        assert r2.status_code == 200
+        assert r2.json().get('existed') is True or r2.json().get('generated') is False
+        # Same commercial id
+        coms = requests.get(f"{API}/commercials", headers=_auth(admin_token)).json()
+        matching = [c for c in coms if c.get('lead_id') == lead['id']]
+        assert len(matching) == 1
+        assert matching[0]['id'] == cid1
+
+    def test_quick_setup_recurring(self, admin_token):
+        lead = _seed_won_lead(admin_token, title_suffix="quicksetup-rec")
+        _ensure_no_existing_commercial(admin_token, lead['id'])
+        r = requests.post(f"{API}/leads/{lead['id']}/quick-setup-commercials",
+                          json={"type": "recurring", "contract_months": 3, "billing_frequency": "monthly"},
+                          headers=_auth(admin_token))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body['type'] == 'recurring'
+        # 3-month monthly contract → 3-4 events (depending on calendar boundary)
+        assert 3 <= len(body['events']) <= 4
+
+    def test_quick_setup_blocked_for_customer(self, customer_token, admin_token):
+        # Need a fresh Won lead; create as admin then try as customer
+        lead = _seed_won_lead(admin_token, title_suffix="quicksetup-rbac")
+        _ensure_no_existing_commercial(admin_token, lead['id'])
+        r = requests.post(f"{API}/leads/{lead['id']}/quick-setup-commercials",
+                          json={"type": "one_time"}, headers=_auth(customer_token))
+        assert r.status_code == 403
+
+
+# =====================================================================
 # Scenario E — RBAC
 # =====================================================================
 class TestRBAC:

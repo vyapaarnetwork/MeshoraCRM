@@ -381,6 +381,150 @@ async def approve_commercial(commercial_id: str, current_user: dict = Depends(ge
     return {"approved_at": now, "events": sanitised, "generated": True}
 
 
+# ============================ Quick setup — one-click from Lead Detail ============================
+
+class QuickSetupPayload(BaseModel):
+    type: Optional[str] = "one_time"            # 'one_time' | 'recurring'
+    contract_months: Optional[int] = 3          # used when type='recurring'
+    billing_frequency: Optional[str] = "monthly"  # used when type='recurring'
+
+
+@router.post("/leads/{lead_id}/quick-setup-commercials")
+async def quick_setup_commercials(lead_id: str, payload: QuickSetupPayload = QuickSetupPayload(), current_user: dict = Depends(get_current_user)):
+    """Phase 37 — One-click Commercial + auto-approval + Revenue Schedule generation.
+
+    Smart defaults derived from the Lead:
+      - one_time: total_value = lead.deal_value, start = today, end = today + 90 days
+      - recurring: contract_value = lead.deal_value, start = today,
+                   end = today + contract_months, freq = billing_frequency
+    """
+    _require_finance(current_user)
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not lead.get('deal_value'):
+        raise HTTPException(status_code=400, detail="Lead has no deal value — cannot derive Commercial value")
+
+    existing = await db.commercials.find_one({"lead_id": lead_id}, {"_id": 0})
+    if existing:
+        # Idempotent: if not yet approved, approve now and return; else just return.
+        if existing.get('approval_status') != 'approved':
+            # Re-use the approve flow
+            return await approve_commercial(existing['id'], current_user)
+        events = await db.revenue_events.find({"commercial_id": existing['id']}, {"_id": 0}).sort("order", 1).to_list(2000)
+        return {"commercial_id": existing['id'], "approved_at": existing.get('approved_at'), "events": events, "generated": False, "existed": True}
+
+    today = datetime.now(timezone.utc).date()
+    today_iso = today.isoformat()
+    commercial_id = str(uuid.uuid4())
+    now = _now_iso()
+    deal_value = float(lead.get('deal_value') or 0)
+
+    doc: Dict[str, Any] = {
+        "id": commercial_id,
+        "lead_id": lead_id,
+        "lead_title": lead.get('title'),
+        "customer_name": lead.get('customer_name'),
+        "customer_id": lead.get('customer_id'),
+        "type": payload.type or "one_time",
+        "currency": "INR",
+        "notes": "Quick-setup from Lead Detail (one-click)",
+        "created_by": current_user.get('id'),
+        "created_by_name": current_user.get('name'),
+        "created_at": now,
+        "updated_at": now,
+        "milestones": [],
+        "billing_schedule": [],
+    }
+
+    if (payload.type or "one_time") == "one_time":
+        doc["total_value"] = deal_value
+        doc["start_date"] = today_iso
+        doc["end_date"] = (today + timedelta(days=90)).isoformat()
+    else:
+        months = max(1, int(payload.contract_months or 3))
+        freq = (payload.billing_frequency or "monthly").lower()
+        months_step = {"monthly": 1, "quarterly": 3, "half_yearly": 6, "annual": 12}.get(freq, 1)
+        # Per-cycle amount = deal_value (already represents per-cycle value as captured on the lead)
+        doc["contract_value"] = deal_value
+        doc["billing_frequency"] = freq
+        doc["contract_start_date"] = today_iso
+        doc["contract_end_date"] = (today + timedelta(days=30 * months)).isoformat()
+        doc["auto_renewal"] = False
+        doc["renewal_type"] = "manual"
+        doc["renewal_notice_days"] = 30
+        doc["contract_status"] = "active"
+        # Generate the schedule rows inline so the approve step picks them up
+        cursor = today
+        order = 0
+        end_date = today + timedelta(days=30 * months)
+        while cursor <= end_date and order < 240:
+            new_month = cursor.month + months_step
+            year = cursor.year + (new_month - 1) // 12
+            month = (new_month - 1) % 12 + 1
+            try:
+                period_end = datetime(year, month, 1).date() - timedelta(days=1)
+            except ValueError:
+                period_end = end_date
+            period_end = min(period_end, end_date)
+            doc["billing_schedule"].append({
+                "id": str(uuid.uuid4()),
+                "period_start": cursor.isoformat(),
+                "period_end": period_end.isoformat(),
+                "due_date": cursor.isoformat(),
+                "amount": deal_value,
+                "status": "scheduled",
+                "invoice_id": None,
+                "order": order,
+            })
+            try:
+                cursor = datetime(year, month, 1).date()
+            except ValueError:
+                break
+            order += 1
+
+    await db.commercials.insert_one(doc)
+    await db.commercial_activity.insert_one({
+        "id": str(uuid.uuid4()),
+        "commercial_id": commercial_id,
+        "user_id": current_user.get('id'),
+        "user_name": current_user.get('name'),
+        "type": "created",
+        "message": f"Quick-setup ({doc['type']}) created from Lead Detail",
+        "meta": {"source": "quick_setup"},
+        "created_at": now,
+    })
+
+    # Build & insert revenue events, then mark approved
+    events = await _build_revenue_schedule_for_commercial(doc, lead, current_user)
+    if events:
+        await db.revenue_events.insert_many([dict(e) for e in events])
+    await db.commercials.update_one(
+        {"id": commercial_id},
+        {"$set": {
+            "approval_status": "approved",
+            "approved_at": now,
+            "approved_by_id": current_user.get('id'),
+            "approved_by_name": current_user.get('name'),
+            "deal_type": _derive_deal_type(doc),
+            "invoice_source": InvoiceSource.MANUAL.value,
+            "updated_at": now,
+        }},
+    )
+    await _log_finance(commercial_id, None, current_user, "quick_setup",
+                      f"Quick-setup ({doc['type']}) — {len(events)} revenue event(s) generated",
+                      {"event_count": len(events), "deal_type": _derive_deal_type(doc), "source": "lead_detail_one_click"})
+
+    return {
+        "commercial_id": commercial_id,
+        "approved_at": now,
+        "events": [_serialise(e) for e in events],
+        "generated": True,
+        "existed": False,
+        "type": doc['type'],
+    }
+
+
 @router.post("/commercials/{commercial_id}/regenerate-revenue-schedule")
 async def regenerate_revenue_schedule(commercial_id: str, current_user: dict = Depends(get_current_user)):
     """Wipe and rebuild the Revenue Schedule. Only available BEFORE any event has

@@ -67,6 +67,7 @@ const LeadDetail = () => {
   const [commercial, setCommercial] = useState(null);
   const [showCommercialsWizard, setShowCommercialsWizard] = useState(false);
   const [wizardAutoOpenedForLead, setWizardAutoOpenedForLead] = useState(null);
+  const [quickSetupLoading, setQuickSetupLoading] = useState(false);
 
   // AI Meeting Summary
   const [showAIDialog, setShowAIDialog] = useState(false);
@@ -274,6 +275,32 @@ const LeadDetail = () => {
     }
   };
 
+  const handleQuickSetupCommercials = async () => {
+    setQuickSetupLoading(true);
+    try {
+      const res = await api.post(`/leads/${id}/quick-setup-commercials`, { type: 'one_time' });
+      const eventsCount = (res.data?.events || []).length;
+      toast.success(
+        eventsCount > 0
+          ? `Commercial approved — ${eventsCount} revenue event${eventsCount === 1 ? '' : 's'} ready in Finance.`
+          : 'Commercial approved.'
+      );
+      // Refresh the commercial + next action card
+      try {
+        const r = await api.get(`/commercials/by-lead/${id}`);
+        setCommercial(r.data || null);
+      } catch (e) { /* non-fatal */ }
+      fetchHealthAndActivity();
+      if (res.data?.commercial_id) {
+        navigate(`/commercials/${res.data.commercial_id}`);
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to quick-setup commercial');
+    } finally {
+      setQuickSetupLoading(false);
+    }
+  };
+
   const handleNextAction = (action) => {
     switch (action?.action_type) {
       case 'schedule_followup':
@@ -390,7 +417,19 @@ const LeadDetail = () => {
         </div>
 
         <div className="space-y-6">
-          <NextActionCard nextAction={nextAction} onAction={handleNextAction} />
+          <NextActionCard
+            nextAction={nextAction}
+            onAction={handleNextAction}
+            secondaryAction={
+              nextAction?.action_type === 'setup_commercials'
+                ? {
+                    label: 'One-click setup',
+                    onClick: handleQuickSetupCommercials,
+                    loading: quickSetupLoading,
+                  }
+                : null
+            }
+          />
           <AIInsightsCard leadId={id} initialRisk={lead.ai_risk_analysis} />
           <HealthScoreCard health={health} />
           <FollowUpsCard

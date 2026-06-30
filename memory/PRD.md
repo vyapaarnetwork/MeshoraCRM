@@ -565,6 +565,7 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 
 
 ### Phase 37 — Finance & Commission Management Foundation (Feb 9, 2026)
+- [x] **One-click "Setup Commercials" CTA** on Lead Detail NextActionCard — for Won leads, a single indigo button now creates the Commercial + auto-approves + generates the Revenue Schedule in one shot. "Open full wizard" remains as fallback. New endpoint `POST /api/leads/{lead_id}/quick-setup-commercials` (idempotent — re-running on an existing commercial returns the existing approval/events without duplicating). Smart defaults: one_time → total_value = lead.deal_value, 90-day window; recurring → contract_value = lead.deal_value, configurable months & frequency.
 - [x] **New collection `revenue_events`** — atomic billable unit with full lifecycle: `created → ready_for_invoice → invoice_raised → invoice_sent → awaiting_payment → payment_received → referral_payable → referral_paid → closed`. Each event caches Vyapaar % + Referral % from the parent lead at generation time (template-driven from Phase 36.3).
 - [x] **New collection `finance_timeline`** — full audit log per Commercial + per Revenue Event (every approval, transition, edit, payment) with user, action, message, meta.
 - [x] **`POST /api/commercials/{id}/approve`** — Idempotent approval workflow. On first approval auto-generates Revenue Schedule from existing milestones / billing_schedule / one_time_fee. Stamps `approval_status`, `approved_at`, `approved_by_id`, derived `deal_type` (one_time / recurring / hybrid), `invoice_source`.
