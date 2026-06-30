@@ -564,6 +564,24 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 40.1.1 — Code-review remediation pass (Feb 9, 2026)
+- **Code-review findings triaged**:
+  - ✅ **Circular import (`server.py` ↔ `routers/lead_views.py`)** — confirmed as a known code-smell, NOT a runtime bug. Works because routers are mounted AFTER server module finishes loading. All 7 existing routers (commercials, deal_room, finance, internal_tasks, internal_task_categories, tax_rates, referral_commissions) use the same pattern. Proper leaf-module refactor deferred to Phase 41 backlog.
+  - ✅ **XSS in EmailTemplates.jsx:569** — stale finding. DOMPurify already integrated at line 570 with strict profile (FORBID_TAGS for script/style/iframe/object/embed/form, FORBID_ATTR for on* handlers).
+  - ✅ **18 undefined variables** — confirmed stale by `pyflakes` clean run; no actual undefined names in current backend.
+  - ✅ **117 missing hook dependencies** — confirmed stale by clean `mcp_lint_javascript` pass; only 4 unused-eslint-disable directives existed, all removed.
+- **Real cleanups applied**:
+  - Removed 4 unused `eslint-disable-next-line react-hooks/exhaustive-deps` directives (FinanceRegister.jsx L145, L346; LeadDetail.jsx L93; CommentsCard.jsx L215). Underlying hooks now lint clean with no warnings.
+- **Verified** by independent testing agent (iteration_31): 59/59 backend tests PASS (15 new Phase 40.1 router-extraction tests + 44 legacy regression). Frontend smoke clean — Lead Detail, Finance Register, Revenue Event Detail, Views dropdown all working after cleanup.
+- **Deferred to Phase 41 backlog** (per code review):
+  - 🟡 Extract `db` + `get_current_user` to a leaf module (`backend/deps.py`) — proper architectural fix for the circular-import code-smell, touches all 7 routers + server.py. Best done alongside Phase 40.2/40.3 extractions.
+  - 🟡 Move test credentials from constants to env vars (security best practice; not blocking).
+  - 🟢 Refactor high-complexity functions in commercials.py (5 funcs > 25 cyclomatic complexity).
+  - 🟢 Split large components (CommercialDetail.jsx 1,312 lines, LeadForm.jsx 705, Layout.jsx 780).
+  - 🟢 Replace array-index keys with stable IDs (27 locations).
+  - 🟢 Add console.error to non-intentional empty catch blocks (api.js localStorage catches are intentional for private-browsing mode).
+
+
 ### Phase 40.1 — `server.py` refactor (round 1) (Feb 9, 2026)
 - [x] **Extracted `routers/lead_views.py`** — 4 saved-filter-preset routes (`GET/POST /lead-views`, `PATCH/DELETE /lead-views/{id}`) + `LeadViewCreate`/`LeadViewUpdate` models. ~80 lines moved verbatim.
 - [x] **Extracted `routers/lead_ai.py`** — all 5 lead-AI endpoints: `POST /leads/{id}/ai/meeting-summary`, `GET /leads/{id}/ai/meeting-summaries`, `POST /leads/{id}/ai/risk-analysis`, `POST /leads/{id}/ai/follow-up-suggestion`, `POST /leads/{id}/ai/suggest-actions`. ~330 lines moved verbatim. Shared helpers (`_build_lead_ai_context`, `_ai_lead_chat`, `EMERGENT_LLM_KEY`) imported from server. `_safe_int` relocated to the router.
