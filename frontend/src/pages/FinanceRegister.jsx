@@ -142,7 +142,7 @@ export const CommissionRegister = () => {
     api.get('/master/primary-categories').then((r) => setCategories(r.data || [])).catch(() => {});
   }, []);
 
-  useEffect(() => { fetchEvents(); /* eslint-disable-next-line */ }, [filters]);
+  useEffect(() => { fetchEvents(); }, [filters]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return events;
@@ -343,7 +343,7 @@ export const RevenueEventDetail = () => {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchAll(); /* eslint-disable-next-line */ }, [eventId]);
+  useEffect(() => { fetchAll(); }, [eventId]);
 
   if (loading || !event) {
     return <div className="space-y-3"><Skeleton className="h-8 w-64" /><Skeleton className="h-32 w-full" /><Skeleton className="h-32 w-full" /></div>;

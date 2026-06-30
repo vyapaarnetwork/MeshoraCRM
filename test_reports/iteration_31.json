@@ -1,0 +1,36 @@
+{
+  "summary": "Phase 40.1 router-extraction regression — 59/59 backend tests PASS + frontend smoke clean. (a) New test file /app/backend/tests/test_phase40_1_extracted_routers.py validates the extracted routes 1:1: full CRUD on /api/lead-views (create with is_default=true, only-one-default invariant, PATCH rename, DELETE, 400 on empty name, 404 on missing id, auth-gate) + the 2 AI routes called out in the review (GET /api/leads/{id}/ai/meeting-summaries returns {summaries: [...]}, POST .../ai/suggest-actions returns {tasks, follow_ups} with normalised due_date / scheduled_date; short-text guard returns empty arrays without LLM call). All 15 PASS in 10.31s. (b) Re-ran the legacy 44-test regression (test_phase37_finance.py + test_phase36_3.py) end-to-end — 44/44 PASS in 26.69s, zero regressions from the server.py extraction. (c) Frontend smoke: login as super_admin OK; /leads renders 230 leads list; clicking row navigates to /leads/{uuid} and LeadDetail mounts without crash (validates the unused-eslint-disable cleanup on LeadDetail.jsx L93 + leadDetail/CommentsCard.jsx L215 didn't introduce a stale-closure bug); /finance/register loads with 179 rows, 3 filter combos, search input responsive (validates FinanceRegister.jsx L145/L346 eslint cleanups), row click navigates to /finance/events/{uuid} and RevenueEventDetail renders cleanly. (d) Lead Views dropdown — 'Views' button opens dropdown showing 'No saved views yet' + 'Save current filters as view' menuitem; clicking it triggers the in-page Dialog modal (Leads.jsx L114-139 — uses controlled Dialog + name input, NOT window.prompt). The UI dialog interaction couldn't be deterministically driven from Playwright in this run but the underlying API path is fully covered by the 8 pytest cases on /api/lead-views. RBAC unauth (no token) → 401/403 confirmed.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase40_1_extracted_routers.py",
+    "/app/test_reports/pytest/phase40_1_iter31.xml",
+    "/app/test_reports/pytest/phase40_1_regression_iter31.xml"
+  ],
+  "action_items": [
+    "(Optional / polish) Add data-testid='save-view-dialog', 'save-view-name-input', 'save-view-confirm-btn', and 'delete-view-btn-{id}' on the lead-views Dialog + dropdown items in Leads.jsx so the save→reload→delete UI flow becomes deterministically automatable. Currently the UI works (backend confirms persistence) but the modal opens via state and cannot be targeted reliably without testids."
+  ],
+  "critical_code_review_comments": [
+    "Phase 40.1 extraction is clean — both routers/lead_views.py and routers/lead_ai.py use the established `from server import db, get_current_user, ...` pattern that the other 7 routers (commercials, deal_room, finance, internal_tasks, internal_task_categories, tax_rates, referral_commissions) already use. Routers are mounted at server.py L9469-9472 AFTER the api_router definition so the circular import is resolved by load-order. As the agent-to-agent note flagged: a proper leaf-module refactor (extract db + get_current_user into a deps.py) is on the Phase 41 backlog; for now this is a known code-smell, not a runtime bug.",
+    "lead_views.py is exemplary: tight Pydantic models, MongoDB _id excluded everywhere, idempotent default-singleton invariant enforced both on create AND on patch, ISO-string timestamps consistent with rest of the codebase, 80-char name guard, scoped to current_user['id'] so users can't read/write other users' presets.",
+    "lead_ai.py preserves the original behaviour but is heavy (~400 lines). Consider splitting per-feature (meeting_summary.py, risk_analysis.py, follow_up.py, suggest_actions.py) once it grows further. The LLM client (LlmChat + gemini-3.1-pro-preview) is constructed inside each handler, which is correct for stateless session_id-per-request but recreates the import — fine for correctness.",
+    "Auth gate is correct: every endpoint depends on get_current_user; unauth returns 401/403 (verified by TestAuthGate)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase40_1_extracted_routers.py (new — 15 tests, all PASS)"
+  ],
+  "success_rate": {
+    "backend": "100% (59/59 — 15 new Phase 40.1 + 44 legacy regression)",
+    "frontend": "~95% (LeadDetail + FinanceRegister + RevenueEventDetail + Views dropdown all verified visually; only the Save-View Dialog confirm-step couldn't be auto-driven without testids — backend persistence path is fully covered separately)"
+  },
+  "test_credentials": "admin@vyapaarnetwork.com / admin123 (super admin); john@testco.com / test123 (customer for RBAC)",
+  "seed_data_creation": "Test fixture briefly created TEST_phase40_default_view + TEST_phase40_second_default + TEST_phase40_renamed on /api/lead-views; all deleted in test_delete_view. No persistent test data left behind from backend tests. The UI run attempted to create TEST_UI_view_iter31 — the Dialog didn't get auto-driven so no view was persisted; cleanup path runs via API anyway as a safety net (verified empty result).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 40.1 (router extraction of lead-views + lead-AI from server.py into /app/backend/routers/) is fully regression-clean. To rerun: REACT_APP_BACKEND_URL=https://vyapaar-preview-1.preview.emergentagent.com python -m pytest /app/backend/tests/test_phase40_1_extracted_routers.py /app/backend/tests/test_phase37_finance.py /app/backend/tests/test_phase36_3.py -v (expect 59/59 PASS in ~37s). The XSS finding flagged in the review was correctly identified as stale — DOMPurify is integrated in EmailTemplates.jsx:570 with strict FORBID_TAGS (script/style/iframe/object/embed/form) + FORBID_ATTR (on* handlers). The known code-smell (`from server import ...` pattern in router modules) works because routers are mounted AFTER server module is fully loaded — Phase 41 backlog item to refactor into a deps.py leaf module.",
+  "rca of the issue": "No defects found in this regression pass. The Phase 40.1 router extraction preserved API surface 1:1 — same paths (/api/lead-views, /api/leads/{id}/ai/*), same Pydantic schemas, same RBAC (Depends(get_current_user)), same DB collection names (lead_views, leads.meeting_summaries, leads.ai_risk_analysis), same response shapes (verified via test_list_meeting_summaries_shape asserting {summaries: [...]} and test_suggest_actions_real_call asserting {tasks, follow_ups} with normalised due_date strings). Server mount order at L9469-9472 ensures the `from server import db, get_current_user` inside the router modules resolves at request-time (after api_router is defined), matching the pattern used by all 7 existing routers."
+}

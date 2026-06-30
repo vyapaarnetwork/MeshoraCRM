@@ -90,7 +90,6 @@ const LeadDetail = () => {
     fetchDocumentTags();
     fetchHealthAndActivity();
     if (canEditLeadsCompanies) fetchPartners();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, canEditLeadsCompanies]);
 
   useEffect(() => {

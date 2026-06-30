@@ -212,7 +212,6 @@ export const CommentsCard = ({
       lastAutoTs.current = autoAnalyze.ts;
       analyze(autoAnalyze.text, { silent: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoAnalyze]);
 
   // Build thread tree

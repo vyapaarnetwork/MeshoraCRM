@@ -73,7 +73,7 @@ const LeadForm = () => {
     if (isEditing) {
       fetchLead();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [id]);
 
   // Refetch selling partners filtered by selected sub-category
@@ -109,7 +109,7 @@ const LeadForm = () => {
       }
     };
     fetchPartnersForSubcategory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [formData.secondary_category_id]);
 
   const fetchOptions = async () => {
