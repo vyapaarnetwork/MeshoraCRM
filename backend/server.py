@@ -9845,6 +9845,10 @@ api_router.include_router(tax_rates_router)
 from routers.referral_commissions import router as referral_commissions_router  # noqa: E402
 api_router.include_router(referral_commissions_router)
 
+# Mount finance router (Phase 37 — Revenue Events + Finance dashboard + lifecycle transitions)
+from routers.finance import router as finance_router  # noqa: E402
+api_router.include_router(finance_router)
+
 # Include router
 app.include_router(api_router)
 

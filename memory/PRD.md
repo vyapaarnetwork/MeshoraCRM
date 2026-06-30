@@ -564,6 +564,24 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 37 — Finance & Commission Management Foundation (Feb 9, 2026)
+- [x] **New collection `revenue_events`** — atomic billable unit with full lifecycle: `created → ready_for_invoice → invoice_raised → invoice_sent → awaiting_payment → payment_received → referral_payable → referral_paid → closed`. Each event caches Vyapaar % + Referral % from the parent lead at generation time (template-driven from Phase 36.3).
+- [x] **New collection `finance_timeline`** — full audit log per Commercial + per Revenue Event (every approval, transition, edit, payment) with user, action, message, meta.
+- [x] **`POST /api/commercials/{id}/approve`** — Idempotent approval workflow. On first approval auto-generates Revenue Schedule from existing milestones / billing_schedule / one_time_fee. Stamps `approval_status`, `approved_at`, `approved_by_id`, derived `deal_type` (one_time / recurring / hybrid), `invoice_source`.
+- [x] **Revenue Schedule generator** handles:
+  - One-Time projects → 1 event per milestone (revenue_type=`milestone`) OR 1 event for the full deal value if no milestones.
+  - Recurring contracts → 1 event per billing_schedule row (revenue_type matches frequency).
+  - Hybrid → setup fee event (revenue_type=`one_time`, source_kind=`one_time_fee`) + recurring events.
+- [x] **State machine** — `_LIFECYCLE_TRANSITIONS` enforces legal moves; auto-stamps invoice_date/raised_by on `invoice_raised`, amount_received/payment_date on `payment_received`, referral_payment_date on `referral_paid`. Reopen (closed → referral_paid/payment_received) supported with audit.
+- [x] **Finance Dashboard KPIs** (`/api/finance/dashboard`) — 4 sections: Receivables, Payables, Revenue, Operations. Computes total commission receivable, collections pending, overdue, referral payable amount, gross/net revenue realised, recurring revenue open, expected revenue (month/quarter/year), event counts by lifecycle.
+- [x] **Revenue event endpoints** — full filtering (commercial_id, lead_id, customer_id, selling_partner_id, referral_partner_id, primary_category_id, revenue_type, lifecycle_status, due_from/due_to), single-event GET + timeline, PATCH with auto-recompute of commission amounts on expected_amount edit + outstanding_balance on amount_received edit.
+- [x] **`POST /api/commercials/{id}/regenerate-revenue-schedule`** — wipes & rebuilds; blocked if any event has progressed past `created`.
+- [x] **RBAC** — Finance module restricted to super_admin OR is_finance OR is_vyapaar_ops (per product spec — internal Vyapaar team only). Customers / selling partners hard 403.
+- [x] **Lead Detail commission sync (Phase 36.3 cleanup)** — `LeadOverviewCards.jsx` now reads `commission_override` (template-driven) instead of legacy `partner_commission_percent`. Falls back gracefully for legacy leads.
+- Backend tests: `/app/backend/tests/test_phase37_finance.py` (16/16 PASS). Covers one-time + recurring + hybrid + dashboard + filters + RBAC + invalid transitions + idempotent approval + auto-recompute on edits.
+- **Next**: Phase 38 → Finance UI (Dashboard page, Commission Register grid, Revenue Event Detail screen with 5 sections, Approve Commercial CTA on CommercialDetail).
+
+
 ### Phase 36.3 — Referral Commission Levels + LeadForm template-driven commissions (Feb 9, 2026)
 - [x] **Referral Commission master** (`/api/referral-commissions`) — full CRUD + RBAC (read open, write Vyapaar-internal-only). 5 default levels seeded: Lead Scout 10%, Opportunity Builder 20%, Deal Enabler 30%, Growth Catalyst 40%, Strategic Partner 50%. Lead Scout marked `is_default=true`. Atomic default-flip on create/update via `update_many`; in-use deletes soft-deactivate instead.
 - [x] **Commission tab consolidation** — Referral Commission Levels now rendered as a 2nd tab inside `Commission.jsx` (`tab-referral-levels`), no separate menu. Existing Vyapaar Commission Templates remain in the 1st tab.

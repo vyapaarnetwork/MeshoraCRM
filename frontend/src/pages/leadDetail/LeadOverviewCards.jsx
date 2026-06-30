@@ -17,9 +17,13 @@ const InfoItem = ({ icon: Icon, label, value }) => (
 );
 
 export const LeadOverviewCard = ({ lead }) => {
-  // Phase 36.2 — Partner commission slab (default 10%) shown to all Vyapaar users.
-  const pct = lead.partner_commission_percent ?? 10;
-  const commissionAmount = lead.partner_commission_amount ?? ((lead.deal_value || 0) * pct / 100);
+  // Phase 36.3 — Template-driven commissions take priority; fall back to legacy
+  // partner_commission_percent for older leads that haven't been migrated.
+  const vyapaarPct = lead.commission_override
+    ?? lead.vyapaar_percentage
+    ?? lead.partner_commission_percent
+    ?? 15;
+  const vyapaarAmount = (lead.deal_value || 0) * vyapaarPct / 100;
   return (
   <Card>
     <CardHeader>
@@ -50,12 +54,12 @@ export const LeadOverviewCard = ({ lead }) => {
           <InfoItem icon={Tag} label="Sub-category" value={lead.secondary_category_name} />
         )}
         <InfoItem icon={DollarSign} label="Deal Value" value={formatCurrency(lead.deal_value)} />
-        {/* Phase 36.2 — Partner commission slab (visible to all Vyapaar users) */}
-        {(lead.partner_commission_percent || lead.partner_commission_amount) && (
+        {/* Phase 36.3 — Vyapaar commission (template-driven, falls back to legacy fields) */}
+        {!!lead.deal_value && (
           <InfoItem
             icon={Percent}
-            label={`Partner Commission (${pct}%)`}
-            value={formatCurrency(commissionAmount)}
+            label={`Vyapaar Commission (${vyapaarPct}%)`}
+            value={formatCurrency(vyapaarAmount)}
           />
         )}
         {lead.selling_partner_name && (
