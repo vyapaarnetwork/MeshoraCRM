@@ -564,6 +564,16 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 40.2 — Bug fix + Customer Picker confirmation (Feb 9, 2026)
+- [x] **🐛 Bug fix — "10% referral commission shown by default even when no referral partner picked"**
+  - **Root cause**: (1) `create_lead` silently auto-set `referral_commission_id` to the `is_default=true` Lead Scout row when client omitted it; (2) `enrich_lead`/`enrich_leads_bulk` used 10.0 as the percent fallback for legacy leads with missing referral fields.
+  - **Backend fix**: removed the create-time fallback (`server.py` L3873-3888) and changed enrich fallback from `10.0` → `0.0` (8 occurrences across L3522-3548 + L3738-3764).
+  - **Frontend fix**: `CommissionBreakdownPreview` (`LeadForm.jsx` L755-761 + L869-891) — `referralPct` returns 0 when no level is picked; the Referral payout + Net-to-Vyapaar lines are hidden in that case; an informational note replaces them: *"No referral commission applies. Pick a Referral Commission Level above if a sales associate / selling partner referred this lead."* When a level is picked, the breakdown re-renders live with the correct numbers.
+  - Updated `test_create_without_commission_defaults_to_lead_scout` → `test_create_without_commission_omits_referral` with the new expected behaviour.
+  - **Independent testing-agent verification (iteration_32)**: 44/44 backend PASS · 100% frontend PASS (both no-referral + with-referral cases verified live).
+- [x] **✅ Customer Picker confirmation** — Phase 40.1.2's CustomerPicker is live: searchable popover at the top of Customer Information lists all 37+ companies (Customer + Selling Partner types) for one-click linking. Manual fields remain editable for admins/Vyapaar team to type a new customer not in the master. Both paths work in parallel as user requested.
+
+
 ### Phase 40.1.2 — Lead Views testid alignment (Feb 9, 2026)
 - [x] **Save-View Dialog testids** wired per testing agent's request:
   - `data-testid="save-view-dialog"` on the DialogContent
