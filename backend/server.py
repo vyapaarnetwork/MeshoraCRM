@@ -289,6 +289,8 @@ class DocumentResponse(BaseModel):
     uploaded_by: str
     uploaded_by_name: Optional[str] = None
     uploaded_at: str
+    entity_type: Optional[str] = None       # Phase 40.3 — populated for commercial invoices
+    revenue_event_id: Optional[str] = None  # Phase 40.3 — optional link to a Revenue Event
 
 # Master Data Models
 class LeadStatusCreate(BaseModel):
@@ -3173,26 +3175,39 @@ async def render_and_send_email(event_type: str, to_email: str, variables: Dict[
 @api_router.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    entity_type: str = Form(...),  # "lead" or "company"
+    entity_type: str = Form(...),  # "lead" | "company" | "commercial:selling_partner" | "commercial:vyapaar_commission" | "commercial:referral_partner"
     entity_id: str = Form(...),
     tag: str = Form(...),
     description: Optional[str] = Form(None),
+    revenue_event_id: Optional[str] = Form(None),  # Phase 40.3 — optional link from commercial invoice to a Revenue Event
     current_user: dict = Depends(get_current_user)
 ):
-    """Upload a document for a lead or company"""
+    """Upload a document for a lead, company, or commercial (3 invoice levels)."""
     # Validate entity type
-    if entity_type not in ["lead", "company"]:
-        raise HTTPException(status_code=400, detail="entity_type must be 'lead' or 'company'")
-    
+    COMMERCIAL_INVOICE_TYPES = {"commercial:selling_partner", "commercial:vyapaar_commission", "commercial:referral_partner"}
+    if entity_type not in {"lead", "company"} | COMMERCIAL_INVOICE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid entity_type")
+
     # Validate entity exists
     if entity_type == "lead":
         entity = await db.leads.find_one({"id": entity_id}, {"_id": 0})
         if not entity:
             raise HTTPException(status_code=404, detail="Lead not found")
-    else:
+    elif entity_type == "company":
         entity = await db.companies.find_one({"id": entity_id}, {"_id": 0})
         if not entity:
             raise HTTPException(status_code=404, detail="Company not found")
+    else:  # commercial:* invoice
+        entity = await db.commercials.find_one({"id": entity_id}, {"_id": 0})
+        if not entity:
+            raise HTTPException(status_code=404, detail="Commercial not found")
+        # RBAC: only Vyapaar team can upload commercial invoices (per product spec)
+        if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_finance') and not current_user.get('is_vyapaar_ops'):
+            raise HTTPException(status_code=403, detail="Only Vyapaar Finance / Ops can upload commercial invoices")
+        if revenue_event_id:
+            ev = await db.revenue_events.find_one({"id": revenue_event_id, "commercial_id": entity_id}, {"_id": 0})
+            if not ev:
+                raise HTTPException(status_code=400, detail="Revenue event does not belong to this commercial")
     
     # Validate file size (max 10MB)
     content = await file.read()
@@ -3214,6 +3229,7 @@ async def upload_document(
         "id": doc_id,
         "entity_type": entity_type,
         "entity_id": entity_id,
+        "revenue_event_id": revenue_event_id,  # Phase 40.3 — optional link to Revenue Event
         "filename": filename,
         "original_filename": file.filename or "unknown",
         "file_size": len(content),
@@ -3238,7 +3254,9 @@ async def upload_document(
         description=description,
         uploaded_by=current_user['id'],
         uploaded_by_name=uploader['name'] if uploader else None,
-        uploaded_at=doc_record['uploaded_at']
+        uploaded_at=doc_record['uploaded_at'],
+        entity_type=entity_type,
+        revenue_event_id=revenue_event_id,
     )
 
 @api_router.get("/documents/{doc_id}/download")
@@ -3326,12 +3344,22 @@ async def delete_document(doc_id: str, current_user: dict = Depends(get_current_
 
 @api_router.get("/documents/entity/{entity_type}/{entity_id}", response_model=List[DocumentResponse])
 async def get_entity_documents(entity_type: str, entity_id: str, current_user: dict = Depends(get_current_user)):
-    """Get all documents for an entity"""
-    if entity_type not in ["lead", "company"]:
-        raise HTTPException(status_code=400, detail="entity_type must be 'lead' or 'company'")
-    
-    documents = await db.documents.find({"entity_type": entity_type, "entity_id": entity_id}, {"_id": 0}).to_list(100)
-    
+    """Get all documents for an entity (lead / company / commercial:* invoice levels)."""
+    # Phase 40.3 — accept the 3 commercial invoice levels in addition to legacy lead/company
+    ALLOWED = {"lead", "company", "commercial:selling_partner", "commercial:vyapaar_commission", "commercial:referral_partner", "commercial:any"}
+    if entity_type not in ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type: {entity_type}")
+
+    if entity_type == "commercial:any":
+        # Convenience: return invoices across all 3 commercial levels for the same commercial id
+        query = {
+            "entity_type": {"$in": ["commercial:selling_partner", "commercial:vyapaar_commission", "commercial:referral_partner"]},
+            "entity_id": entity_id,
+        }
+    else:
+        query = {"entity_type": entity_type, "entity_id": entity_id}
+    documents = await db.documents.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(200)
+
     result = []
     for doc in documents:
         uploader = await db.users.find_one({"id": doc['uploaded_by']}, {"_id": 0})
@@ -3345,7 +3373,9 @@ async def get_entity_documents(entity_type: str, entity_id: str, current_user: d
             description=doc.get('description'),
             uploaded_by=doc['uploaded_by'],
             uploaded_by_name=uploader['name'] if uploader else None,
-            uploaded_at=doc['uploaded_at']
+            uploaded_at=doc['uploaded_at'],
+            entity_type=doc.get('entity_type'),
+            revenue_event_id=doc.get('revenue_event_id'),
         ))
     
     return result

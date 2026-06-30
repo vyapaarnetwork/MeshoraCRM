@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '../components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import CommercialInvoiceUploads from '../components/CommercialInvoiceUploads';
 import { ArrowLeft, Plus, Trash2, Save, Briefcase, Repeat, FileText, Upload, Activity, Calendar, Receipt, Wallet, RefreshCw, Download, ChevronUp, ChevronDown, GripVertical, Search as SearchIcon, ExternalLink, Sparkles, TrendingUp, AlertTriangle, Wand2, CheckCircle2 } from 'lucide-react';
 import SearchableUserSelect from '../components/SearchableUserSelect';
 import { toast } from 'sonner';
@@ -598,6 +599,7 @@ const CommercialDetail = () => {
             <TabsTrigger value="billing" data-testid="tab-billing">Billing Schedule</TabsTrigger>
           )}
           <TabsTrigger value="invoices" data-testid="tab-invoices">Invoices &amp; Payments</TabsTrigger>
+          <TabsTrigger value="invoice-uploads" data-testid="tab-invoice-uploads">Invoice Files</TabsTrigger>
           <TabsTrigger value="documents" data-testid="tab-documents">Documents</TabsTrigger>
           <TabsTrigger value="activity" data-testid="tab-activity">Activity</TabsTrigger>
         </TabsList>
@@ -1128,6 +1130,11 @@ const CommercialDetail = () => {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* === Phase 40.3 — INVOICE FILES (3-level upload) === */}
+        <TabsContent value="invoice-uploads">
+          <CommercialInvoiceUploads commercialId={commercial.id} />
         </TabsContent>
 
         {/* === DOCUMENTS === */}
