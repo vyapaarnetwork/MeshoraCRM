@@ -564,6 +564,15 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 40.1 — `server.py` refactor (round 1) (Feb 9, 2026)
+- [x] **Extracted `routers/lead_views.py`** — 4 saved-filter-preset routes (`GET/POST /lead-views`, `PATCH/DELETE /lead-views/{id}`) + `LeadViewCreate`/`LeadViewUpdate` models. ~80 lines moved verbatim.
+- [x] **Extracted `routers/lead_ai.py`** — all 5 lead-AI endpoints: `POST /leads/{id}/ai/meeting-summary`, `GET /leads/{id}/ai/meeting-summaries`, `POST /leads/{id}/ai/risk-analysis`, `POST /leads/{id}/ai/follow-up-suggestion`, `POST /leads/{id}/ai/suggest-actions`. ~330 lines moved verbatim. Shared helpers (`_build_lead_ai_context`, `_ai_lead_chat`, `EMERGENT_LLM_KEY`) imported from server. `_safe_int` relocated to the router.
+- [x] **`server.py` shrank from 9,988 → 9,578 lines** (-410 lines, -4.1%). Old route handlers + model classes fully deleted (no double-registration risk).
+- [x] **Zero API surface change** — all 9 endpoints preserve their exact paths, request/response shapes, and behaviour. Existing pytest suite passes unchanged.
+- [x] **Verified**: 44/44 backend tests PASS (test_phase37_finance.py + test_phase36_3.py). Live CRUD smoke-test on `/lead-views` (create → patch → delete) PASS. `/leads/{id}/ai/meeting-summaries` returns 200 with correct shape.
+- **Refactor pattern established** for future phases (40.2 = lead CRUD + comments/follow-ups + stakeholders; 40.3 = lead imports + health endpoints).
+
+
 ### Phase 39.2 — Finance Audit Log (Feb 9, 2026)
 - [x] **`GET /api/finance/audit-log`** — global feed across the entire `finance_timeline` collection. Filters: `user_id`, `action` (regex, case-insensitive), `commercial_id`, `revenue_event_id`, `date_from`, `date_to`. Returns up to 2000 entries sorted by `created_at` desc.
 - [x] **`GET /api/finance/audit-log/distinct-actions`** — returns sorted unique action strings for filter UX.
