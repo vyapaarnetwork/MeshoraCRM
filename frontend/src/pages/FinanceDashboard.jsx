@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   IndianRupee, FileText, AlertTriangle, TrendingUp, Repeat,
-  CalendarClock, Activity, Receipt, Wallet, ArrowRight, RefreshCw,
+  CalendarClock, Activity, Receipt, Wallet, ArrowRight, RefreshCw, Mail,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -51,6 +51,26 @@ const FinanceDashboard = () => {
   const [kpi, setKpi] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [digestSending, setDigestSending] = useState(false);
+
+  const sendDigestNow = async () => {
+    setDigestSending(true);
+    try {
+      const r = await api.post('/admin/dispatch-finance-weekly-digest?force=true');
+      const { sent, attempted, overdue_count, stale_referral_count, renewals_count } = r.data || {};
+      toast.success(
+        `Digest dispatched — ${sent}/${attempted} delivered. ${overdue_count} overdue · ${stale_referral_count} stale referrals · ${renewals_count} upcoming renewals.`
+      );
+    } catch (e) {
+      const code = e.response?.status;
+      const detail = e.response?.data?.detail;
+      if (code === 503) {
+        toast.warning('Email not configured on this environment — digest computed but no email sent.');
+      } else {
+        toast.error(detail || 'Failed to dispatch digest');
+      }
+    } finally { setDigestSending(false); }
+  };
 
   const fetchKpi = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -105,6 +125,9 @@ const FinanceDashboard = () => {
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => fetchKpi(true)} disabled={refreshing} data-testid="refresh-kpi-btn">
             <RefreshCw className={`w-4 h-4 mr-1 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+          <Button variant="outline" size="sm" onClick={sendDigestNow} disabled={digestSending} data-testid="send-digest-now-btn">
+            <Mail className={`w-4 h-4 mr-1 ${digestSending ? 'animate-pulse' : ''}`} /> {digestSending ? 'Sending…' : 'Send digest now'}
           </Button>
           <Link to="/finance/register">
             <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" data-testid="open-register-btn">

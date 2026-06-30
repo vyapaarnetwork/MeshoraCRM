@@ -9766,6 +9766,26 @@ async def admin_dispatch_internal_task_weekly_digest(force: bool = True, current
     return await _sched.dispatch_weekly_internal_task_digest(db, _zepto, force=force)
 
 
+@api_router.post("/admin/dispatch-finance-weekly-digest")
+async def admin_dispatch_finance_weekly_digest(force: bool = True, current_user: dict = Depends(get_current_user)):
+    """Phase 39 — manually trigger the Monday Finance digest. Useful for previewing
+    or smoke-testing the email template without waiting until Monday 09:00 IST."""
+    if current_user.get('role') != UserRole.SUPER_ADMIN.value and not current_user.get('is_vyapaar_ops') and not current_user.get('is_finance'):
+        raise HTTPException(status_code=403, detail="Admin / Finance only")
+    from services import zeptomail as _zepto
+    from services import scheduler as _sched
+    if not _zepto.is_configured():
+        raise HTTPException(status_code=503, detail="ZeptoMail is not configured on this environment")
+    if force:
+        from datetime import timedelta as _td
+        now_ist = datetime.now(timezone.utc) + _td(hours=5, minutes=30)
+        iso_year, iso_week, _ = now_ist.isocalendar()
+        run_key = f"{iso_year}-W{iso_week:02d}"
+        await db.finance_digest_runs.delete_many({"key": run_key})
+    return await _sched.dispatch_weekly_finance_digest(db, _zepto, force=force)
+
+
+
 
 class TestEmailRequest(BaseModel):
     to_address: EmailStr

@@ -1206,6 +1206,208 @@ async def dispatch_weekly_internal_task_digest(db, zeptomail, force: bool = Fals
     return {"key": run_key, "sent": sent, "attempted": attempted, "ran_at": now_utc.isoformat()}
 
 
+async def dispatch_weekly_finance_digest(db, zeptomail, force: bool = False) -> dict:
+    """Phase 39 — Mondays 09:xx **IST** (03:xx UTC) Finance digest to Vyapaar
+    Finance, Ops and Admin users. Each digest contains 3 sections:
+      (a) Unpaid invoices > 30 days old (event due_date older than 30d AND in
+          invoice_raised / invoice_sent / awaiting_payment)
+      (b) Referral payables sitting in 'referral_payable' > 15 days
+          (event updated_at older than 15d AND lifecycle_status == referral_payable)
+      (c) Renewals due within the next 30 days
+          (revenue_type == renewal AND today <= due_date <= today + 30d)
+
+    Idempotent via `finance_digest_runs` keyed by ISO-week.
+    """
+    now_utc = datetime.now(timezone.utc)
+    now_ist = now_utc + timedelta(hours=5, minutes=30)
+    iso_year, iso_week, iso_dow_ist = now_ist.isocalendar()
+    run_key = f"{iso_year}-W{iso_week:02d}"
+    if not force:
+        if iso_dow_ist != 1 or now_ist.hour != 9:
+            return {"skipped": True, "reason": "outside_window", "now_ist": now_ist.isoformat()}
+        existing = await db.finance_digest_runs.find_one({"key": run_key})
+        if existing:
+            return {"skipped": True, "reason": "already_sent", "key": run_key}
+
+    if not zeptomail.is_configured():
+        return {"skipped": True, "reason": "zeptomail_not_configured"}
+
+    today = now_ist.date()
+    thirty_days_ago_iso = (today - timedelta(days=30)).isoformat()
+    fifteen_days_ago_iso = (now_utc - timedelta(days=15)).isoformat()
+    in_30_days_iso = (today + timedelta(days=30)).isoformat()
+    today_iso = today.isoformat()
+
+    # (a) Overdue invoices
+    overdue_invoices = await db.revenue_events.find({
+        "lifecycle_status": {"$in": ["invoice_raised", "invoice_sent", "awaiting_payment"]},
+        "due_date": {"$lt": thirty_days_ago_iso, "$ne": None},
+    }, {"_id": 0}).sort("due_date", 1).to_list(200)
+
+    # (b) Stale referral payables
+    stale_referrals = await db.revenue_events.find({
+        "lifecycle_status": "referral_payable",
+        "updated_at": {"$lt": fifteen_days_ago_iso},
+    }, {"_id": 0}).sort("updated_at", 1).to_list(200)
+
+    # (c) Upcoming renewals
+    upcoming_renewals = await db.revenue_events.find({
+        "revenue_type": "renewal",
+        "due_date": {"$gte": today_iso, "$lte": in_30_days_iso},
+        "lifecycle_status": {"$nin": ["closed", "referral_paid"]},
+    }, {"_id": 0}).sort("due_date", 1).to_list(200)
+
+    has_content = bool(overdue_invoices or stale_referrals or upcoming_renewals)
+
+    finance_roles = ["super_admin", "vyapaar_ops", "vyapaar_finance"]
+    # Also include explicit `is_finance` flagged users regardless of role
+    recipients = await db.users.find({
+        "is_active": {"$ne": False},
+        "$or": [
+            {"role": {"$in": finance_roles}},
+            {"is_finance": True},
+        ],
+    }, {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1}).to_list(200)
+
+    sent = 0
+    attempted = 0
+    for u in recipients:
+        if not u.get("email"):
+            continue
+        attempted += 1
+        # Only send to users who actually have something to action OR if user is super_admin
+        # (admins always get the digest so they have visibility even when empty)
+        if not has_content and u.get('role') != 'super_admin':
+            continue
+        total = len(overdue_invoices) + len(stale_referrals) + len(upcoming_renewals)
+        subject = (
+            f"[Meshora Finance] Weekly digest — {len(overdue_invoices)} overdue, "
+            f"{len(stale_referrals)} stale referrals, {len(upcoming_renewals)} renewals"
+            if has_content else "[Meshora Finance] Weekly digest — all clear ✅"
+        )
+        _ = total  # noqa: F841
+        html = _render_finance_digest_html(u, overdue_invoices, stale_referrals, upcoming_renewals, zeptomail)
+        res = await zeptomail.send_email(
+            to_address=u["email"], to_name=u.get("name"),
+            subject=subject, html_body=html,
+            db=db, notification_type="finance_weekly_digest", user_id=u["id"],
+        )
+        if res.get("ok"):
+            sent += 1
+    await db.finance_digest_runs.update_one(
+        {"key": run_key},
+        {"$set": {
+            "key": run_key, "ran_at": now_utc.isoformat(),
+            "sent": sent, "attempted": attempted,
+            "overdue_count": len(overdue_invoices),
+            "stale_referral_count": len(stale_referrals),
+            "renewals_count": len(upcoming_renewals),
+        }},
+        upsert=True,
+    )
+    return {
+        "key": run_key, "sent": sent, "attempted": attempted,
+        "overdue_count": len(overdue_invoices),
+        "stale_referral_count": len(stale_referrals),
+        "renewals_count": len(upcoming_renewals),
+        "ran_at": now_utc.isoformat(),
+    }
+
+
+def _render_finance_digest_html(user, overdue_invoices, stale_referrals, upcoming_renewals, zeptomail) -> str:
+    base_url = (zeptomail.frontend_base_url or "").rstrip("/") if hasattr(zeptomail, "frontend_base_url") else ""
+
+    def fmt_inr(v):
+        try:
+            return f"₹{float(v or 0):,.0f}"
+        except Exception:
+            return "₹0"
+
+    def section(label, items, accent, columns):
+        if not items:
+            return ""
+        rows = ""
+        for e in items[:10]:
+            cells = "".join(
+                f'<td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;color:#475569;font-size:13px;">{c}</td>'
+                for c in columns(e)
+            )
+            rows += f'<tr>{cells}</tr>'
+        more = ""
+        if len(items) > 10:
+            more = f'<div style="padding:8px;text-align:center;color:#94a3b8;font-size:12px;border-top:1px solid #f1f5f9;">+ {len(items) - 10} more — see Finance dashboard</div>'
+        return f'''
+        <div style="margin:18px 0;">
+          <div style="background:{accent};color:#fff;padding:8px 12px;border-radius:6px 6px 0 0;font-size:13px;font-weight:600;">
+            {label} <span style="background:rgba(255,255,255,0.25);padding:2px 8px;border-radius:10px;margin-left:6px;">{len(items)}</span>
+          </div>
+          <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-top:none;">
+            {rows}
+          </table>
+          {more}
+        </div>
+        '''
+
+    def overdue_rows(e):
+        return [
+            f'<a href="{base_url}/finance/events/{e["id"]}" style="color:#4f46e5;text-decoration:none;font-weight:500;">{e.get("name") or "Event"}</a>',
+            e.get('customer_name') or '—',
+            e.get('invoice_number') or 'no invoice #',
+            fmt_inr(e.get('outstanding_balance') or e.get('expected_amount')),
+            e.get('due_date') or '—',
+        ]
+
+    def stale_rows(e):
+        return [
+            f'<a href="{base_url}/finance/events/{e["id"]}" style="color:#4f46e5;text-decoration:none;font-weight:500;">{e.get("name") or "Event"}</a>',
+            e.get('customer_name') or '—',
+            e.get('referral_partner_name') or '—',
+            fmt_inr(e.get('referral_amount')),
+            (e.get('updated_at') or '')[:10],
+        ]
+
+    def renewal_rows(e):
+        return [
+            f'<a href="{base_url}/finance/events/{e["id"]}" style="color:#4f46e5;text-decoration:none;font-weight:500;">{e.get("name") or "Event"}</a>',
+            e.get('customer_name') or '—',
+            fmt_inr(e.get('expected_amount')),
+            e.get('due_date') or '—',
+        ]
+
+    has_content = bool(overdue_invoices or stale_referrals or upcoming_renewals)
+    empty_banner = '' if has_content else '''
+      <div style="text-align:center;padding:24px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;margin:18px 0;">
+        <div style="font-size:32px;">✅</div>
+        <div style="color:#065f46;font-weight:600;margin-top:6px;">All clear this week.</div>
+        <div style="color:#047857;font-size:13px;margin-top:4px;">No overdue invoices, no stale referral payables, no renewals due in 30 days.</div>
+      </div>
+    '''
+
+    return f'''<!doctype html>
+    <html><body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+      <div style="max-width:680px;margin:0 auto;padding:20px;">
+        <div style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);color:#fff;padding:20px 24px;border-radius:10px 10px 0 0;">
+          <div style="font-size:13px;opacity:0.85;text-transform:uppercase;letter-spacing:1px;">Meshora · Finance Weekly Digest</div>
+          <div style="font-size:22px;font-weight:700;margin-top:6px;">Hi {user.get('name', 'there').split()[0]} 👋</div>
+          <div style="font-size:13px;margin-top:4px;opacity:0.9;">Your Monday morning briefing on receivables, payables & renewals.</div>
+        </div>
+        <div style="background:#fff;padding:18px 24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 10px 10px;">
+          {empty_banner}
+          {section('🔴 Unpaid invoices · 30+ days old', overdue_invoices, '#dc2626', overdue_rows)}
+          {section('🟡 Referral payables · stale 15+ days', stale_referrals, '#d97706', stale_rows)}
+          {section('🔵 Renewals · due in next 30 days', upcoming_renewals, '#2563eb', renewal_rows)}
+          <div style="margin-top:24px;padding-top:18px;border-top:1px solid #e2e8f0;text-align:center;">
+            <a href="{base_url}/finance" style="background:#4f46e5;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px;display:inline-block;">Open Finance Dashboard</a>
+          </div>
+          <div style="margin-top:16px;text-align:center;color:#94a3b8;font-size:11px;">
+            You receive this digest every Monday at 9 AM IST because you have Finance access in Meshora.
+          </div>
+        </div>
+      </div>
+    </body></html>
+    '''
+
+
 def _render_internal_task_digest_html(user, overdue, due_this_week, new_assigned, zeptomail) -> str:
     def section(label, items, accent):
         if not items:
@@ -1328,6 +1530,17 @@ async def _reminder_loop(db, zeptomail) -> None:
             raise
         except Exception as e:
             logger.exception("Internal-task weekly digest crashed: %s", e)
+        # Phase 39 — Finance weekly digest (Monday 09:xx IST)
+        try:
+            res = await dispatch_weekly_finance_digest(db, zeptomail)
+            if not res.get('skipped'):
+                logger.info("Finance weekly digest fired: key=%s sent=%s overdue=%s stale=%s renewals=%s",
+                            res.get('key'), res.get('sent'), res.get('overdue_count'),
+                            res.get('stale_referral_count'), res.get('renewals_count'))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("Finance weekly digest crashed: %s", e)
         try:
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
         except asyncio.CancelledError:

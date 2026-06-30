@@ -12,6 +12,7 @@ import os
 import uuid
 import pytest
 import requests
+from datetime import datetime
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 API = f"{BASE_URL}/api"
@@ -311,6 +312,27 @@ class TestDashboardAndFilters:
         assert r.status_code == 200
         for e in r.json():
             assert e['revenue_type'] == 'milestone'
+
+
+# =====================================================================
+# Scenario H — Monday Finance digest (Phase 39)
+# =====================================================================
+class TestFinanceDigest:
+    def test_force_dispatch_returns_counts(self, admin_token):
+        r = requests.post(f"{API}/admin/dispatch-finance-weekly-digest?force=true", headers=_auth(admin_token))
+        # 503 if ZeptoMail not configured; 200 if configured. Both are acceptable.
+        assert r.status_code in (200, 503), r.text
+        if r.status_code == 200:
+            body = r.json()
+            assert 'overdue_count' in body
+            assert 'stale_referral_count' in body
+            assert 'renewals_count' in body
+            assert 'attempted' in body
+            assert 'key' in body and body['key'].startswith(str(datetime.now().year))
+
+    def test_customer_blocked_from_dispatch(self, customer_token):
+        r = requests.post(f"{API}/admin/dispatch-finance-weekly-digest?force=true", headers=_auth(customer_token))
+        assert r.status_code == 403
 
 
 # =====================================================================

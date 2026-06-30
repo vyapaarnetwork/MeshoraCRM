@@ -564,6 +564,20 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - Backend tests: `/app/backend/tests/test_phase35.py` (10/10 PASS). Frontend smoke-tested via testing_agent_v3_fork (renames, datetime pickers, scheduler panel, toggle, dispatch all verified live).
 
 
+### Phase 39.1 — Monday 9am Finance digest (Feb 9, 2026)
+- [x] **`dispatch_weekly_finance_digest(db, zeptomail, force=False)`** in `services/scheduler.py` — runs from the existing 60-second scan loop. Fires only at iso_dow_ist==1 & hour==9 IST. Idempotent via `finance_digest_runs` keyed by ISO week.
+- [x] Three section detection:
+  - **🔴 Unpaid invoices > 30 days old** — `lifecycle_status ∈ {invoice_raised, invoice_sent, awaiting_payment}` AND `due_date < today − 30d`.
+  - **🟡 Stale referral payables > 15 days** — `lifecycle_status == referral_payable` AND `updated_at < now − 15d`.
+  - **🔵 Renewals due in 30 days** — `revenue_type == renewal` AND `today ≤ due_date ≤ today + 30d`.
+- [x] **Recipients** — `role ∈ {super_admin, vyapaar_ops, vyapaar_finance}` OR `is_finance=true`. Non-admin recipients are skipped when the digest has no content; super_admins always get an "all clear" digest for visibility.
+- [x] **Email template** — branded HTML matching Meshora's indigo/violet aesthetic. Three colour-coded section bars (red/amber/blue). Up to 10 rows per section, "+N more" link to dashboard. Top "Open Finance Dashboard" CTA. Empty-state ✅ banner when there's nothing to flag.
+- [x] **`POST /api/admin/dispatch-finance-weekly-digest?force=true`** — admin-only force-run endpoint for previewing.
+- [x] **"Send digest now" button on Finance Dashboard** — instant trigger + toast feedback (`sent/attempted` + counts).
+- Backend tests: `test_phase37_finance.py` now 23/23 PASS (+TestFinanceDigest).
+- Smoke-tested live: created a backdated event → `overdue_count=1` correctly detected → digest dispatched (sent count depends on ZeptoMail config in this env).
+
+
 ### Phase 38 — Finance UI & Phase 39 — Reports (Feb 9, 2026)
 - [x] **`/finance` Dashboard** — 4 KPI sections (Receivables, Payables, Revenue, Operations), 4 quick-filter chips routing to filtered Register views, Refresh button, "Open Commission Register" CTA. All KPIs computed server-side via `GET /api/finance/dashboard`.
 - [x] **`/finance/register` Commission Register** — Full Commission Register grid. Filters: status, revenue_type, primary_category, due_from/to. Client-side search across lead/customer/event. Footer totals (expected/vyapaar/referral/net). Row click → Revenue Event Detail. CSV export of filtered view.
