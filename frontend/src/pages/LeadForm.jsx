@@ -15,13 +15,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { ArrowLeft, Loader2, Save, AlertCircle, Search, Building2, X, Check } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, AlertCircle, Search, Building2, X, Check, Plus } from 'lucide-react';
 import api from '../utils/api';
 import { toast } from 'sonner';
 import SearchableUserSelect from '../components/SearchableUserSelect';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from '../components/ui/command';
 import { Badge } from '../components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '../components/ui/dialog';
 
 const LeadForm = () => {
   const { id } = useParams();
@@ -467,6 +475,10 @@ const LeadForm = () => {
               <CustomerPicker
                 companies={options.allCompanies}
                 selectedId={formData.customer_company_id}
+                canCreate={isAdmin}
+                onCreated={(c) => {
+                  setOptions((prev) => ({ ...prev, allCompanies: [...prev.allCompanies, c] }));
+                }}
                 onSelect={(c) => {
                   if (c) {
                     setFormData(prev => ({
@@ -902,10 +914,41 @@ const CommissionBreakdownPreview = ({ dealValue, vyapaarPct, referralPct, referr
 // customer_company, contact email & phone from the picked company.
 // Phase 40.4 — Grouped by type with heading + top-level filter chips so
 // customers are impossible to miss among selling partners.
-const CustomerPicker = ({ companies, selectedId, onSelect }) => {
+const CustomerPicker = ({ companies, selectedId, onSelect, canCreate, onCreated }) => {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('all'); // all | customer | selling_partner
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: '', contact_email: '', contact_phone: '', address: '' });
   const selected = companies.find((c) => c.id === selectedId);
+
+  const handleCreate = async () => {
+    if (!newCustomer.name.trim()) {
+      toast.error('Company name is required');
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await api.post('/companies', {
+        name: newCustomer.name.trim(),
+        type: 'customer',
+        contact_email: newCustomer.contact_email.trim() || null,
+        contact_phone: newCustomer.contact_phone.trim() || null,
+        address: newCustomer.address.trim() || null,
+      });
+      const created = res.data;
+      toast.success(`Added ${created.name} to Customer master`);
+      if (onCreated) onCreated(created);
+      onSelect(created);
+      setCreateOpen(false);
+      setOpen(false);
+      setNewCustomer({ name: '', contact_email: '', contact_phone: '', address: '' });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to create customer');
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const customers = companies
     .filter((c) => c.type === 'customer')
@@ -1003,10 +1046,20 @@ const CustomerPicker = ({ companies, selectedId, onSelect }) => {
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-          <div className="flex items-center gap-1.5 px-2 pt-2 pb-1 border-b">
+          <div className="flex items-center gap-1.5 px-2 pt-2 pb-1 border-b flex-wrap">
             {chip('all', 'All', companies.length)}
             {chip('customer', 'Customers', customers.length)}
             {chip('selling_partner', 'Selling Partners', partners.length)}
+            {canCreate && (
+              <button
+                type="button"
+                onClick={() => { setOpen(false); setCreateOpen(true); }}
+                className="ml-auto text-xs px-2.5 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-600 inline-flex items-center gap-1"
+                data-testid="customer-picker-new-btn"
+              >
+                <Plus className="w-3 h-3" /> New Customer
+              </button>
+            )}
           </div>
           <Command>
             <CommandInput placeholder="Type to search companies…" data-testid="customer-picker-search" />
@@ -1041,6 +1094,80 @@ const CustomerPicker = ({ companies, selectedId, onSelect }) => {
           <X className="w-3 h-3" /> Clear selection
         </button>
       )}
+
+      {/* Phase 40.4 — Quick-add Customer dialog (admins only) */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-md" data-testid="customer-picker-new-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-4 h-4 text-emerald-600" /> New Customer
+            </DialogTitle>
+            <DialogDescription>
+              Quickly add a customer to the master without leaving this lead. It will be auto-selected on save.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="new-cust-name">Company Name *</Label>
+              <Input
+                id="new-cust-name"
+                autoFocus
+                value={newCustomer.name}
+                onChange={(e) => setNewCustomer((p) => ({ ...p, name: e.target.value }))}
+                placeholder="Acme Industries Pvt Ltd"
+                data-testid="customer-picker-new-name"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="new-cust-email">Contact Email</Label>
+                <Input
+                  id="new-cust-email"
+                  type="email"
+                  value={newCustomer.contact_email}
+                  onChange={(e) => setNewCustomer((p) => ({ ...p, contact_email: e.target.value }))}
+                  placeholder="ops@acme.com"
+                  data-testid="customer-picker-new-email"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-cust-phone">Contact Phone</Label>
+                <Input
+                  id="new-cust-phone"
+                  value={newCustomer.contact_phone}
+                  onChange={(e) => setNewCustomer((p) => ({ ...p, contact_phone: e.target.value }))}
+                  placeholder="+91 98…"
+                  data-testid="customer-picker-new-phone"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-cust-address">Address</Label>
+              <Textarea
+                id="new-cust-address"
+                rows={2}
+                value={newCustomer.address}
+                onChange={(e) => setNewCustomer((p) => ({ ...p, address: e.target.value }))}
+                placeholder="Optional"
+                data-testid="customer-picker-new-address"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating} data-testid="customer-picker-new-cancel">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreate}
+              disabled={creating || !newCustomer.name.trim()}
+              className="bg-emerald-600 hover:bg-emerald-700"
+              data-testid="customer-picker-new-save"
+            >
+              {creating ? (<><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Adding…</>) : (<><Plus className="w-4 h-4 mr-1" /> Add & Select</>)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
