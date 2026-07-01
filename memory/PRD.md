@@ -442,6 +442,13 @@ Build a multi-tenant, role-based CRM application called Vyapaar Network CRM with
 - [x] Confirmation dialog shows the count of users + a preview of which notification keys the template enables (rendered as green chips) before applying.
 - [x] After successful apply, selection is cleared and table refetches.
 
+### Phase 40.3.2 — Monday 9am IST Finance digest now includes Pending Invoice Uploads (Jun 30, 2026)
+- [x] Extended `dispatch_weekly_finance_digest` in `services/scheduler.py` with a 4th section (📤 Pending invoice uploads) — same Mongo query as `/finance/pending-invoice-uploads` (events in ready_for_invoice / invoice_raised / invoice_sent / awaiting_payment without a `commercial:vyapaar_commission` doc linked via `revenue_event_id`).
+- [x] `_render_finance_digest_html` extended with `pending_upload_rows` builder: each row deep-links to `/commercials/:cid?tab=invoice-uploads&event=:eid` (amber accent), shows the customer, lifecycle status, Vyapaar amount, due date, and an inline red "Xd overdue" pill.
+- [x] Subject line now reports counts of all 4 sections; idempotency record (`finance_digest_runs`) and endpoint return shape carry a new `pending_uploads_count` field.
+- [x] `FinanceDashboard.jsx` "Send digest now" toast reads the new count.
+- [x] **Verified**: render unit-check confirmed deep-link + overdue pill + lifecycle label render correctly; live admin dispatch returned `pending_uploads_count: 1` with the 4-section template successfully composed for 7 recipients (ZeptoMail trial daily quota exhausted, so 0 delivered — code path intact).
+
 ### Phase 40.3.1 — Pending Invoice Upload inbox widget on Finance Dashboard (Jun 30, 2026)
 - [x] New backend endpoint `GET /api/finance/pending-invoice-uploads?limit=N` (RBAC: super_admin / vyapaar_finance / vyapaar_ops) — returns revenue events whose `lifecycle_status ∈ {ready_for_invoice, invoice_raised, invoice_sent, awaiting_payment}` AND have NO `documents` row with `entity_type='commercial:vyapaar_commission'` linked via `revenue_event_id`. Enriched with customer/lead/due/expected/vyapaar_amount/days_overdue. Sorted by due_date asc.
 - [x] `FinanceDashboard.jsx` — new **"Pending Invoice Uploads"** SectionCard (between Receivables and Payables) listing up to 25 events with red "Xd overdue" pill, lifecycle badge, currency-formatted vyapaar_amount, and an **Upload** CTA. Clicking the row or the Upload button navigates to `/commercials/:cid?tab=invoice-uploads&event=:eid`.

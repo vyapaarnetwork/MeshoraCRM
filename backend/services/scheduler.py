@@ -1257,7 +1257,25 @@ async def dispatch_weekly_finance_digest(db, zeptomail, force: bool = False) -> 
         "lifecycle_status": {"$nin": ["closed", "referral_paid"]},
     }, {"_id": 0}).sort("due_date", 1).to_list(200)
 
-    has_content = bool(overdue_invoices or stale_referrals or upcoming_renewals)
+    # (d) Pending invoice uploads — events ready_for_invoice / invoice_raised /
+    # invoice_sent / awaiting_payment whose Vyapaar Commission invoice file has
+    # NOT been uploaded yet. (Phase 40.3.2)
+    invoice_due_states = ["ready_for_invoice", "invoice_raised", "invoice_sent", "awaiting_payment"]
+    candidate_events = await db.revenue_events.find({
+        "lifecycle_status": {"$in": invoice_due_states},
+    }, {"_id": 0}).sort("due_date", 1).to_list(500)
+    candidate_ids = [e["id"] for e in candidate_events]
+    if candidate_ids:
+        uploaded_docs = await db.documents.find({
+            "revenue_event_id": {"$in": candidate_ids},
+            "entity_type": "commercial:vyapaar_commission",
+        }, {"_id": 0, "revenue_event_id": 1}).to_list(5000)
+        uploaded_event_ids = {d["revenue_event_id"] for d in uploaded_docs if d.get("revenue_event_id")}
+        pending_uploads = [e for e in candidate_events if e["id"] not in uploaded_event_ids][:200]
+    else:
+        pending_uploads = []
+
+    has_content = bool(overdue_invoices or stale_referrals or upcoming_renewals or pending_uploads)
 
     finance_roles = ["super_admin", "vyapaar_ops", "vyapaar_finance"]
     # Also include explicit `is_finance` flagged users regardless of role
@@ -1279,14 +1297,15 @@ async def dispatch_weekly_finance_digest(db, zeptomail, force: bool = False) -> 
         # (admins always get the digest so they have visibility even when empty)
         if not has_content and u.get('role') != 'super_admin':
             continue
-        total = len(overdue_invoices) + len(stale_referrals) + len(upcoming_renewals)
+        total = len(overdue_invoices) + len(stale_referrals) + len(upcoming_renewals) + len(pending_uploads)
         subject = (
             f"[Meshora Finance] Weekly digest — {len(overdue_invoices)} overdue, "
-            f"{len(stale_referrals)} stale referrals, {len(upcoming_renewals)} renewals"
+            f"{len(stale_referrals)} stale referrals, {len(upcoming_renewals)} renewals, "
+            f"{len(pending_uploads)} pending uploads"
             if has_content else "[Meshora Finance] Weekly digest — all clear ✅"
         )
         _ = total  # noqa: F841
-        html = _render_finance_digest_html(u, overdue_invoices, stale_referrals, upcoming_renewals, zeptomail)
+        html = _render_finance_digest_html(u, overdue_invoices, stale_referrals, upcoming_renewals, pending_uploads, zeptomail)
         res = await zeptomail.send_email(
             to_address=u["email"], to_name=u.get("name"),
             subject=subject, html_body=html,
@@ -1302,6 +1321,7 @@ async def dispatch_weekly_finance_digest(db, zeptomail, force: bool = False) -> 
             "overdue_count": len(overdue_invoices),
             "stale_referral_count": len(stale_referrals),
             "renewals_count": len(upcoming_renewals),
+            "pending_uploads_count": len(pending_uploads),
         }},
         upsert=True,
     )
@@ -1310,11 +1330,12 @@ async def dispatch_weekly_finance_digest(db, zeptomail, force: bool = False) -> 
         "overdue_count": len(overdue_invoices),
         "stale_referral_count": len(stale_referrals),
         "renewals_count": len(upcoming_renewals),
+        "pending_uploads_count": len(pending_uploads),
         "ran_at": now_utc.isoformat(),
     }
 
 
-def _render_finance_digest_html(user, overdue_invoices, stale_referrals, upcoming_renewals, zeptomail) -> str:
+def _render_finance_digest_html(user, overdue_invoices, stale_referrals, upcoming_renewals, pending_uploads, zeptomail) -> str:
     base_url = (zeptomail.frontend_base_url or "").rstrip("/") if hasattr(zeptomail, "frontend_base_url") else ""
 
     def fmt_inr(v):
@@ -1374,12 +1395,35 @@ def _render_finance_digest_html(user, overdue_invoices, stale_referrals, upcomin
             e.get('due_date') or '—',
         ]
 
-    has_content = bool(overdue_invoices or stale_referrals or upcoming_renewals)
+    def pending_upload_rows(e):
+        # Deep-link directly to the Vyapaar Commission section of the Invoice Files tab
+        # with the revenue event pre-selected in the dropdown.
+        cid = e.get('commercial_id') or ''
+        eid = e.get('id')
+        link = f"{base_url}/commercials/{cid}?tab=invoice-uploads&event={eid}" if cid else f"{base_url}/finance"
+        today_str = datetime.now(timezone.utc).date().isoformat()
+        due = e.get('due_date') or ''
+        overdue_pill = ''
+        try:
+            if due and due < today_str:
+                d = (datetime.fromisoformat(today_str).date() - datetime.fromisoformat(due).date()).days
+                overdue_pill = f' <span style="background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:8px;font-size:11px;margin-left:4px;">{d}d overdue</span>'
+        except Exception:
+            pass
+        return [
+            f'<a href="{link}" style="color:#b45309;text-decoration:none;font-weight:500;">{e.get("name") or "Event"}</a>{overdue_pill}',
+            e.get('customer_name') or '—',
+            (e.get('lifecycle_status') or '').replace('_', ' ').title(),
+            fmt_inr(e.get('vyapaar_amount') or e.get('expected_amount')),
+            e.get('due_date') or '—',
+        ]
+
+    has_content = bool(overdue_invoices or stale_referrals or upcoming_renewals or pending_uploads)
     empty_banner = '' if has_content else '''
       <div style="text-align:center;padding:24px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;margin:18px 0;">
         <div style="font-size:32px;">✅</div>
         <div style="color:#065f46;font-weight:600;margin-top:6px;">All clear this week.</div>
-        <div style="color:#047857;font-size:13px;margin-top:4px;">No overdue invoices, no stale referral payables, no renewals due in 30 days.</div>
+        <div style="color:#047857;font-size:13px;margin-top:4px;">No overdue invoices, no stale referral payables, no renewals due in 30 days, no pending uploads.</div>
       </div>
     '''
 
@@ -1396,6 +1440,7 @@ def _render_finance_digest_html(user, overdue_invoices, stale_referrals, upcomin
           {section('🔴 Unpaid invoices · 30+ days old', overdue_invoices, '#dc2626', overdue_rows)}
           {section('🟡 Referral payables · stale 15+ days', stale_referrals, '#d97706', stale_rows)}
           {section('🔵 Renewals · due in next 30 days', upcoming_renewals, '#2563eb', renewal_rows)}
+          {section('📤 Pending invoice uploads · Vyapaar commission file missing', pending_uploads, '#b45309', pending_upload_rows)}
           <div style="margin-top:24px;padding-top:18px;border-top:1px solid #e2e8f0;text-align:center;">
             <a href="{base_url}/finance" style="background:#4f46e5;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px;display:inline-block;">Open Finance Dashboard</a>
           </div>

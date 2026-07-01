@@ -61,9 +61,9 @@ const FinanceDashboard = () => {
     setDigestSending(true);
     try {
       const r = await api.post('/admin/dispatch-finance-weekly-digest?force=true');
-      const { sent, attempted, overdue_count, stale_referral_count, renewals_count } = r.data || {};
+      const { sent, attempted, overdue_count, stale_referral_count, renewals_count, pending_uploads_count } = r.data || {};
       toast.success(
-        `Digest dispatched — ${sent}/${attempted} delivered. ${overdue_count} overdue · ${stale_referral_count} stale referrals · ${renewals_count} upcoming renewals.`
+        `Digest dispatched — ${sent}/${attempted} delivered. ${overdue_count} overdue · ${stale_referral_count} stale referrals · ${renewals_count} upcoming renewals · ${pending_uploads_count ?? 0} pending uploads.`
       );
     } catch (e) {
       const code = e.response?.status;
