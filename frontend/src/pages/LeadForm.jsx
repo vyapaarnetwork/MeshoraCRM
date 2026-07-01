@@ -900,10 +900,69 @@ const CommissionBreakdownPreview = ({ dealValue, vyapaarPct, referralPct, referr
 // (both Customer and Selling Partner types — selling partners can raise leads
 // for their own internal requirements). On select the parent form auto-fills
 // customer_company, contact email & phone from the picked company.
+// Phase 40.4 — Grouped by type with heading + top-level filter chips so
+// customers are impossible to miss among selling partners.
 const CustomerPicker = ({ companies, selectedId, onSelect }) => {
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('all'); // all | customer | selling_partner
   const selected = companies.find((c) => c.id === selectedId);
-  const sorted = [...companies].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const customers = companies
+    .filter((c) => c.type === 'customer')
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const partners = companies
+    .filter((c) => c.type === 'selling_partner')
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const others = companies
+    .filter((c) => c.type !== 'customer' && c.type !== 'selling_partner')
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  const showCustomers = filter === 'all' || filter === 'customer';
+  const showPartners = filter === 'all' || filter === 'selling_partner';
+
+  const chip = (key, label, count) => (
+    <button
+      type="button"
+      onClick={() => setFilter(key)}
+      className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+        filter === key
+          ? 'bg-indigo-600 text-white border-indigo-600'
+          : 'bg-transparent text-muted-foreground border-border hover:bg-muted'
+      }`}
+      data-testid={`customer-picker-filter-${key}`}
+    >
+      {label} <span className="opacity-75">({count})</span>
+    </button>
+  );
+
+  const renderItem = (c) => (
+    <CommandItem
+      key={c.id}
+      value={`${c.name} ${c.contact_email || ''} ${c.type || ''}`}
+      onSelect={() => {
+        onSelect(c);
+        setOpen(false);
+      }}
+      data-testid={`customer-picker-option-${c.id}`}
+    >
+      <Check className={`mr-2 h-4 w-4 ${selectedId === c.id ? 'opacity-100' : 'opacity-0'}`} />
+      <Building2 className={`mr-2 h-3.5 w-3.5 ${c.type === 'customer' ? 'text-emerald-600' : 'text-indigo-600'}`} />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm truncate">{c.name}</div>
+        <div className="text-[10px] text-muted-foreground truncate">{c.contact_email || 'no email on file'}</div>
+      </div>
+      <Badge
+        variant="outline"
+        className={`text-[10px] capitalize ml-2 ${
+          c.type === 'customer'
+            ? 'border-emerald-300 text-emerald-700 dark:text-emerald-300'
+            : 'border-indigo-300 text-indigo-700 dark:text-indigo-300'
+        }`}
+      >
+        {(c.type || '').replace(/_/g, ' ')}
+      </Badge>
+    </CommandItem>
+  );
 
   return (
     <div className="space-y-1.5">
@@ -919,45 +978,55 @@ const CustomerPicker = ({ companies, selectedId, onSelect }) => {
             data-testid="customer-picker-trigger"
           >
             <span className="flex items-center gap-2 truncate">
-              <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
+              <Building2 className={`w-4 h-4 shrink-0 ${selected?.type === 'customer' ? 'text-emerald-600' : 'text-muted-foreground'}`} />
               {selected ? (
                 <>
                   <span className="truncate">{selected.name}</span>
-                  <Badge variant="outline" className="text-[10px] capitalize">{(selected.type || "").replace(/_/g, " ")}</Badge>
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] capitalize ${
+                      selected.type === 'customer'
+                        ? 'border-emerald-300 text-emerald-700'
+                        : 'border-indigo-300 text-indigo-700'
+                    }`}
+                  >
+                    {(selected.type || '').replace(/_/g, ' ')}
+                  </Badge>
                 </>
               ) : (
-                <span className="text-muted-foreground">Search & pick from {companies.length} compan{companies.length === 1 ? "y" : "ies"} in master…</span>
+                <span className="text-muted-foreground">
+                  Search & pick — {customers.length} customer{customers.length === 1 ? '' : 's'} · {partners.length} selling partner{partners.length === 1 ? '' : 's'}
+                </span>
               )}
             </span>
             <Search className="w-4 h-4 opacity-50 shrink-0" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+          <div className="flex items-center gap-1.5 px-2 pt-2 pb-1 border-b">
+            {chip('all', 'All', companies.length)}
+            {chip('customer', 'Customers', customers.length)}
+            {chip('selling_partner', 'Selling Partners', partners.length)}
+          </div>
           <Command>
             <CommandInput placeholder="Type to search companies…" data-testid="customer-picker-search" />
             <CommandList>
               <CommandEmpty>No matching company. Ask Vyapaar to add it first.</CommandEmpty>
-              <CommandGroup>
-                {sorted.map((c) => (
-                  <CommandItem
-                    key={c.id}
-                    value={`${c.name} ${c.contact_email || ""} ${c.type || ""}`}
-                    onSelect={() => {
-                      onSelect(c);
-                      setOpen(false);
-                    }}
-                    data-testid={`customer-picker-option-${c.id}`}
-                  >
-                    <Check className={`mr-2 h-4 w-4 ${selectedId === c.id ? "opacity-100" : "opacity-0"}`} />
-                    <Building2 className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm truncate">{c.name}</div>
-                      <div className="text-[10px] text-muted-foreground truncate">{c.contact_email || "no email on file"}</div>
-                    </div>
-                    <Badge variant="outline" className="text-[10px] capitalize ml-2">{(c.type || "").replace(/_/g, " ")}</Badge>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
+              {showCustomers && customers.length > 0 && (
+                <CommandGroup heading={`Customers · ${customers.length}`}>
+                  {customers.map(renderItem)}
+                </CommandGroup>
+              )}
+              {showPartners && partners.length > 0 && (
+                <CommandGroup heading={`Selling Partners · ${partners.length}`}>
+                  {partners.map(renderItem)}
+                </CommandGroup>
+              )}
+              {filter === 'all' && others.length > 0 && (
+                <CommandGroup heading={`Other · ${others.length}`}>
+                  {others.map(renderItem)}
+                </CommandGroup>
+              )}
             </CommandList>
           </Command>
         </PopoverContent>
